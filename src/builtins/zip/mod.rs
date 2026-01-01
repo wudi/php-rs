@@ -60,10 +60,8 @@ fn get_zip_wrapper<'a>(
     };
 
     vm.context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .archives
-        .get(&archive_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(archive_id)
         .ok_or_else(|| "ZipArchive not found in context".to_string())
 }
 
@@ -504,9 +502,8 @@ pub fn php_zip_archive_open(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
     vm.context.next_resource_id += 1;
     let wrapper_rc = Rc::new(RefCell::new(wrapper));
     vm.context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .archives
-        .insert(archive_id, wrapper_rc.clone());
+        .resource_manager
+        .register(archive_id, wrapper_rc.clone());
 
     // Store ID in object
     if let Some(this_handle) = vm.frames.last().and_then(|f| f.this) {
@@ -1252,11 +1249,8 @@ pub fn php_zip_open(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 let resource_id = vm.context.next_resource_id;
                 vm.context.next_resource_id += 1;
                 vm.context
-                    .get_or_init_extension_data(|| {
-                        crate::runtime::zip_extension::ZipExtensionData::default()
-                    })
-                    .resources
-                    .insert(resource_id, Rc::new(RefCell::new(wrapper)));
+                    .resource_manager
+                    .register(resource_id, Rc::new(RefCell::new(wrapper)));
 
                 Ok(vm.arena.alloc(Val::Resource(Rc::new(resource_id))))
             }
@@ -1277,9 +1271,8 @@ pub fn php_zip_close(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     vm.context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .remove(&resource_id);
+        .resource_manager
+        .remove::<ZipArchiveWrapper>(resource_id);
 
     Ok(vm.arena.alloc(Val::Null))
 }
@@ -1296,10 +1289,8 @@ pub fn php_zip_read(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Invalid zip resource")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 
@@ -1311,11 +1302,8 @@ pub fn php_zip_read(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             let entry_id = vm.context.next_resource_id;
             vm.context.next_resource_id += 1;
             vm.context
-                .get_or_init_extension_data(|| {
-                    crate::runtime::zip_extension::ZipExtensionData::default()
-                })
-                .entries
-                .insert(entry_id, (resource_id, entry_index));
+                .resource_manager
+                .register(entry_id, Rc::new(RefCell::new((resource_id, entry_index))));
 
             return Ok(vm.arena.alloc(Val::Resource(Rc::new(entry_id))));
         }
@@ -1344,17 +1332,14 @@ pub fn php_zip_entry_read(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
 
     let (resource_id, entry_index) = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .entries
-        .get(&entry_id)
-        .cloned()
+        .resource_manager
+        .get::<(u64, usize)>(entry_id)
+        .map(|rc| *rc.borrow())
         .ok_or("Invalid zip entry resource")?;
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Zip resource not found")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 
@@ -1383,17 +1368,14 @@ pub fn php_zip_entry_name(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
 
     let (resource_id, entry_index) = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .entries
-        .get(&entry_id)
-        .cloned()
+        .resource_manager
+        .get::<(u64, usize)>(entry_id)
+        .map(|rc| *rc.borrow())
         .ok_or("Invalid zip entry resource")?;
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Zip resource not found")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 
@@ -1420,17 +1402,14 @@ pub fn php_zip_entry_filesize(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
 
     let (resource_id, entry_index) = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .entries
-        .get(&entry_id)
-        .cloned()
+        .resource_manager
+        .get::<(u64, usize)>(entry_id)
+        .map(|rc| *rc.borrow())
         .ok_or("Invalid zip entry resource")?;
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Zip resource not found")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 
@@ -1459,17 +1438,14 @@ pub fn php_zip_entry_compressionmethod(vm: &mut VM, args: &[Handle]) -> Result<H
 
     let (resource_id, entry_index) = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .entries
-        .get(&entry_id)
-        .cloned()
+        .resource_manager
+        .get::<(u64, usize)>(entry_id)
+        .map(|rc| *rc.borrow())
         .ok_or("Invalid zip entry resource")?;
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Zip resource not found")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 
@@ -1500,17 +1476,14 @@ pub fn php_zip_entry_compressedsize(vm: &mut VM, args: &[Handle]) -> Result<Hand
 
     let (resource_id, entry_index) = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .entries
-        .get(&entry_id)
-        .cloned()
+        .resource_manager
+        .get::<(u64, usize)>(entry_id)
+        .map(|rc| *rc.borrow())
         .ok_or("Invalid zip entry resource")?;
     let wrapper_rc = vm
         .context
-        .get_or_init_extension_data(|| crate::runtime::zip_extension::ZipExtensionData::default())
-        .resources
-        .get(&resource_id)
-        .cloned()
+        .resource_manager
+        .get::<ZipArchiveWrapper>(resource_id)
         .ok_or("Zip resource not found")?;
     let mut wrapper = wrapper_rc.borrow_mut();
 

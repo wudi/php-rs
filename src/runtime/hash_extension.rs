@@ -3,20 +3,18 @@ use crate::core::value::Val;
 use crate::runtime::context::RequestContext;
 use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::registry::ExtensionRegistry;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Extension-specific data for Hash module
+/// Note: Hash states are now managed via ResourceManager instead of a local HashMap
 pub struct HashExtensionData {
     pub registry: Arc<hash::HashRegistry>,
-    pub states: HashMap<u64, Box<dyn hash::HashState>>, // Use u64 for resource IDs
 }
 
 impl std::fmt::Debug for HashExtensionData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HashExtensionData")
             .field("registry", &"<HashRegistry>")
-            .field("states", &format!("{} states", self.states.len()))
             .finish()
     }
 }
@@ -25,7 +23,6 @@ impl Default for HashExtensionData {
     fn default() -> Self {
         Self {
             registry: Arc::new(hash::HashRegistry::new()),
-            states: HashMap::new(),
         }
     }
 }
@@ -71,10 +68,10 @@ impl Extension for HashExtension {
     }
 
     fn request_init(&self, context: &mut RequestContext) -> ExtensionResult {
-        // Initialize hash registry and states for new request
+        // Initialize hash registry for new request
+        // Hash states are managed via ResourceManager
         context.set_extension_data(HashExtensionData {
             registry: Arc::new(hash::HashRegistry::new()),
-            states: HashMap::new(),
         });
         ExtensionResult::Success
     }

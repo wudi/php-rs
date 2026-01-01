@@ -183,12 +183,7 @@ pub fn php_mysqli_query(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
             vm.context.next_resource_id += 1;
 
             let result_rc = Rc::new(std::cell::RefCell::new(result));
-            vm.context
-                .get_or_init_extension_data(|| {
-                    crate::runtime::mysqli_extension::MysqliExtensionData::default()
-                })
-                .results
-                .insert(result_id, result_rc);
+            vm.context.resource_manager.register(result_id, result_rc);
 
             // Return result resource
             Ok(vm.arena.alloc(Val::Resource(Rc::new(result_id))))
@@ -221,8 +216,8 @@ pub fn php_mysqli_fetch_assoc(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     // Get result
     let result_ref = vm
         .context
-        .get_extension_data::<crate::runtime::mysqli_extension::MysqliExtensionData>()
-        .and_then(|data| data.results.get(&result_id))
+        .resource_manager
+        .get::<crate::builtins::mysqli::result::MysqliResult>(result_id)
         .ok_or_else(|| "mysqli_fetch_assoc(): Invalid mysqli_result".to_string())?;
 
     // Fetch next row (release borrow immediately)
@@ -270,8 +265,8 @@ pub fn php_mysqli_fetch_row(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
     // Get result
     let result_ref = vm
         .context
-        .get_extension_data::<crate::runtime::mysqli_extension::MysqliExtensionData>()
-        .and_then(|data| data.results.get(&result_id))
+        .resource_manager
+        .get::<crate::builtins::mysqli::result::MysqliResult>(result_id)
         .ok_or_else(|| "mysqli_fetch_row(): Invalid mysqli_result".to_string())?;
 
     // Fetch next row (release borrow immediately)
@@ -318,8 +313,8 @@ pub fn php_mysqli_num_rows(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
     // Get result
     let result_ref = vm
         .context
-        .get_extension_data::<crate::runtime::mysqli_extension::MysqliExtensionData>()
-        .and_then(|data| data.results.get(&result_id))
+        .resource_manager
+        .get::<crate::builtins::mysqli::result::MysqliResult>(result_id)
         .ok_or_else(|| "mysqli_num_rows(): Invalid mysqli_result".to_string())?;
 
     let num_rows = result_ref.borrow().num_rows() as i64;

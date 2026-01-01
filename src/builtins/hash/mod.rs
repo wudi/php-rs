@@ -26,6 +26,7 @@ use crate::builtins::filesystem::FileHandle;
 use crate::builtins::zlib::GzFile;
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Val};
 use crate::vm::engine::VM;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 use std::rc::Rc;
@@ -296,11 +297,10 @@ pub fn php_hash_init(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     let finalized_prop = vm.context.interner.intern(b"__finalized");
 
-    // Store the BoxedHashState in the extension data
+    // Store the BoxedHashState in the ResourceManager
     vm.context
-        .get_or_init_extension_data(|| crate::runtime::hash_extension::HashExtensionData::default())
-        .states
-        .insert(resource_id, state);
+        .resource_manager
+        .register(resource_id, Rc::new(RefCell::new(state)));
 
     // Create HashContext object
     use indexmap::IndexMap;
@@ -368,14 +368,13 @@ pub fn php_hash_update(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Update the hash
-    let hash_data = vm
+    if let Some(state_rc) = vm
         .context
-        .get_extension_data_mut::<crate::runtime::hash_extension::HashExtensionData>()
-        .ok_or("Hash extension not initialized")?;
-
-    if let Some(state) = hash_data.states.get_mut(&resource_id) {
+        .resource_manager
+        .get::<Box<dyn HashState>>(resource_id)
+    {
         println!("DEBUG: hash_update data = {:?}", data);
-        state.update(&data);
+        state_rc.borrow_mut().update(&data);
         Ok(vm.arena.alloc(Val::Bool(true)))
     } else {
         Err("hash_update(): Invalid hash context state".into())
@@ -439,13 +438,12 @@ pub fn php_hash_update_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
         .map_err(|e| format!("hash_update_file(): Failed to open '{}': {}", filename, e))?;
 
     // Update the hash
-    let hash_data = vm
+    if let Some(state_rc) = vm
         .context
-        .get_extension_data_mut::<crate::runtime::hash_extension::HashExtensionData>()
-        .ok_or("Hash extension not initialized")?;
-
-    if let Some(state) = hash_data.states.get_mut(&resource_id) {
-        state.update(&data);
+        .resource_manager
+        .get::<Box<dyn HashState>>(resource_id)
+    {
+        state_rc.borrow_mut().update(&data);
         Ok(vm.arena.alloc(Val::Bool(true)))
     } else {
         Err("hash_update_file(): Invalid hash context state".into())
@@ -520,14 +518,13 @@ pub fn php_hash_update_stream(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     let mut total_read = 0;
     let mut buffer = vec![0u8; 8192];
 
-    // Get hash extension data
-    let hash_data = vm
+    // Get hash state from ResourceManager
+    if let Some(state_rc) = vm
         .context
-        .get_extension_data_mut::<crate::runtime::hash_extension::HashExtensionData>()
-        .ok_or("Hash extension not initialized")?;
-
-    // We need to update the hash state in a loop
-    if let Some(state) = hash_data.states.get_mut(&resource_id) {
+        .resource_manager
+        .get::<Box<dyn HashState>>(resource_id)
+    {
+        let mut state = state_rc.borrow_mut();
         loop {
             let to_read = if length < 0 {
                 buffer.len()
@@ -628,12 +625,15 @@ pub fn php_hash_final(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Remove and finalize the hash
-    let hash_data = vm
+    let digest = if let Some(state_rc) = vm
         .context
-        .get_extension_data_mut::<crate::runtime::hash_extension::HashExtensionData>()
-        .ok_or("Hash extension not initialized")?;
-
-    let digest = if let Some(state) = hash_data.states.remove(&resource_id) {
+        .resource_manager
+        .remove::<Box<dyn HashState>>(resource_id)
+    {
+        // Take the state out of Rc<RefCell<>>
+        let state = Rc::try_unwrap(state_rc)
+            .map_err(|_| "hash_final(): Failed to take ownership of hash state")?
+            .into_inner();
         state.finalize()
     } else {
         return Err("hash_final(): Invalid hash context state".into());
@@ -706,13 +706,12 @@ pub fn php_hash_copy(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Clone the state
-    let hash_data = vm
+    let new_state = if let Some(state_rc) = vm
         .context
-        .get_extension_data::<crate::runtime::hash_extension::HashExtensionData>()
-        .ok_or("Hash extension not initialized")?;
-
-    let new_state = if let Some(state) = hash_data.states.get(&resource_id) {
-        state.clone_state()
+        .resource_manager
+        .get::<Box<dyn HashState>>(resource_id)
+    {
+        state_rc.borrow().clone_state()
     } else {
         return Err("hash_copy(): Invalid hash context state".into());
     };
@@ -724,9 +723,8 @@ pub fn php_hash_copy(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let new_state_handle = vm.arena.alloc(Val::Resource(Rc::new(new_resource_id)));
 
     vm.context
-        .get_or_init_extension_data(|| crate::runtime::hash_extension::HashExtensionData::default())
-        .states
-        .insert(new_resource_id, new_state);
+        .resource_manager
+        .register(new_resource_id, Rc::new(RefCell::new(new_state)));
 
     // Create new HashContext object
     use indexmap::IndexMap;

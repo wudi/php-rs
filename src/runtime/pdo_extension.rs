@@ -2,25 +2,21 @@ use crate::builtins::pdo;
 use crate::runtime::context::RequestContext;
 use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::registry::ExtensionRegistry;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// Extension-specific data for PDO module
+///
+/// Resources (connections, statements) are managed via RequestContext::resource_manager.
+/// Only the driver registry is stored here as it's module-level state, not per-resource.
 #[derive(Debug)]
 pub struct PdoExtensionData {
     pub driver_registry: Arc<pdo::drivers::DriverRegistry>,
-    pub connections: HashMap<u64, Rc<RefCell<Box<dyn pdo::driver::PdoConnection>>>>,
-    pub statements: HashMap<u64, Rc<RefCell<Box<dyn pdo::driver::PdoStatement>>>>,
 }
 
 impl Default for PdoExtensionData {
     fn default() -> Self {
         Self {
             driver_registry: Arc::new(pdo::drivers::DriverRegistry::new()),
-            connections: HashMap::new(),
-            statements: HashMap::new(),
         }
     }
 }
