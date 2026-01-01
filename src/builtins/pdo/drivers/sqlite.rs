@@ -30,11 +30,7 @@ impl PdoDriver for SqliteDriver {
         _password: Option<&str>,
         _options: &[(Attribute, Handle)],
     ) -> Result<Box<dyn PdoConnection>, PdoError> {
-        let path = if dsn.starts_with("sqlite:") {
-            &dsn[7..]
-        } else {
-            dsn
-        };
+        let path = super::strip_driver_prefix(dsn, self.name());
 
         let conn = Connection::open(path).map_err(|e| PdoError::ConnectionFailed(e.to_string()))?;
 

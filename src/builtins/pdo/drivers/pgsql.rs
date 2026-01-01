@@ -30,11 +30,7 @@ impl PdoDriver for PgsqlDriver {
         password: Option<&str>,
         _options: &[(Attribute, Handle)],
     ) -> Result<Box<dyn PdoConnection>, PdoError> {
-        let connection_str = if dsn.starts_with("pgsql:") {
-            &dsn[6..]
-        } else {
-            dsn
-        };
+        let connection_str = super::strip_driver_prefix(dsn, self.name());
 
         // PostgreSQL connection string uses spaces instead of semicolons
         let pg_conn_str = connection_str.replace(';', " ");

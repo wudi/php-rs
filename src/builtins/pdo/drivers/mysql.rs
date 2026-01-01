@@ -30,38 +30,24 @@ impl PdoDriver for MysqlDriver {
         password: Option<&str>,
         _options: &[(Attribute, Handle)],
     ) -> Result<Box<dyn PdoConnection>, PdoError> {
-        let connection_str = if dsn.starts_with("mysql:") {
-            &dsn[6..]
-        } else {
-            dsn
-        };
+        let connection_str = super::strip_driver_prefix(dsn, self.name());
 
         let mut builder = OptsBuilder::new();
 
         // Parse "key=value;key=value"
-        for part in connection_str.split(';') {
-            let kv: Vec<&str> = part.splitn(2, '=').collect();
-            if kv.len() == 2 {
-                let key = kv[0].trim().to_lowercase();
-                let value = kv[1].trim();
-                match key.as_str() {
-                    "host" => {
-                        builder = builder.ip_or_hostname(Some(value));
-                    }
-                    "port" => {
-                        if let Ok(port) = value.parse::<u16>() {
-                            builder = builder.tcp_port(port);
-                        }
-                    }
-                    "dbname" => {
-                        builder = builder.db_name(Some(value));
-                    }
-                    "charset" => { /* charset handling if needed */ }
-                    "unix_socket" => {
-                        builder = builder.socket(Some(value));
-                    }
-                    _ => {}
+        for (key, value) in super::parse_semicolon_kv(connection_str) {
+            if key.eq_ignore_ascii_case("host") {
+                builder = builder.ip_or_hostname(Some(value));
+            } else if key.eq_ignore_ascii_case("port") {
+                if let Ok(port) = value.parse::<u16>() {
+                    builder = builder.tcp_port(port);
                 }
+            } else if key.eq_ignore_ascii_case("dbname") {
+                builder = builder.db_name(Some(value));
+            } else if key.eq_ignore_ascii_case("charset") {
+                // charset handling if needed
+            } else if key.eq_ignore_ascii_case("unix_socket") {
+                builder = builder.socket(Some(value));
             }
         }
 

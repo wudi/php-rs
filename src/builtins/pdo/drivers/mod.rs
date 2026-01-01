@@ -12,6 +12,31 @@ use super::types::PdoError;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+pub(crate) fn strip_driver_prefix<'a>(dsn: &'a str, driver: &str) -> &'a str {
+    let dsn = dsn.trim();
+    let driver = driver.trim();
+    if dsn.len() > driver.len() {
+        let (prefix, rest) = dsn.split_at(driver.len());
+        if prefix.eq_ignore_ascii_case(driver) && rest.starts_with(':') {
+            return &rest[1..];
+        }
+    }
+    dsn
+}
+
+pub(crate) fn parse_semicolon_kv(s: &str) -> impl Iterator<Item = (&str, &str)> {
+    s.split(';').filter_map(|part| {
+        let mut it = part.splitn(2, '=');
+        let key = it.next()?.trim();
+        let value = it.next()?.trim();
+        if key.is_empty() {
+            None
+        } else {
+            Some((key, value))
+        }
+    })
+}
+
 /// Global PDO driver registry (initialized once, shared across all contexts)
 static DRIVER_REGISTRY: OnceLock<DriverRegistry> = OnceLock::new();
 
@@ -43,13 +68,24 @@ impl DriverRegistry {
 
     /// Register a driver
     fn register(&mut self, driver: Box<dyn PdoDriver>) {
-        self.drivers.insert(driver.name().to_string(), driver);
+        // Canonicalize keys so lookup can be cheaply case-insensitive.
+        self.drivers
+            .insert(driver.name().to_ascii_lowercase(), driver);
     }
 
     /// Get a driver by name (case-insensitive)
     pub fn get(&self, name: &str) -> Option<&dyn PdoDriver> {
-        let lower = name.to_ascii_lowercase();
-        self.drivers.get(&lower).map(|b| &**b)
+        let name = name.trim();
+        if name
+            .as_bytes()
+            .iter()
+            .any(|b| b.is_ascii_uppercase())
+        {
+            let lower = name.to_ascii_lowercase();
+            self.drivers.get(&lower).map(|b| &**b)
+        } else {
+            self.drivers.get(name).map(|b| &**b)
+        }
     }
 
     /// List all available drivers
@@ -61,10 +97,22 @@ impl DriverRegistry {
 
     /// Parse a DSN string into driver name and connection string
     /// Format: "driver:connection_string"
-    pub fn parse_dsn(dsn: &str) -> Result<(&str, String), PdoError> {
+    pub fn parse_dsn(dsn: &str) -> Result<(&str, &str), PdoError> {
+        let dsn = dsn.trim();
+        if dsn.is_empty() {
+            return Err(PdoError::InvalidParameter(
+                "Invalid DSN format: empty DSN".to_string(),
+            ));
+        }
+
         if let Some(colon_pos) = dsn.find(':') {
-            let driver = &dsn[..colon_pos];
-            let connection_str = dsn[colon_pos + 1..].to_string();
+            let driver = dsn[..colon_pos].trim();
+            if driver.is_empty() {
+                return Err(PdoError::InvalidParameter(
+                    "Invalid DSN format: empty driver name".to_string(),
+                ));
+            }
+            let connection_str = &dsn[colon_pos + 1..];
             Ok((driver, connection_str))
         } else {
             Err(PdoError::InvalidParameter(

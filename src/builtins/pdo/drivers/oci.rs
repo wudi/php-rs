@@ -30,18 +30,13 @@ impl PdoDriver for OciDriver {
         password: Option<&str>,
         _options: &[(Attribute, Handle)],
     ) -> Result<Box<dyn PdoConnection>, PdoError> {
-        let connection_str = if dsn.starts_with("oci:") {
-            &dsn[4..]
-        } else {
-            dsn
-        };
+        let connection_str = super::strip_driver_prefix(dsn, self.name());
 
         // Extract dbname from DSN (e.g., dbname=//localhost:1521/xe)
         let mut dbname = "";
-        for part in connection_str.split(';') {
-            let kv: Vec<&str> = part.splitn(2, '=').collect();
-            if kv.len() == 2 && kv[0].trim().to_lowercase() == "dbname" {
-                dbname = kv[1].trim();
+        for (key, value) in super::parse_semicolon_kv(connection_str) {
+            if key.eq_ignore_ascii_case("dbname") {
+                dbname = value;
                 break;
             }
         }

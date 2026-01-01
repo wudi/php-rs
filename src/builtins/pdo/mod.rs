@@ -463,7 +463,7 @@ pub fn php_pdo_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     }
 
     // Parse DSN and connect
-    let (driver_name, _conn_str) =
+    let (driver_name, conn_str) =
         DriverRegistry::parse_dsn(&dsn).map_err(|e| format!("PDO::__construct(): {}", e))?;
 
     let registry = drivers::DriverRegistry::global();
@@ -473,7 +473,7 @@ pub fn php_pdo_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
         .ok_or_else(|| format!("PDO::__construct(): Driver '{}' not found", driver_name))?;
 
     let conn = driver
-        .connect(&dsn, username.as_deref(), password.as_deref(), &options)
+        .connect(conn_str, username.as_deref(), password.as_deref(), &options)
         .map_err(|e| format!("PDO::__construct(): Connection failed: {}", e))?;
 
     // Store connection in context
