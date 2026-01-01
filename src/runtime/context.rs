@@ -124,8 +124,6 @@ pub struct ErrorInfo {
 
 pub struct EngineContext {
     pub registry: ExtensionRegistry,
-    /// PDO driver registry (set by PDO extension)
-    pub pdo_driver_registry: Option<Arc<crate::builtins::pdo::drivers::DriverRegistry>>,
 }
 
 impl EngineContext {
@@ -193,9 +191,6 @@ impl EngineContext {
 
         Self {
             registry,
-            pdo_driver_registry: Some(Arc::new(
-                crate::builtins::pdo::drivers::DriverRegistry::new(),
-            )),
         }
     }
 }
@@ -575,7 +570,6 @@ impl EngineBuilder {
 
         Ok(Arc::new(EngineContext {
             registry,
-            pdo_driver_registry: None,
         }))
     }
 }
