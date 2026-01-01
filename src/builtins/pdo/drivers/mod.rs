@@ -10,7 +10,7 @@ pub mod sqlite;
 use super::driver::PdoDriver;
 use super::types::PdoError;
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 pub(crate) fn strip_driver_prefix<'a>(dsn: &'a str, driver: &str) -> &'a str {
     let dsn = dsn.trim();
@@ -37,12 +37,10 @@ pub(crate) fn parse_semicolon_kv(s: &str) -> impl Iterator<Item = (&str, &str)> 
     })
 }
 
-/// Global PDO driver registry (initialized once, shared across all contexts)
-static DRIVER_REGISTRY: OnceLock<DriverRegistry> = OnceLock::new();
-
 /// Registry of PDO drivers
+#[derive(Debug)]
 pub struct DriverRegistry {
-    drivers: HashMap<String, Box<dyn PdoDriver>>,
+    drivers: HashMap<String, Arc<dyn PdoDriver>>,
 }
 
 impl DriverRegistry {
@@ -61,13 +59,9 @@ impl DriverRegistry {
         registry
     }
 
-    /// Get the global driver registry (lazy-initialized on first access)
-    pub fn global() -> &'static DriverRegistry {
-        DRIVER_REGISTRY.get_or_init(|| DriverRegistry::new())
-    }
-
     /// Register a driver
     fn register(&mut self, driver: Box<dyn PdoDriver>) {
+        let driver: Arc<dyn PdoDriver> = driver.into();
         // Canonicalize keys so lookup can be cheaply case-insensitive.
         self.drivers
             .insert(driver.name().to_ascii_lowercase(), driver);
@@ -82,9 +76,24 @@ impl DriverRegistry {
             .any(|b| b.is_ascii_uppercase())
         {
             let lower = name.to_ascii_lowercase();
-            self.drivers.get(&lower).map(|b| &**b)
+            self.drivers.get(&lower).map(|d| &**d)
         } else {
-            self.drivers.get(name).map(|b| &**b)
+            self.drivers.get(name).map(|d| &**d)
+        }
+    }
+
+    /// Get a driver by name (case-insensitive) as an Arc for cheap cloning.
+    pub fn get_arc(&self, name: &str) -> Option<Arc<dyn PdoDriver>> {
+        let name = name.trim();
+        if name
+            .as_bytes()
+            .iter()
+            .any(|b| b.is_ascii_uppercase())
+        {
+            let lower = name.to_ascii_lowercase();
+            self.drivers.get(&lower).cloned()
+        } else {
+            self.drivers.get(name).cloned()
         }
     }
 

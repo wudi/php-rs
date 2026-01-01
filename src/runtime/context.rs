@@ -189,9 +189,7 @@ impl EngineContext {
             .register_extension(Box::new(OpenSSLExtension))
             .expect("Failed to register OpenSSL extension");
 
-        Self {
-            registry,
-        }
+        Self { registry }
     }
 }
 
@@ -568,9 +566,7 @@ impl EngineBuilder {
             registry.register_extension(ext)?;
         }
 
-        Ok(Arc::new(EngineContext {
-            registry,
-        }))
+        Ok(Arc::new(EngineContext { registry }))
     }
 }
 

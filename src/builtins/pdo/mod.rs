@@ -466,7 +466,11 @@ pub fn php_pdo_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     let (driver_name, conn_str) =
         DriverRegistry::parse_dsn(&dsn).map_err(|e| format!("PDO::__construct(): {}", e))?;
 
-    let registry = drivers::DriverRegistry::global();
+    let pdo_ext = vm
+        .context
+        .get_extension_data::<crate::runtime::pdo_extension::PdoExtensionData>()
+        .ok_or("PDO extension not initialized")?;
+    let registry = pdo_ext.driver_registry.as_ref();
 
     let driver = registry
         .get(driver_name)
