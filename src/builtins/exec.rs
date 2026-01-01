@@ -574,7 +574,7 @@ pub fn php_set_time_limit(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
     };
 
     // Set the new execution time limit
-    vm.context.max_execution_time = seconds;
+    vm.context.config.max_execution_time = seconds;
 
     // Reset the execution start time (resets the timeout counter)
     vm.execution_start_time = std::time::SystemTime::now();

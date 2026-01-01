@@ -1,4 +1,3 @@
-use crate::builtins::{hash, json};
 use crate::compiler::chunk::UserFunc;
 use crate::core::interner::Interner;
 use crate::core::value::{Handle, Symbol, Val, Visibility};
@@ -9,10 +8,35 @@ use crate::vm::engine::VM;
 use indexmap::IndexMap;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
 pub type NativeHandler = fn(&mut VM, args: &[Handle]) -> Result<Handle, String>;
+
+/// PHP configuration settings
+#[derive(Debug, Clone)]
+pub struct PhpConfig {
+    /// Error reporting level (E_ALL = 32767)
+    pub error_reporting: u32,
+    /// Maximum script execution time in seconds
+    pub max_execution_time: i64,
+    /// Default timezone for date/time functions
+    pub timezone: String,
+    /// Working directory for script execution
+    pub working_dir: Option<PathBuf>,
+}
+
+impl Default for PhpConfig {
+    fn default() -> Self {
+        Self {
+            error_reporting: 32767, // E_ALL
+            max_execution_time: 30,
+            timezone: "UTC".to_string(),
+            working_dir: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeHint {
@@ -195,6 +219,7 @@ impl EngineContext {
 
 pub struct RequestContext {
     pub engine: Arc<EngineContext>,
+    pub config: PhpConfig,
     pub globals: HashMap<Symbol, Handle>,
     pub constants: HashMap<Symbol, Val>,
     pub user_functions: HashMap<Symbol, Rc<UserFunc>>,
@@ -202,31 +227,11 @@ pub struct RequestContext {
     pub included_files: HashSet<String>,
     pub autoloaders: Vec<Handle>,
     pub interner: Interner,
-    pub error_reporting: u32,
     pub last_error: Option<ErrorInfo>,
     pub headers: Vec<HeaderEntry>,
     pub http_status: Option<i64>,
-    pub max_execution_time: i64,
     pub native_methods: HashMap<(Symbol, Symbol), NativeMethodEntry>,
-    pub json_last_error: json::JsonError,
-    pub hash_registry: Option<Arc<hash::HashRegistry>>,
-    pub hash_states: Option<HashMap<u64, Box<dyn hash::HashState>>>,
     pub next_resource_id: u64,
-    pub mysqli_connections:
-        HashMap<u64, Rc<std::cell::RefCell<crate::builtins::mysqli::MysqliConnection>>>,
-    pub mysqli_results: HashMap<u64, Rc<std::cell::RefCell<crate::builtins::mysqli::MysqliResult>>>,
-    pub pdo_connections:
-        HashMap<u64, Rc<std::cell::RefCell<Box<dyn crate::builtins::pdo::driver::PdoConnection>>>>,
-    pub pdo_statements:
-        HashMap<u64, Rc<std::cell::RefCell<Box<dyn crate::builtins::pdo::driver::PdoStatement>>>>,
-    pub zip_archives: HashMap<u64, Rc<std::cell::RefCell<crate::builtins::zip::ZipArchiveWrapper>>>,
-    pub zip_resources:
-        HashMap<u64, Rc<std::cell::RefCell<crate::builtins::zip::ZipArchiveWrapper>>>,
-    pub zip_entries: HashMap<u64, (u64, usize)>,
-    pub timezone: String,
-    pub strtok_string: Option<Vec<u8>>,
-    pub strtok_pos: usize,
-    pub working_dir: Option<std::path::PathBuf>,
     /// Generic extension data storage keyed by TypeId
     pub extension_data: HashMap<TypeId, Box<dyn Any>>,
     /// Unified resource manager for type-safe resource handling
@@ -235,8 +240,13 @@ pub struct RequestContext {
 
 impl RequestContext {
     pub fn new(engine: Arc<EngineContext>) -> Self {
+        Self::with_config(engine, PhpConfig::default())
+    }
+
+    pub fn with_config(engine: Arc<EngineContext>, config: PhpConfig) -> Self {
         let mut ctx = Self {
             engine: Arc::clone(&engine),
+            config,
             globals: HashMap::new(),
             constants: HashMap::new(),
             user_functions: HashMap::new(),
@@ -244,37 +254,19 @@ impl RequestContext {
             included_files: HashSet::new(),
             autoloaders: Vec::new(),
             interner: Interner::new(),
-            error_reporting: 32767, // E_ALL
             last_error: None,
             headers: Vec::new(),
             http_status: None,
-            max_execution_time: 30, // Default 30 seconds
             native_methods: HashMap::new(),
-            json_last_error: json::JsonError::None, // Initialize JSON error state
-            hash_registry: Some(Arc::new(hash::HashRegistry::new())), // Initialize hash registry
-            hash_states: Some(HashMap::new()),      // Initialize hash states map
-            next_resource_id: 1,                    // Start resource IDs from 1
-            mysqli_connections: HashMap::new(),     // Initialize MySQLi connections
-            mysqli_results: HashMap::new(),         // Initialize MySQLi results
-            pdo_connections: HashMap::new(),        // Initialize PDO connections
-            pdo_statements: HashMap::new(),         // Initialize PDO statements
-            zip_archives: HashMap::new(),           // Initialize Zip archives
-            zip_resources: HashMap::new(),          // Initialize Zip resources
-            zip_entries: HashMap::new(),            // Initialize Zip entries
-            timezone: "UTC".to_string(),            // Default timezone
-            strtok_string: None,
-            strtok_pos: 0,
-            working_dir: None,
-            extension_data: HashMap::new(), // Generic extension storage
-            resource_manager: ResourceManager::new(), // Type-safe resource management
+            next_resource_id: 1,
+            extension_data: HashMap::new(),
+            resource_manager: ResourceManager::new(),
         };
 
-        // OPTIMIZATION: Copy constants from extension registry in bulk
-        // This is faster than calling register_builtin_constants() which re-interns
-        // and re-inserts every constant individually.
+        // Copy constants from extension registry in bulk
         ctx.copy_engine_constants();
 
-        // Materialize classes from extensions (all builtin classes now come from extensions)
+        // Materialize classes from extensions
         ctx.materialize_extension_classes();
 
         // Call RINIT for all extensions
@@ -285,19 +277,24 @@ impl RequestContext {
 
     /// Copy constants from engine registry in bulk
     ///
-    /// This is more efficient than calling `register_builtin_constants()` because:
-    /// - Single iteration over engine.registry.constants()
-    /// - Symbols are already interned in engine context
-    /// - Values are already constructed (Rc-shared, cheap to clone)
+    /// Two-phase constant initialization:
+    /// 1. Copy extension-provided constants from engine registry (bulk operation)
+    /// 2. Register core PHP constants (version info, error levels, system constants)
+    ///
+    /// This split is necessary because:
+    /// - Extension constants are registered during MINIT at engine startup
+    /// - Core PHP constants (PHP_VERSION, E_ERROR, etc.) must exist in every request
+    /// - Bulk copy from registry is O(n), avoiding individual re-insertion overhead
     ///
     /// Performance: O(n) where n = number of engine constants
     fn copy_engine_constants(&mut self) {
+        // Phase 1: Copy all extension constants (O(n) bulk operation)
         for (name, val) in self.engine.registry.constants() {
             let sym = self.interner.intern(name);
             self.constants.insert(sym, val.clone());
         }
 
-        // Still need to register builtin constants that aren't in the registry
+        // Phase 2: Register fundamental PHP constants
         self.register_builtin_constants();
     }
 

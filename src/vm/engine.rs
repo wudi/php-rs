@@ -805,7 +805,7 @@ impl VM {
     /// Check if execution time limit has been exceeded
     /// Returns an error if the time limit is exceeded and not unlimited (0)
     fn check_execution_timeout(&self) -> Result<(), VmError> {
-        if self.context.max_execution_time <= 0 {
+        if self.context.config.max_execution_time <= 0 {
             // 0 or negative means unlimited
             return Ok(());
         }
@@ -817,11 +817,11 @@ impl VM {
 
         let elapsed_secs = elapsed.as_secs() as i64;
 
-        if elapsed_secs >= self.context.max_execution_time {
+        if elapsed_secs >= self.context.config.max_execution_time {
             return Err(VmError::RuntimeError(format!(
                 "Maximum execution time of {} second{} exceeded",
-                self.context.max_execution_time,
-                if self.context.max_execution_time == 1 {
+                self.context.config.max_execution_time,
+                if self.context.config.max_execution_time == 1 {
                     ""
                 } else {
                     "s"
@@ -930,7 +930,7 @@ impl VM {
         });
 
         // Only report if the error level is enabled in error_reporting
-        if (self.context.error_reporting & level_bitmask) != 0 {
+        if (self.context.config.error_reporting & level_bitmask) != 0 {
             self.error_handler.report(level, message);
         }
     }
@@ -3617,21 +3617,21 @@ impl VM {
             }
             OpCode::Silence(flag) => {
                 if flag {
-                    let current_level = self.context.error_reporting;
+                    let current_level = self.context.config.error_reporting;
                     self.silence_stack.push(current_level);
-                    self.context.error_reporting = 0;
+                    self.context.config.error_reporting = 0;
                 } else if let Some(level) = self.silence_stack.pop() {
-                    self.context.error_reporting = level;
+                    self.context.config.error_reporting = level;
                 }
             }
             OpCode::BeginSilence => {
-                let current_level = self.context.error_reporting;
+                let current_level = self.context.config.error_reporting;
                 self.silence_stack.push(current_level);
-                self.context.error_reporting = 0;
+                self.context.config.error_reporting = 0;
             }
             OpCode::EndSilence => {
                 if let Some(level) = self.silence_stack.pop() {
-                    self.context.error_reporting = level;
+                    self.context.config.error_reporting = level;
                 }
             }
             OpCode::Ticks(_) => {

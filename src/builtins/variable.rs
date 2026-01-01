@@ -674,7 +674,7 @@ pub fn php_ini_get(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         "display_errors" => "1".to_string(),
         "error_reporting" => "32767".to_string(), // E_ALL
         "memory_limit" => "128M".to_string(),
-        "max_execution_time" => vm.context.max_execution_time.to_string(),
+        "max_execution_time" => vm.context.config.max_execution_time.to_string(),
         "upload_max_filesize" => "2M".to_string(),
         "post_max_size" => "8M".to_string(),
         _ => "".to_string(), // Unknown settings return empty string
@@ -707,7 +707,7 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 }
 
 pub fn php_error_reporting(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
-    let old_level = vm.context.error_reporting as i64;
+    let old_level = vm.context.config.error_reporting as i64;
 
     if args.is_empty() {
         // No arguments: return current level
@@ -721,7 +721,7 @@ pub fn php_error_reporting(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
         _ => return Err("error_reporting() expects int parameter".into()),
     };
 
-    vm.context.error_reporting = new_level;
+    vm.context.config.error_reporting = new_level;
     Ok(vm.arena.alloc(Val::Int(old_level)))
 }
 

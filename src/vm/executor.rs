@@ -150,16 +150,16 @@ pub fn execute_code_with_config(
 
     // Apply configuration - set execution timeout
     if config.timeout_ms > 0 {
-        request_context.max_execution_time = (config.timeout_ms as f64 / 1000.0).ceil() as i64;
+        request_context.config.max_execution_time = (config.timeout_ms as f64 / 1000.0).ceil() as i64;
     } else {
-        request_context.max_execution_time = 0; // Unlimited
+        request_context.config.max_execution_time = 0; // Unlimited
     }
 
     // Note: memory_limit is tracked in the VM, not RequestContext
 
     // Apply configuration - set working directory
     if let Some(ref dir) = config.working_dir {
-        request_context.working_dir = Some(dir.clone());
+        request_context.config.working_dir = Some(dir.clone());
     }
 
     // Compile to bytecode

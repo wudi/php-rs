@@ -718,7 +718,7 @@ pub fn php_datetime_create_from_format(vm: &mut VM, args: &[Handle]) -> Result<H
     let chrono_format = convert_php_to_chrono_format(&format);
 
     if let Ok(naive) = NaiveDateTime::parse_from_str(&datetime_str, &chrono_format) {
-        let tz: Tz = vm.context.timezone.parse().unwrap_or(Tz::UTC);
+        let tz: Tz = vm.context.config.timezone.parse().unwrap_or(Tz::UTC);
         let dt = tz.from_utc_datetime(&naive);
 
         let datetime_sym = vm.context.interner.intern(b"DateTime");
@@ -1310,7 +1310,7 @@ pub fn php_date(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         Utc::now().timestamp()
     };
 
-    let tz = parse_timezone(&vm.context.timezone)?;
+    let tz = parse_timezone(&vm.context.config.timezone)?;
     let dt = Utc.timestamp_opt(timestamp, 0).unwrap().with_timezone(&tz);
 
     let formatted = format_php_date(&dt, &format);
@@ -1789,7 +1789,7 @@ pub fn php_localtime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 pub fn php_date_default_timezone_get(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     Ok(vm
         .arena
-        .alloc(Val::String(vm.context.timezone.as_bytes().to_vec().into())))
+        .alloc(Val::String(vm.context.config.timezone.as_bytes().to_vec().into())))
 }
 
 /// date_default_timezone_set(string $timezoneId): bool
@@ -1803,7 +1803,7 @@ pub fn php_date_default_timezone_set(vm: &mut VM, args: &[Handle]) -> Result<Han
     // Validate timezone
     match parse_timezone(&tz_str) {
         Ok(_) => {
-            vm.context.timezone = tz_str;
+            vm.context.config.timezone = tz_str;
             Ok(vm.arena.alloc(Val::Bool(true)))
         }
         Err(_) => Ok(vm.arena.alloc(Val::Bool(false))),
@@ -2269,7 +2269,7 @@ pub fn php_date_create_immutable_from_format(
         let tz_data = get_internal_data::<DateTimeZoneData>(vm, args[2])?;
         tz_data.tz
     } else {
-        vm.context.timezone.parse().unwrap_or(Tz::UTC)
+        vm.context.config.timezone.parse().unwrap_or(Tz::UTC)
     };
 
     // Try parsing as NaiveDateTime first, if that fails try NaiveDate

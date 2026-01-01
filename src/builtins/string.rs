@@ -2501,21 +2501,30 @@ pub fn php_strtok(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("strtok() expects 1 or 2 parameters".into());
     }
 
+    use crate::runtime::core_extension::CoreExtensionData;
+
+    // First, handle argument parsing without holding extension data borrow
     let token_bytes = if args.len() == 2 {
         let s = vm.value_to_string(args[0])?;
-        vm.context.strtok_string = Some(s);
-        vm.context.strtok_pos = 0;
-        vm.value_to_string(args[1])?
+        let tok = vm.value_to_string(args[1])?;
+        // Now update extension data
+        let ext_data = vm.context.get_or_init_extension_data(CoreExtensionData::default);
+        ext_data.strtok_string = Some(s);
+        ext_data.strtok_pos = 0;
+        tok
     } else {
         vm.value_to_string(args[0])?
     };
 
-    let s_opt = &vm.context.strtok_string;
+    // Now access extension data for processing
+    let ext_data = vm.context.get_or_init_extension_data(CoreExtensionData::default);
+    
+    let s_opt = &ext_data.strtok_string;
     if s_opt.is_none() {
         return Ok(vm.arena.alloc(Val::Bool(false)));
     }
     let s = s_opt.as_ref().unwrap();
-    let mut pos = vm.context.strtok_pos;
+    let mut pos = ext_data.strtok_pos;
 
     // Skip leading delimiters
     while pos < s.len() && token_bytes.contains(&s[pos]) {
@@ -2523,7 +2532,7 @@ pub fn php_strtok(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     }
 
     if pos >= s.len() {
-        vm.context.strtok_pos = pos;
+        ext_data.strtok_pos = pos;
         return Ok(vm.arena.alloc(Val::Bool(false)));
     }
 
@@ -2534,7 +2543,7 @@ pub fn php_strtok(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     }
 
     let result = s[start..pos].to_vec();
-    vm.context.strtok_pos = pos;
+    ext_data.strtok_pos = pos;
 
     Ok(vm.arena.alloc(Val::String(result.into())))
 }

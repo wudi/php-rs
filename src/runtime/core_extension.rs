@@ -8,6 +8,13 @@ use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::registry::{ExtensionRegistry, NativeClassDef, NativeMethodEntry};
 use std::collections::HashMap;
 
+/// Core extension runtime state
+#[derive(Debug, Default)]
+pub struct CoreExtensionData {
+    pub strtok_string: Option<Vec<u8>>,
+    pub strtok_pos: usize,
+}
+
 /// Core extension providing built-in PHP functions
 pub struct CoreExtension;
 
@@ -1232,7 +1239,8 @@ impl Extension for CoreExtension {
         ExtensionResult::Success
     }
 
-    fn request_init(&self, _ctx: &mut RequestContext) -> ExtensionResult {
+    fn request_init(&self, ctx: &mut RequestContext) -> ExtensionResult {
+        ctx.set_extension_data(CoreExtensionData::default());
         ExtensionResult::Success
     }
 
