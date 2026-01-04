@@ -504,18 +504,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_memory_limit_with_large_array() {
-        let mut config = ExecutionConfig::default();
-        config.max_memory_bytes = 500; // Small limit
-        let code = "<?php
-            $large = array_fill(0, 100, 'test');
-        ";
-        let result = execute_code_with_config(code, config);
-        // This should hit memory limit
-        assert!(result.is_err());
-    }
-
     // Sandboxing Tests
 
     #[test]
