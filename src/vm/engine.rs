@@ -1256,7 +1256,8 @@ impl VM {
         })
     }
 
-    pub(crate) fn call_native_method_simple(
+    /// Call a method on an object, trying user-defined methods first, then native methods
+    pub(crate) fn call_method_simple(
         &mut self,
         obj_handle: Handle,
         method_name: Symbol,
@@ -1271,6 +1272,35 @@ impl VM {
             return Err(VmError::RuntimeError("Not an object".into()));
         };
 
+        // Try user-defined method first
+        if let Some((user_func, _visibility, _is_static, declaring_class)) = self.find_method(class_name, method_name) {
+            // Save the current return value to avoid corruption
+            let saved_return_value = self.last_return_value.take();
+            
+            // Call user method through normal call mechanism
+            let chunk = &user_func.chunk;
+            let mut frame = CallFrame::new(chunk.clone());
+            frame.func = Some(user_func.clone());
+            frame.this = Some(obj_handle);
+            frame.class_scope = Some(declaring_class);
+            frame.called_scope = Some(class_name);
+            frame.stack_base = Some(self.operand_stack.len());
+
+            let depth = self.frames.len();
+            self.push_frame(frame);
+            self.run_loop(depth)?;
+
+            let result = self.last_return_value.ok_or(VmError::RuntimeError(
+                "Method must return a value".into(),
+            ))?;
+
+            // Restore the saved return value
+            self.last_return_value = saved_return_value;
+
+            return Ok(result);
+        }
+
+        // Try native method
         if let Some(native_entry) = self.find_native_method(class_name, method_name) {
             let saved_this = self.frames.last().and_then(|f| f.this);
             if let Some(frame) = self.frames.last_mut() {
@@ -1280,24 +1310,24 @@ impl VM {
             if let Some(frame) = self.frames.last_mut() {
                 frame.this = saved_this;
             }
-            Ok(result)
-        } else {
-            Err(VmError::RuntimeError(format!(
-                "Native method not found: {}::{}",
-                String::from_utf8_lossy(
-                    self.context
-                        .interner
-                        .lookup(class_name)
-                        .unwrap_or(b"unknown")
-                ),
-                String::from_utf8_lossy(
-                    self.context
-                        .interner
-                        .lookup(method_name)
-                        .unwrap_or(b"unknown")
-                )
-            )))
+            return Ok(result);
         }
+
+        Err(VmError::RuntimeError(format!(
+            "Method not found: {}::{}",
+            String::from_utf8_lossy(
+                self.context
+                    .interner
+                    .lookup(class_name)
+                    .unwrap_or(b"unknown")
+            ),
+            String::from_utf8_lossy(
+                self.context
+                    .interner
+                    .lookup(method_name)
+                    .unwrap_or(b"unknown")
+            )
+        )))
     }
 
     pub fn collect_methods(&self, class_name: Symbol, caller_scope: Option<Symbol>) -> Vec<Symbol> {
@@ -5354,9 +5384,9 @@ impl VM {
                                     let rewind_sym = self.context.interner.intern(b"rewind");
                                     let valid_sym = self.context.interner.intern(b"valid");
 
-                                    self.call_native_method_simple(iterable_handle, rewind_sym)?;
+                                    self.call_method_simple(iterable_handle, rewind_sym)?;
                                     let is_valid =
-                                        self.call_native_method_simple(iterable_handle, valid_sym)?;
+                                        self.call_method_simple(iterable_handle, valid_sym)?;
 
                                     if let Val::Bool(false) = self.arena.get(is_valid).value {
                                         self.operand_stack.pop(); // Pop object
@@ -5460,7 +5490,7 @@ impl VM {
                                 if self.is_instance_of(iterable_handle, iterator_sym) {
                                     let valid_sym = self.context.interner.intern(b"valid");
                                     let is_valid =
-                                        self.call_native_method_simple(iterable_handle, valid_sym)?;
+                                        self.call_method_simple(iterable_handle, valid_sym)?;
 
                                     if let Val::Bool(false) = self.arena.get(is_valid).value {
                                         self.operand_stack.pop(); // Pop Index
@@ -5552,7 +5582,7 @@ impl VM {
                                 let iterator_sym = self.context.interner.intern(b"Iterator");
                                 if self.is_instance_of(iterable_handle, iterator_sym) {
                                     let next_sym = self.context.interner.intern(b"next");
-                                    self.call_native_method_simple(iterable_handle, next_sym)?;
+                                    self.call_method_simple(iterable_handle, next_sym)?;
                                     // Push dummy index back
                                     self.operand_stack.push(idx_handle);
                                     handled = true;
@@ -5638,7 +5668,7 @@ impl VM {
                                 if self.is_instance_of(iterable_handle, iterator_sym) {
                                     let current_sym = self.context.interner.intern(b"current");
                                     let val_handle = self
-                                        .call_native_method_simple(iterable_handle, current_sym)?;
+                                        .call_method_simple(iterable_handle, current_sym)?;
                                     let frame = self.frames.last_mut().unwrap();
                                     frame.locals.insert(sym, val_handle);
                                     handled = true;
@@ -5772,7 +5802,7 @@ impl VM {
                                 if self.is_instance_of(array_handle, iterator_sym) {
                                     let key_sym = self.context.interner.intern(b"key");
                                     let key_handle =
-                                        self.call_native_method_simple(array_handle, key_sym)?;
+                                        self.call_method_simple(array_handle, key_sym)?;
                                     let frame = self.frames.last_mut().unwrap();
                                     frame.locals.insert(sym, key_handle);
                                     handled = true;

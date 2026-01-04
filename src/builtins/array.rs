@@ -12,7 +12,36 @@ pub fn php_count(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         Val::Array(arr) => arr.map.len(),
         Val::Null => 0,
         Val::ConstArray(map) => map.len(),
-        // In PHP, count() on non-array/non-Countable returns 1 (no strict mode for count)
+        Val::Object(payload_handle) => {
+            // Check if object implements Countable interface
+            let payload = vm.arena.get(*payload_handle);
+            if let Val::ObjPayload(obj_data) = &payload.value {
+                let obj_class = obj_data.class;
+                let countable_sym = vm.context.interner.intern(b"Countable");
+                
+                // Check if class or any parent implements Countable
+                let implements_countable = {
+                    obj_class == countable_sym || vm.is_subclass_of(obj_class, countable_sym)
+                };
+                
+                if implements_countable {
+                    let count_sym = vm.context.interner.intern(b"count");
+                    // Call the count() method on the object
+                    match vm.call_method_simple(args[0], count_sym) {
+                        Ok(result_handle) => {
+                            if let Val::Int(n) = vm.arena.get(result_handle).value {
+                                return Ok(vm.arena.alloc(Val::Int(n)));
+                            }
+                            return Err("count() method must return an integer".into());
+                        }
+                        Err(e) => return Err(format!("Error calling count(): {}", e)),
+                    }
+                }
+            }
+            // In PHP, count() on non-array/non-Countable returns 1
+            1
+        }
+        // In PHP, count() on non-array/non-Countable returns 1
         _ => 1,
     };
 
