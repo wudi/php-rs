@@ -546,6 +546,8 @@ impl EngineBuilder {
             .push(Box::new(super::zlib_extension::ZlibExtension));
         self.extensions
             .push(Box::new(super::mb_extension::MbStringExtension));
+        self.extensions
+            .push(Box::new(crate::builtins::reflection::ReflectionExtension));
         self
     }
 
