@@ -829,6 +829,42 @@ fn test_reflection_parameter_allows_null() {
     }
 }
 
+#[test]
+fn test_reflection_method_invoke() {
+    let result = run_php(r#"<?php
+        class Calculator {
+            public function add($a, $b) {
+                return $a + $b;
+            }
+        }
+        
+        $obj = new Calculator();
+        $rm = new ReflectionMethod('Calculator', 'add');
+        
+        return $rm->invoke($obj, 5, 3);
+    "#);
+    
+    assert_eq!(result, Val::Int(8));
+}
+
+#[test]
+fn test_reflection_method_invoke_args() {
+    let result = run_php(r#"<?php
+        class StringOps {
+            public function concat($a, $b, $c) {
+                return $a . $b . $c;
+            }
+        }
+        
+        $obj = new StringOps();
+        $rm = new ReflectionMethod('StringOps', 'concat');
+        
+        return $rm->invokeArgs($obj, ['Hello', ' ', 'World']);
+    "#);
+    
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"Hello World".to_vec())));
+}
+
 //=============================================================================
 // ReflectionFunction Method Tests
 //=============================================================================

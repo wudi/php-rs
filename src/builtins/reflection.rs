@@ -1129,6 +1129,93 @@ pub fn reflection_method_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Hand
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
+/// ReflectionMethod::invoke(object $object, mixed ...$args): mixed
+pub fn reflection_method_invoke(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("ReflectionMethod::invoke() expects at least 1 argument (object)".to_string());
+    }
+    
+    let data = get_reflection_method_data(vm)?;
+    let object_handle = args[0];
+    
+    // Verify the object is valid
+    let obj_val = vm.arena.get(object_handle).value.clone();
+    if !matches!(obj_val, Val::Object(_)) {
+        return Err("ReflectionMethod::invoke() expects first parameter to be an object".to_string());
+    }
+    
+    // Get method arguments (everything after the object parameter)
+    let method_args: smallvec::SmallVec<[Handle; 8]> = if args.len() > 1 {
+        args[1..].iter().copied().collect()
+    } else {
+        smallvec::SmallVec::new()
+    };
+    
+    // Create callable array: [$object, 'methodName']
+    let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
+    let method_name_handle = vm.arena.alloc(Val::String(Rc::new(method_name_bytes)));
+    
+    let mut arr_data = ArrayData::new();
+    arr_data.push(object_handle);
+    arr_data.push(method_name_handle);
+    let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
+    
+    // Call using the callable system
+    vm.call_callable(callable_handle, method_args)
+        .map_err(|e| format!("Method invocation error: {:?}", e))
+}
+
+/// ReflectionMethod::invokeArgs(object $object, array $args): mixed
+pub fn reflection_method_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() < 2 {
+        return Err("ReflectionMethod::invokeArgs() expects exactly 2 arguments".to_string());
+    }
+    
+    let data = get_reflection_method_data(vm)?;
+    let object_handle = args[0];
+    let args_array_handle = args[1];
+    
+    // Verify the object is valid
+    let obj_val = vm.arena.get(object_handle).value.clone();
+    if !matches!(obj_val, Val::Object(_)) {
+        return Err("ReflectionMethod::invokeArgs() expects first parameter to be an object".to_string());
+    }
+    
+    // Extract arguments from array
+    let args_val = vm.arena.get(args_array_handle).value.clone();
+    let method_args: smallvec::SmallVec<[Handle; 8]> = match args_val {
+        Val::Array(ref arr_data) => {
+            // Collect array values in order
+            let mut result_args = smallvec::SmallVec::new();
+            for i in 0..arr_data.map.len() {
+                let key = crate::core::value::ArrayKey::Int(i as i64);
+                if let Some(&val_handle) = arr_data.map.get(&key) {
+                    result_args.push(val_handle);
+                } else {
+                    break;
+                }
+            }
+            result_args
+        }
+        _ => {
+            return Err("ReflectionMethod::invokeArgs() expects second parameter to be an array".to_string());
+        }
+    };
+    
+    // Create callable array: [$object, 'methodName']
+    let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
+    let method_name_handle = vm.arena.alloc(Val::String(Rc::new(method_name_bytes)));
+    
+    let mut arr_data = ArrayData::new();
+    arr_data.push(object_handle);
+    arr_data.push(method_name_handle);
+    let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
+    
+    // Call using the callable system
+    vm.call_callable(callable_handle, method_args)
+        .map_err(|e| format!("Method invocation error: {:?}", e))
+}
+
 //=============================================================================
 // ReflectionParameter Implementation
 //=============================================================================
@@ -1834,6 +1921,24 @@ impl Extension for ReflectionExtension {
             b"__toString".to_vec(),
             NativeMethodEntry {
                 handler: reflection_method_to_string,
+                visibility: Visibility::Public,
+                is_static: false,
+            },
+        );
+        
+        reflection_method_methods.insert(
+            b"invoke".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_invoke,
+                visibility: Visibility::Public,
+                is_static: false,
+            },
+        );
+        
+        reflection_method_methods.insert(
+            b"invokeArgs".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_invoke_args,
                 visibility: Visibility::Public,
                 is_static: false,
             },
