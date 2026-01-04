@@ -429,6 +429,7 @@ pub fn php_datetimezone_list_identifiers(vm: &mut VM, _args: &[Handle]) -> Resul
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: chrono_tz::TZ_VARIANTS.len() as i64,
+            internal_ptr: 0,
         }))))
 }
 
@@ -1571,6 +1572,7 @@ pub fn php_getdate(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: 0,
+            internal_ptr: 0,
         }))))
 }
 
@@ -1674,6 +1676,7 @@ pub fn php_gettimeofday(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
             .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
                 map,
                 next_free: 0,
+                internal_ptr: 0,
             }))))
     }
 }
@@ -1778,6 +1781,7 @@ pub fn php_localtime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: if associative { 0 } else { 9 },
+            internal_ptr: 0,
         }))))
 }
 
@@ -1914,6 +1918,7 @@ pub fn php_date_sun_info(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: 0,
+            internal_ptr: 0,
         }))))
 }
 
@@ -2003,6 +2008,7 @@ pub fn php_date_parse(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
                 map: IndexMap::new(),
                 next_free: 0,
+                internal_ptr: 0,
             }))),
     );
     map.insert(make_array_key("error_count"), vm.arena.alloc(Val::Int(0)));
@@ -2012,6 +2018,7 @@ pub fn php_date_parse(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
                 map: IndexMap::new(),
                 next_free: 0,
+                internal_ptr: 0,
             }))),
     );
     map.insert(
@@ -2024,6 +2031,7 @@ pub fn php_date_parse(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: 0,
+            internal_ptr: 0,
         }))))
 }
 
@@ -2070,6 +2078,7 @@ pub fn php_date_parse_from_format(vm: &mut VM, args: &[Handle]) -> Result<Handle
             .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
                 map: IndexMap::new(),
                 next_free: 0,
+                internal_ptr: 0,
             }))),
     );
     map.insert(make_array_key("error_count"), vm.arena.alloc(Val::Int(0)));
@@ -2079,6 +2088,7 @@ pub fn php_date_parse_from_format(vm: &mut VM, args: &[Handle]) -> Result<Handle
             .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
                 map: IndexMap::new(),
                 next_free: 0,
+                internal_ptr: 0,
             }))),
     );
 
@@ -2087,6 +2097,7 @@ pub fn php_date_parse_from_format(vm: &mut VM, args: &[Handle]) -> Result<Handle
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: 0,
+            internal_ptr: 0,
         }))))
 }
 
@@ -2396,5 +2407,6 @@ pub fn php_timezone_identifiers_list(vm: &mut VM, _args: &[Handle]) -> Result<Ha
         .alloc(Val::Array(Rc::new(crate::core::value::ArrayData {
             map,
             next_free: chrono_tz::TZ_VARIANTS.len() as i64,
+            internal_ptr: 0,
         }))))
 }

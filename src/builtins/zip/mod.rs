@@ -1113,7 +1113,11 @@ pub fn php_zip_archive_stat_index(vm: &mut VM, args: &[Handle]) -> Result<Handle
 
             return Ok(vm
                 .arena
-                .alloc(Val::Array(Rc::new(ArrayData { map, next_free: 0 }))));
+                .alloc(Val::Array(Rc::new(ArrayData {
+                    map,
+                    next_free: 0,
+                    internal_ptr: 0,
+                }))));
         }
     }
 
@@ -1174,7 +1178,11 @@ pub fn php_zip_archive_stat_name(vm: &mut VM, args: &[Handle]) -> Result<Handle,
 
                 return Ok(vm
                     .arena
-                    .alloc(Val::Array(Rc::new(ArrayData { map, next_free: 0 }))));
+                    .alloc(Val::Array(Rc::new(ArrayData {
+                        map,
+                        next_free: 0,
+                        internal_ptr: 0,
+                    }))));
             }
         }
     }

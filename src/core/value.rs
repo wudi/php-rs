@@ -10,6 +10,7 @@ use std::rc::Rc;
 pub struct ArrayData {
     pub map: IndexMap<ArrayKey, Handle>,
     pub next_free: i64, // Cached next auto-increment index (like HashTable::nNextFreeElement)
+    pub internal_ptr: usize, // Internal array pointer for current(), next(), etc.
 }
 
 impl ArrayData {
@@ -17,6 +18,7 @@ impl ArrayData {
         Self {
             map: IndexMap::new(),
             next_free: 0,
+            internal_ptr: 0,
         }
     }
 
@@ -24,6 +26,7 @@ impl ArrayData {
         Self {
             map: IndexMap::with_capacity(capacity),
             next_free: 0,
+            internal_ptr: 0,
         }
     }
 
@@ -72,7 +75,11 @@ impl From<IndexMap<ArrayKey, Handle>> for ArrayData {
             .map(|i| i + 1)
             .unwrap_or(0);
 
-        Self { map, next_free }
+        Self {
+            map,
+            next_free,
+            internal_ptr: 0,
+        }
     }
 }
 
@@ -302,7 +309,7 @@ impl Val {
 
     /// Parse numeric string to int, returning (value, is_float)
     /// Reference: $PHP_SRC_PATH/Zend/zend_operators.c - is_numeric_string_ex
-    fn parse_numeric_string(s: &[u8]) -> (i64, bool) {
+    pub fn parse_numeric_string(s: &[u8]) -> (i64, bool) {
         if s.is_empty() {
             return (0, false);
         }
