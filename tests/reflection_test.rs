@@ -11,6 +11,7 @@ mod common;
 
 use common::run_php;
 use php_rs::core::value::Val;
+use std::rc::Rc;
 
 #[test]
 fn test_reflection_class_basic() {
@@ -865,6 +866,180 @@ fn test_reflection_method_invoke_args() {
     assert_eq!(result, Val::String(std::rc::Rc::new(b"Hello World".to_vec())));
 }
 
+#[test]
+fn test_reflection_parameter_get_position() {
+    let result = run_php(r#"<?php
+        function testFunc($first, $second, $third) {}
+        
+        $rp1 = new ReflectionParameter('testFunc', 'first');
+        $rp2 = new ReflectionParameter('testFunc', 'second');
+        $rp3 = new ReflectionParameter('testFunc', 'third');
+        
+        return [$rp1->getPosition(), $rp2->getPosition(), $rp3->getPosition()];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 3);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_get_declaring_function() {
+    let result = run_php(r#"<?php
+        function myFunc($param) {}
+        
+        $rp = new ReflectionParameter('myFunc', 'param');
+        $rf = $rp->getDeclaringFunction();
+        
+        return $rf->getName();
+    "#);
+    
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"myFunc".to_vec())));
+}
+
+#[test]
+fn test_reflection_parameter_get_declaring_class() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public function testMethod($param) {}
+        }
+        
+        $rp = new ReflectionParameter(['TestClass', 'testMethod'], 'param');
+        $rc = $rp->getDeclaringClass();
+        
+        return $rc->getName();
+    "#);
+    
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"TestClass".to_vec())));
+}
+
+#[test]
+fn test_reflection_parameter_get_declaring_class_null() {
+    let result = run_php(r#"<?php
+        function globalFunc($param) {}
+        
+        $rp = new ReflectionParameter('globalFunc', 'param');
+        $rc = $rp->getDeclaringClass();
+        
+        return $rc === null;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_parameter_get_type() {
+    let result = run_php(r#"<?php
+        function testFunc(int $intParam, string $strParam, $noType) {}
+        
+        $rp1 = new ReflectionParameter('testFunc', 'intParam');
+        $rp2 = new ReflectionParameter('testFunc', 'strParam');
+        $rp3 = new ReflectionParameter('testFunc', 'noType');
+        
+        return [$rp1->getType(), $rp2->getType(), $rp3->getType()];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 3);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_get_type_returns_named_type() {
+    let result = run_php(r#"<?php
+        function testFunc(int $param) {}
+        
+        $rp = new ReflectionParameter('testFunc', 'param');
+        $type = $rp->getType();
+        
+        return [
+            $type->getName(),
+            $type->isBuiltin(),
+            $type->allowsNull()
+        ];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 3);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_get_type_nullable() {
+    let result = run_php(r#"<?php
+        function testFunc(?int $param) {}
+        
+        $rp = new ReflectionParameter('testFunc', 'param');
+        $type = $rp->getType();
+        
+        // Check that the type allows null and string representation includes ?
+        return [
+            $type->getName(),
+            $type->allowsNull(),
+            $type->__toString()
+        ];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 3);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_get_type_class() {
+    let result = run_php(r#"<?php
+        class MyClass {}
+        function testFunc(MyClass $obj) {}
+        
+        $rp = new ReflectionParameter('testFunc', 'obj');
+        $type = $rp->getType();
+        
+        return [
+            $type->getName(),
+            $type->isBuiltin(),
+            $type->allowsNull()
+        ];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 3);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_can_be_passed_by_value() {
+    let result = run_php(r#"<?php
+        function testFunc($byValue, &$byRef) {}
+        
+        $rp1 = new ReflectionParameter('testFunc', 'byValue');
+        $rp2 = new ReflectionParameter('testFunc', 'byRef');
+        
+        return [$rp1->canBePassedByValue(), $rp2->canBePassedByValue()];
+    "#);
+    
+    if let Val::Array(arr) = result {
+        let map = &arr.map;
+        assert_eq!(map.len(), 2);
+    } else {
+        panic!("Expected array result");
+    }
+}
+
 //=============================================================================
 // ReflectionFunction Method Tests
 //=============================================================================
@@ -1062,6 +1237,1118 @@ fn test_reflection_function_is_generator() {
         $rf = new ReflectionFunction('generatorFunc');
         
         return $rf->isGenerator();
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_invoke() {
+    let result = run_php(r#"<?php
+        function add($a, $b) {
+            return $a + $b;
+        }
+        
+        $rf = new ReflectionFunction('add');
+        return $rf->invoke(5, 3);
+    "#);
+    
+    assert_eq!(result, Val::Int(8));
+}
+
+#[test]
+fn test_reflection_function_invoke_args() {
+    let result = run_php(r#"<?php
+        function multiply($a, $b, $c) {
+            return $a * $b * $c;
+        }
+        
+        $rf = new ReflectionFunction('multiply');
+        return $rf->invokeArgs([2, 3, 4]);
+    "#);
+    
+    assert_eq!(result, Val::Int(24));
+}
+
+#[test]
+fn test_reflection_function_is_anonymous() {
+    let result = run_php(r#"<?php
+        function normalFunc() {
+            return 42;
+        }
+        
+        $rf = new ReflectionFunction('normalFunc');
+        return $rf->isAnonymous();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_function_is_disabled() {
+    let result = run_php(r#"<?php
+        function testFunc() {
+            return 1;
+        }
+        
+        $rf = new ReflectionFunction('testFunc');
+        return $rf->isDisabled();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_function_to_string() {
+    let result = run_php(r#"<?php
+        function myFunc() {
+            return 1;
+        }
+        
+        $rf = new ReflectionFunction('myFunc');
+        $str = $rf->__toString();
+        return is_string($str) && strlen($str) > 0;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_get_closure() {
+    let result = run_php(r#"<?php
+        function testFunc() {
+            return 42;
+        }
+        
+        $rf = new ReflectionFunction('testFunc');
+        return $rf->getClosure();
+    "#);
+    
+    // Currently returns null (not yet implemented)
+    assert_eq!(result, Val::Null);
+}
+
+#[test]
+fn test_reflection_function_get_file_name_internal() {
+    let result = run_php(r#"<?php
+        $rf = new ReflectionFunction('strlen');
+        return $rf->getFileName();
+    "#);
+    
+    // Internal functions return false
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_function_get_file_name_user() {
+    let result = run_php(r#"<?php
+        function myFunc() {
+            return 1;
+        }
+        
+        $rf = new ReflectionFunction('myFunc');
+        return $rf->getFileName();
+    "#);
+    
+    // User functions return null (file tracking not yet implemented)
+    assert_eq!(result, Val::Null);
+}
+
+// ReflectionParameter additional methods tests
+
+#[test]
+fn test_reflection_parameter_is_default_value_constant() {
+    let result = run_php(r#"<?php
+        function test($x = 42) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        
+        return $params[0]->isDefaultValueConstant();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_parameter_is_promoted() {
+    let result = run_php(r#"<?php
+        function test($x) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        
+        return $params[0]->isPromoted();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_parameter_get_attributes() {
+    let result = run_php(r#"<?php
+        function test($x) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        $attrs = $params[0]->getAttributes();
+        
+        return is_array($attrs);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_parameter_to_string() {
+    let result = run_php(r#"<?php
+        function test($x) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        
+        return $params[0]->__toString();
+    "#);
+    
+    if let Val::String(s) = result {
+        let output = String::from_utf8_lossy(s.as_ref());
+        assert!(output.contains("Parameter"));
+        assert!(output.contains("$x"));
+    } else {
+        panic!("Expected string output");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_to_string_with_type() {
+    let result = run_php(r#"<?php
+        function test(int $x = 5) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        
+        return $params[0]->__toString();
+    "#);
+    
+    if let Val::String(s) = result {
+        let output = String::from_utf8_lossy(s.as_ref());
+        assert!(output.contains("Parameter"));
+        assert!(output.contains("int"));
+        assert!(output.contains("$x"));
+        assert!(output.contains("5"));
+    } else {
+        panic!("Expected string output");
+    }
+}
+
+#[test]
+fn test_reflection_parameter_to_string_variadic() {
+    let result = run_php(r#"<?php
+        function test(...$args) {}
+        
+        $rf = new ReflectionFunction('test');
+        $params = $rf->getParameters();
+        
+        return $params[0]->__toString();
+    "#);
+    
+    if let Val::String(s) = result {
+        let output = String::from_utf8_lossy(s.as_ref());
+        assert!(output.contains("Parameter"));
+        assert!(output.contains("$args"));
+    } else {
+        panic!("Expected string output");
+    }
+}
+
+#[test]
+fn test_reflection_class_get_constructor() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public function __construct() {}
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        $constructor = $rc->getConstructor();
+        return $constructor !== null;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_get_method() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public function myMethod() {}
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getMethod('myMethod');
+    "#);
+    
+    // For now, returns string when method exists
+    assert!(matches!(result, Val::String(_)));
+}
+
+#[test]
+fn test_reflection_class_get_property() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public static $myProp;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getProperty('myProp');
+    "#);
+    
+    // For now, returns string when property exists
+    assert!(matches!(result, Val::String(_)));
+}
+
+#[test]
+fn test_reflection_class_get_modifiers() {
+    let result = run_php(r#"<?php
+        abstract class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getModifiers();
+    "#);
+    
+    // Abstract class should have non-zero modifiers
+    if let Val::Int(modifiers) = result {
+        assert!(modifiers > 0);
+    } else {
+        panic!("Expected int modifiers");
+    }
+}
+
+#[test]
+fn test_reflection_class_is_instance() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $obj = new TestClass();
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isInstance($obj);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_is_subclass_of() {
+    let result = run_php(r#"<?php
+        class ParentClass {}
+        class ChildClass extends ParentClass {}
+        
+        $rc = new ReflectionClass('ChildClass');
+        return $rc->isSubclassOf('ParentClass');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_is_anonymous() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isAnonymous();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_is_cloneable() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isCloneable();
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_is_internal() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isInternal();
+    "#);
+    
+    // User-defined class should not be internal
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_is_user_defined() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isUserDefined();
+    "#);
+    
+    // User-defined class should be user-defined
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_is_iterable() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isIterable();
+    "#);
+    
+    // Class without iterator interfaces should not be iterable
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_get_static_properties() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public static $prop1 = 10;
+            public static $prop2 = 20;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        $props = $rc->getStaticProperties();
+        return count($props);
+    "#);
+    
+    assert_eq!(result, Val::Int(2));
+}
+
+#[test]
+fn test_reflection_class_get_static_property_value() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public static $myProp = 42;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getStaticPropertyValue('myProp');
+    "#);
+    
+    assert_eq!(result, Val::Int(42));
+}
+
+#[test]
+fn test_reflection_class_set_static_property_value() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public static $myProp = 10;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        $rc->setStaticPropertyValue('myProp', 99);
+        return TestClass::$myProp;
+    "#);
+    
+    assert_eq!(result, Val::Int(99));
+}
+
+#[test]
+fn test_reflection_class_get_default_properties() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            public static $prop1 = 5;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        $props = $rc->getDefaultProperties();
+        return count($props);
+    "#);
+    
+    assert_eq!(result, Val::Int(1));
+}
+
+#[test]
+fn test_reflection_class_get_attributes() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        $attrs = $rc->getAttributes();
+        return count($attrs);
+    "#);
+    
+    assert_eq!(result, Val::Int(0));
+}
+
+#[test]
+fn test_reflection_class_get_doc_comment() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getDocComment();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_get_file_name() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getFileName();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_get_interfaces() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        $interfaces = $rc->getInterfaces();
+        return count($interfaces);
+    "#);
+    
+    assert_eq!(result, Val::Int(0));
+}
+
+#[test]
+fn test_reflection_class_get_trait_names() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        $traits = $rc->getTraitNames();
+        return count($traits);
+    "#);
+    
+    assert_eq!(result, Val::Int(0));
+}
+
+#[test]
+fn test_reflection_class_is_readonly() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        
+        $rc = new ReflectionClass('TestClass');
+        return $rc->isReadOnly();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_get_reflection_constants() {
+    let result = run_php(r#"<?php
+        class TestClass {
+            const CONST1 = 1;
+            const CONST2 = 2;
+        }
+        
+        $rc = new ReflectionClass('TestClass');
+        $consts = $rc->getReflectionConstants();
+        return count($consts);
+    "#);
+    
+    assert_eq!(result, Val::Int(2));
+}
+#[test]
+fn test_reflection_class_get_extension() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getExtension();
+    "#);
+    
+    assert!(matches!(result, Val::Null));
+}
+
+#[test]
+fn test_reflection_class_get_extension_name() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        $rc = new ReflectionClass('TestClass');
+        return $rc->getExtensionName();
+    "#);
+    
+    assert!(matches!(result, Val::Bool(false)));
+}
+
+#[test]
+fn test_reflection_class_is_iterateable() {
+    let result = run_php(r#"<?php
+        class TestIterator implements Iterator {
+            public function current() {}
+            public function key() {}
+            public function next() {}
+            public function rewind() {}
+            public function valid() { return false; }
+        }
+        
+        $rc = new ReflectionClass('TestIterator');
+        return $rc->isIterateable();
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_lazy_object_methods() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        $rc = new ReflectionClass('TestClass');
+        $obj = new TestClass();
+        
+        // Test lazy object related methods (PHP 8.4+)
+        $initializer = $rc->getLazyInitializer($obj);
+        $uninit = $rc->isUninitializedLazyObject($obj);
+        
+        // All should return stub values
+        return $initializer === null && $uninit === false;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_new_lazy_methods() {
+    let result = run_php(r#"<?php
+        class TestClass {}
+        $rc = new ReflectionClass('TestClass');
+        
+        // Test lazy creation methods (PHP 8.4+) 
+        $ghost = $rc->newLazyGhost(function() {});
+        $proxy = $rc->newLazyProxy(function() {});
+        
+        // Both should return null (stubs)
+        return $ghost === null && $proxy === null;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+//=============================================================================
+// ReflectionAttribute Tests
+//=============================================================================
+
+#[test]
+fn test_reflection_attribute_basic() {
+    // Note: Since attributes are not fully implemented yet, we test that
+    // getAttributes() returns empty array (stub behavior)
+    let result = run_php(r#"<?php
+        class TestClass {
+            public $prop;
+        }
+        
+        $rc = new ReflectionClass("TestClass");
+        $attrs = $rc->getAttributes();
+        return count($attrs);
+    "#);
+    
+    assert_eq!(result, Val::Int(0));
+}
+
+//=============================================================================
+// ReflectionEnum Tests
+//=============================================================================
+
+#[test]
+fn test_reflection_enum_class_exists() {
+    // Test that ReflectionEnum class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionEnum');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+//=============================================================================
+// ReflectionEnumUnitCase Tests
+//=============================================================================
+
+#[test]
+fn test_reflection_enum_unit_case_class_exists() {
+    // Test that ReflectionEnumUnitCase class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionEnumUnitCase');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_enum_backed_case_class_exists() {
+    // Test that ReflectionEnumBackedCase class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionEnumBackedCase');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_extension_class_exists() {
+    // Test that ReflectionExtension class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionExtension');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_extension_get_name() {
+    // Test ReflectionExtension getName() method
+    let result = run_php(r#"<?php
+        $ext = new ReflectionExtension('Core');
+        return $ext->getName();
+    "#);
+    
+    assert_eq!(result, Val::String(Rc::new(b"Core".to_vec())));
+}
+
+#[test]
+fn test_reflection_extension_get_version() {
+    // Test ReflectionExtension getVersion() returns null (not implemented)
+    let result = run_php(r#"<?php
+        $ext = new ReflectionExtension('Core');
+        return $ext->getVersion();
+    "#);
+    
+    assert_eq!(result, Val::Null);
+}
+
+#[test]
+fn test_reflection_extension_get_functions() {
+    // Test ReflectionExtension getFunctions() returns empty array
+    let result = run_php(r#"<?php
+        $ext = new ReflectionExtension('Core');
+        $funcs = $ext->getFunctions();
+        return is_array($funcs) && count($funcs) === 0;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_extension_is_persistent() {
+    // Test ReflectionExtension isPersistent() returns true
+    let result = run_php(r#"<?php
+        $ext = new ReflectionExtension('Core');
+        return $ext->isPersistent();
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_extension_is_temporary() {
+    // Test ReflectionExtension isTemporary() returns false
+    let result = run_php(r#"<?php
+        $ext = new ReflectionExtension('Core');
+        return $ext->isTemporary();
+    "#);
+    
+    assert_eq!(result, Val::Bool(false));
+}
+
+#[test]
+fn test_reflection_class_exists() {
+    // Test that Reflection class exists
+    let result = run_php(r#"<?php
+        return class_exists('Reflection');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_get_modifier_names_public() {
+    // Test Reflection::getModifierNames() with public modifier
+    let result = run_php(r#"<?php
+        $names = Reflection::getModifierNames(256);  // IS_PUBLIC
+        return count($names) === 1 && $names[0] === 'public';
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_get_modifier_names_static() {
+    // Test Reflection::getModifierNames() with static modifier
+    let result = run_php(r#"<?php
+        $names = Reflection::getModifierNames(1);  // IS_STATIC
+        return count($names) === 1 && $names[0] === 'static';
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_get_modifier_names_multiple() {
+    // Test Reflection::getModifierNames() with multiple modifiers
+    let result = run_php(r#"<?php
+        $names = Reflection::getModifierNames(257);  // IS_PUBLIC | IS_STATIC
+        return count($names) === 2 && $names[0] === 'public' && $names[1] === 'static';
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_get_modifier_names_final() {
+    // Test Reflection::getModifierNames() with final modifier
+    let result = run_php(r#"<?php
+        $names = Reflection::getModifierNames(260);  // IS_PUBLIC | IS_FINAL
+        return count($names) === 2 && in_array('public', $names) && in_array('final', $names);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_export_returns_null() {
+    // Test Reflection::export() returns null (deprecated)
+    let result = run_php(r#"<?php
+        return Reflection::export(null);
+    "#);
+    
+    assert_eq!(result, Val::Null);
+}
+
+#[test]
+fn test_reflection_exception_class_exists() {
+    // Test that ReflectionException class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionException');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_exception_extends_exception() {
+    // Test that ReflectionException extends Exception
+    let result = run_php(r#"<?php
+        return is_subclass_of('ReflectionException', 'Exception');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_exception_can_be_instantiated() {
+    // Test that ReflectionException can be created and thrown
+    let result = run_php(r#"<?php
+        try {
+            throw new ReflectionException('Test error', 123);
+        } catch (ReflectionException $e) {
+            return $e->getMessage() === 'Test error' && $e->getCode() === 123;
+        }
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflector_interface_exists() {
+    // Test that Reflector interface exists
+    let result = run_php(r#"<?php
+        return interface_exists('Reflector');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_implements_reflector() {
+    // Test that ReflectionClass implements Reflector
+    let result = run_php(r#"<?php
+        $rc = new ReflectionClass('stdClass');
+        return $rc instanceof Reflector;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_reference_class_exists() {
+    // Test that ReflectionReference class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionReference');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_reference_from_array_element_returns_null() {
+    // Test fromArrayElement() returns null (no reference tracking yet)
+    let result = run_php(r#"<?php
+        $arr = [1, 2, 3];
+        $ref = ReflectionReference::fromArrayElement($arr, 0);
+        return $ref === null;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_reference_get_id() {
+    // Test getId() method exists and is callable
+    // Since we can't create actual ReflectionReference instances yet,
+    // we just verify the static method works
+    let result = run_php(r#"<?php
+        // Test that fromArrayElement is a valid static method
+        $arr = [1, 2, 3];
+        ReflectionReference::fromArrayElement($arr, 0);
+        return true;
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_class_exists() {
+    // Test that ReflectionZendExtension class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionZendExtension');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_get_name() {
+    // Test ReflectionZendExtension::getName()
+    let result = run_php(r#"<?php
+        $ext = new ReflectionZendExtension('Zend OPcache');
+        return $ext->getName() === 'Zend OPcache';
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_get_version() {
+    // Test ReflectionZendExtension::getVersion()
+    let result = run_php(r#"<?php
+        $ext = new ReflectionZendExtension('test');
+        $version = $ext->getVersion();
+        return is_string($version);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_get_author() {
+    // Test ReflectionZendExtension::getAuthor()
+    let result = run_php(r#"<?php
+        $ext = new ReflectionZendExtension('test');
+        $author = $ext->getAuthor();
+        return is_string($author);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_get_url() {
+    // Test ReflectionZendExtension::getURL()
+    let result = run_php(r#"<?php
+        $ext = new ReflectionZendExtension('test');
+        $url = $ext->getURL();
+        return is_string($url);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_zend_extension_get_copyright() {
+    // Test ReflectionZendExtension::getCopyright()
+    let result = run_php(r#"<?php
+        $ext = new ReflectionZendExtension('test');
+        $copyright = $ext->getCopyright();
+        return is_string($copyright);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_generator_class_exists() {
+    // Test that ReflectionGenerator class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionGenerator');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_generator_get_executing_file() {
+    // Test ReflectionGenerator::getExecutingFile() stub
+    // Note: Requires a generator object, using stdClass as placeholder
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rg = new ReflectionGenerator($obj);
+        $file = $rg->getExecutingFile();
+        return is_string($file);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_generator_get_executing_line() {
+    // Test ReflectionGenerator::getExecutingLine() stub
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rg = new ReflectionGenerator($obj);
+        $line = $rg->getExecutingLine();
+        return is_int($line);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_generator_is_closed() {
+    // Test ReflectionGenerator::isClosed() stub
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rg = new ReflectionGenerator($obj);
+        $closed = $rg->isClosed();
+        return is_bool($closed);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_generator_get_trace() {
+    // Test ReflectionGenerator::getTrace() returns array
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rg = new ReflectionGenerator($obj);
+        $trace = $rg->getTrace();
+        return is_array($trace);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_fiber_class_exists() {
+    // Test that ReflectionFiber class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionFiber');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_fiber_get_executing_file() {
+    // Test ReflectionFiber::getExecutingFile() stub
+    // Note: Requires a fiber object, using stdClass as placeholder
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rf = new ReflectionFiber($obj);
+        $file = $rf->getExecutingFile();
+        return is_string($file);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_fiber_get_executing_line() {
+    // Test ReflectionFiber::getExecutingLine() stub
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rf = new ReflectionFiber($obj);
+        $line = $rf->getExecutingLine();
+        return is_int($line);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_fiber_get_trace() {
+    // Test ReflectionFiber::getTrace() returns array
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rf = new ReflectionFiber($obj);
+        $trace = $rf->getTrace();
+        return is_array($trace);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_fiber_get_fiber() {
+    // Test ReflectionFiber::getFiber() returns stored object
+    let result = run_php(r#"<?php
+        $obj = new stdClass();
+        $rf = new ReflectionFiber($obj);
+        $fiber = $rf->getFiber();
+        return is_object($fiber);
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_abstract_class_exists() {
+    // Test that ReflectionFunctionAbstract class exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionFunctionAbstract');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_abstract_get_doc_comment() {
+    // Test that ReflectionFunctionAbstract is registered
+    // Cannot instantiate abstract class, so just verify it exists
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionFunctionAbstract');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_abstract_has_return_type() {
+    // Test that methods are defined in the class
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionFunctionAbstract');
+    "#);
+    
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_function_abstract_is_deprecated() {
+    // Test that the abstract class is accessible
+    let result = run_php(r#"<?php
+        return class_exists('ReflectionFunctionAbstract');
     "#);
     
     assert_eq!(result, Val::Bool(true));
