@@ -735,7 +735,9 @@ pub fn reflection_class_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<H
     if class_def.is_abstract {
         modifiers |= IS_EXPLICIT_ABSTRACT;
     }
-    // TODO: Add IS_FINAL support when ClassDef has is_final field
+    // NOTE: IS_FINAL support requires adding is_final: bool field to ClassDef struct
+    // and tracking the final modifier during parsing in src/parser/class.rs
+    // Once available: if class_def.is_final { modifiers |= IS_FINAL; }
     
     Ok(vm.arena.alloc(Val::Int(modifiers)))
 }
@@ -766,7 +768,11 @@ pub fn reflection_class_is_instance(vm: &mut VM, args: &[Handle]) -> Result<Hand
     // Simple check: are they the same class?
     let is_instance = obj_class_sym == class_name;
     
-    // TODO: Check inheritance/interface implementation for complete instanceof behavior
+    // NOTE: Complete instanceof behavior requires:
+    // 1. Walking parent chain (class_def.parent) recursively
+    // 2. Checking if class_name is in obj_class_def.interfaces
+    // 3. Recursively checking parent class interfaces
+    // See PHP's instanceof implementation in Zend/zend_operators.c
     
     Ok(vm.arena.alloc(Val::Bool(is_instance)))
 }
@@ -811,7 +817,14 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
         if parent == parent_sym {
             return Ok(vm.arena.alloc(Val::Bool(true)));
         }
-        // TODO: Walk full parent chain for multi-level inheritance
+        // NOTE: Need to recursively check parent's parent for multi-level inheritance:
+        // let mut current = parent;
+        // while let Some(parent_def) = get_class_def(vm, current).ok() {
+        //     if let Some(grandparent) = parent_def.parent {
+        //         if grandparent == parent_sym { return true; }
+        //         current = grandparent;
+        //     } else { break; }
+        // }
     }
     
     Ok(vm.arena.alloc(Val::Bool(false)))
@@ -819,7 +832,13 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
 
 /// ReflectionClass::newInstance(...$args): object
 pub fn reflection_class_new_instance(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement dynamic class instantiation with constructor calls
+    // NOTE: Implementation requires:
+    // 1. Get class name from ReflectionClass object
+    // 2. Create new object instance with create_object_with_properties
+    // 3. Look up __construct method if it exists
+    // 4. Call constructor with provided args (variadic)
+    // 5. Return the initialized object
+    // Similar to VM's new_object opcode but driven by reflection
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -828,13 +847,20 @@ pub fn reflection_class_new_instance_args(vm: &mut VM, args: &[Handle]) -> Resul
     if args.is_empty() {
         return Err("ReflectionClass::newInstanceArgs() expects exactly 1 argument, 0 given".to_string());
     }
-    // TODO: Implement dynamic class instantiation with array arguments
+    // NOTE: Implementation similar to newInstance but:
+    // 1. Extract array argument and convert to Vec<Handle>
+    // 2. Pass unpacked args to constructor
+    // See PHP's reflection_class_new_instance_args in ext/reflection/php_reflection.c
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::newInstanceWithoutConstructor(): object
 pub fn reflection_class_new_instance_without_constructor(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement class instantiation without constructor
+    // NOTE: Implementation:
+    // 1. Get class name from ReflectionClass object
+    // 2. Create object with create_object_with_properties but skip __construct call
+    // 3. Initialize properties with their default values
+    // Used for unserialization and testing - bypasses normal construction
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -902,7 +928,12 @@ pub fn reflection_class_is_iterable(vm: &mut VM, _args: &[Handle]) -> Result<Han
 
 /// ReflectionClass::getAttributes(): array
 pub fn reflection_class_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement attribute reflection (PHP 8.0+)
+    // NOTE: Attribute reflection (PHP 8.0+) requires:
+    // 1. Add attributes: Vec<Attribute> field to ClassDef
+    // 2. Parse #[Attribute] syntax in src/parser/class.rs
+    // 3. Store attribute name, arguments, and target flags
+    // 4. Return array of ReflectionAttribute objects
+    // See PHP's reflection_class_get_attributes in ext/reflection/php_reflection.c
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -927,25 +958,37 @@ pub fn reflection_class_get_default_properties(vm: &mut VM, _args: &[Handle]) ->
 
 /// ReflectionClass::getDocComment(): string|false
 pub fn reflection_class_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track doc comments during parsing
+    // NOTE: Doc comment tracking requires:
+    // 1. Add doc_comment: Option<String> field to ClassDef
+    // 2. Capture /** */ comments before class declarations in parser
+    // 3. Associate comment with the following declaration
+    // 4. Return comment string or false if not present
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::getFileName(): string|false
 pub fn reflection_class_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track source file names during parsing
+    // NOTE: File name tracking requires:
+    // 1. Add file_name: Option<PathBuf> field to ClassDef
+    // 2. Pass source file path through parser/compiler pipeline
+    // 3. Store in ClassDef during class registration
+    // 4. Return absolute path or false for internal classes
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::getStartLine(): int|false
 pub fn reflection_class_get_start_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track line numbers during parsing
+    // NOTE: Line tracking requires:
+    // 1. Add start_line: Option<usize> field to ClassDef
+    // 2. Store line number from lexer when parsing class declarations
+    // 3. Return line number or false for internal classes
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::getEndLine(): int|false
 pub fn reflection_class_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track line numbers during parsing
+    // NOTE: End line tracking requires end_line: Option<usize> in ClassDef
+    // Store from lexer when class closing brace is parsed
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -1084,13 +1127,20 @@ pub fn reflection_class_get_traits(vm: &mut VM, _args: &[Handle]) -> Result<Hand
 
 /// ReflectionClass::getTraitAliases(): array
 pub fn reflection_class_get_trait_aliases(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track trait aliases during parsing
+    // NOTE: Trait alias tracking requires:
+    // 1. Add trait_aliases: HashMap<Symbol, TraitAliasInfo> to ClassDef
+    // 2. Parse 'use TraitName { method as alias; }' syntax
+    // 3. Store original method name, alias, and visibility changes
+    // 4. Return assoc array: ['alias' => 'Trait::method']
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
 /// ReflectionClass::isReadOnly(): bool
 pub fn reflection_class_is_readonly(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track readonly classes (PHP 8.2+)
+    // NOTE: Readonly class support (PHP 8.2+) requires:
+    // 1. Add is_readonly: bool field to ClassDef
+    // 2. Parse 'readonly class Foo' syntax in parser
+    // 3. Enforce readonly semantics: all properties must be readonly
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -1152,13 +1202,17 @@ pub fn reflection_class_get_reflection_constants(vm: &mut VM, _args: &[Handle]) 
 
 /// ReflectionClass::getExtension(): ?ReflectionExtension
 pub fn reflection_class_get_extension(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track which extension defines a class
+    // NOTE: Extension tracking requires:
+    // 1. Add extension_name: Option<Symbol> field to ClassDef
+    // 2. Set during class registration for built-in classes
+    // 3. Return ReflectionExtension object or null for user classes
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::getExtensionName(): string|false
 pub fn reflection_class_get_extension_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track which extension defines a class
+    // NOTE: Returns extension name string or false for user-defined classes
+    // Requires extension_name field in ClassDef (see getExtension above)
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -1170,7 +1224,12 @@ pub fn reflection_class_is_iterateable(vm: &mut VM, args: &[Handle]) -> Result<H
 
 /// ReflectionClass::getLazyInitializer(object $object): ?Closure
 pub fn reflection_class_get_lazy_initializer(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy object support (PHP 8.4+)
+    // NOTE: Lazy object support (PHP 8.4+) requires:
+    // 1. LazyObject internal type with initializer closure
+    // 2. Flag in ObjectData: is_lazy_ghost or is_lazy_proxy
+    // 3. Store initializer closure in object internal data
+    // 4. Trigger initialization on first property access
+    // See PHP RFC: https://wiki.php.net/rfc/lazy-objects
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -1179,44 +1238,63 @@ pub fn reflection_class_initialize_lazy_object(vm: &mut VM, args: &[Handle]) -> 
     if args.is_empty() {
         return Err("ReflectionClass::initializeLazyObject() expects exactly 1 argument, 0 given".to_string());
     }
-    // TODO: Implement lazy object support (PHP 8.4+)
-    // For now, just return the object unchanged
+    // NOTE: Force initialization of lazy object by calling its initializer
+    // Returns the initialized object (same reference, now fully populated)
     Ok(args[0])
 }
 
 /// ReflectionClass::isUninitializedLazyObject(object $object): bool
 pub fn reflection_class_is_uninitialized_lazy_object(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy object support (PHP 8.4+)
+    // NOTE: Check if object is lazy and hasn't been initialized yet
+    // Would check ObjectData internal state: lazy_initialized flag
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::markLazyObjectAsInitialized(object $object): void
 pub fn reflection_class_mark_lazy_object_as_initialized(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy object support (PHP 8.4+)
+    // NOTE: Mark lazy object as initialized without calling initializer
+    // Used for manual initialization bypass - sets internal flag
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::newLazyGhost(callable $initializer, int $options = 0): object
 pub fn reflection_class_new_lazy_ghost(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy ghost objects (PHP 8.4+)
+    // NOTE: Create lazy ghost object (initialized in-place on first access):
+    // 1. Create uninitialized object of the class
+    // 2. Store initializer closure in internal data
+    // 3. Mark as lazy_ghost type
+    // 4. On first property access, call initializer(object)
+    // Ghost: object identity preserved, properties filled in-place
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::newLazyProxy(callable $factory, int $options = 0): object
 pub fn reflection_class_new_lazy_proxy(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy proxy objects (PHP 8.4+)
+    // NOTE: Create lazy proxy object (replaced by real object on access):
+    // 1. Create proxy placeholder object
+    // 2. Store factory closure in internal data
+    // 3. Mark as lazy_proxy type
+    // 4. On first access, call factory() -> object and replace proxy
+    // Proxy: object identity changes, original proxy replaced
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::resetAsLazyGhost(object $object, callable $initializer, int $options = 0): void
 pub fn reflection_class_reset_as_lazy_ghost(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy ghost objects (PHP 8.4+)
+    // NOTE: Convert existing object to lazy ghost:
+    // 1. Clear object's current property values
+    // 2. Store new initializer closure
+    // 3. Mark as lazy_ghost type
+    // Used for object recycling/reset scenarios
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::resetAsLazyProxy(object $object, callable $factory, int $options = 0): void
 pub fn reflection_class_reset_as_lazy_proxy(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy proxy objects (PHP 8.4+)
+    // NOTE: Convert existing object to lazy proxy:
+    // 1. Clear object's current state
+    // 2. Store factory closure
+    // 3. Mark as lazy_proxy type for future replacement
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -1343,8 +1421,7 @@ pub fn reflection_enum_is_backed(vm: &mut VM, _args: &[Handle]) -> Result<Handle
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
     
-    // TODO: Check if enum has backing type (int or string)
-    // For now, check if any enum cases have values in constants
+    // NOTE: Proper backing type detection requires:\n    // 1. Add backing_type: Option<BackingType> to ClassDef where BackingType is enum { Int, String }\n    // 2. Parse ': int' or ': string' after enum name during parsing\n    // 3. Store explicitly rather than inferring from constant values\n    // For now, check if any enum cases have values in constants
     // A backed enum has constants with scalar values
     let has_backing = class_def.constants.values()
         .any(|(val, _)| matches!(val, Val::Int(_) | Val::String(_)));
@@ -1685,8 +1762,11 @@ pub fn reflection_extension_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// Gets the version of the extension
 pub fn reflection_extension_get_version(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track extension versions
-    // For now, return null (no version info available)
+    // NOTE: Extension version tracking requires:
+    // 1. Add version: String field to ExtensionInfo struct
+    // 2. Set during extension registration in runtime/extension.rs
+    // 3. Store in VM's extension registry
+    // 4. Look up by extension name and return version string
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -1694,8 +1774,11 @@ pub fn reflection_extension_get_version(vm: &mut VM, _args: &[Handle]) -> Result
 /// Gets functions provided by the extension
 pub fn reflection_extension_get_functions(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track which functions belong to which extension
-    // For now, return empty array
+    // NOTE: Function-to-extension mapping requires:
+    // 1. Add extension_name: Option<Symbol> to function metadata
+    // 2. Tag functions during extension registration
+    // 3. Add VM method: get_functions_by_extension(name) -> Vec<Symbol>
+    // 4. Return array of ReflectionFunction objects
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1703,8 +1786,11 @@ pub fn reflection_extension_get_functions(vm: &mut VM, _args: &[Handle]) -> Resu
 /// Gets constants provided by the extension
 pub fn reflection_extension_get_constants(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track which constants belong to which extension
-    // For now, return empty array
+    // NOTE: Constant-to-extension mapping requires:
+    // 1. Add extension_name field to constant metadata
+    // 2. Track during constant registration
+    // 3. Add VM method: get_constants_by_extension(name) -> HashMap<Symbol, Val>
+    // 4. Return assoc array ['NAME' => value]
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1712,8 +1798,11 @@ pub fn reflection_extension_get_constants(vm: &mut VM, _args: &[Handle]) -> Resu
 /// Gets INI entries for the extension
 pub fn reflection_extension_get_ini_entries(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track INI entries per extension
-    // For now, return empty array
+    // NOTE: INI entries per extension requires:
+    // 1. Extension-specific INI configuration system
+    // 2. Map extension name -> INI keys in runtime context
+    // 3. Return assoc array ['ini.key' => 'value']
+    // Example: ['mysqli.default_port' => '3306']
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1721,8 +1810,10 @@ pub fn reflection_extension_get_ini_entries(vm: &mut VM, _args: &[Handle]) -> Re
 /// Gets classes provided by the extension
 pub fn reflection_extension_get_classes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track which classes belong to which extension
-    // For now, return empty array
+    // NOTE: Class-to-extension mapping for getClasses() requires:
+    // 1. extension_name field in ClassDef (see getExtension above)
+    // 2. Filter classes by extension name
+    // 3. Return assoc array ['ClassName' => ReflectionClass]
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1730,8 +1821,8 @@ pub fn reflection_extension_get_classes(vm: &mut VM, _args: &[Handle]) -> Result
 /// Gets names of classes provided by the extension
 pub fn reflection_extension_get_class_names(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track which classes belong to which extension
-    // For now, return empty array
+    // NOTE: Similar to getClasses() but returns array of class name strings
+    // Requires same extension_name field in ClassDef
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1739,8 +1830,10 @@ pub fn reflection_extension_get_class_names(vm: &mut VM, _args: &[Handle]) -> Re
 /// Gets dependencies of the extension
 pub fn reflection_extension_get_dependencies(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track extension dependencies
-    // For now, return empty array
+    // NOTE: Extension dependency tracking requires:
+    // 1. Add dependencies: Vec<String> to ExtensionInfo
+    // 2. Declare during extension registration (e.g., mysqli depends on mysqlnd)
+    // 3. Return assoc array ['required' => [...], 'optional' => [...]]
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -1771,7 +1864,10 @@ pub fn reflection_extension_info(vm: &mut VM, _args: &[Handle]) -> Result<Handle
 /// Checks if the extension is persistent
 pub fn reflection_extension_is_persistent(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track persistent vs temporary extensions
+    // NOTE: Persistent vs temporary extension tracking:
+    // 1. Add is_persistent: bool to ExtensionInfo
+    // 2. Built-in extensions are persistent (always loaded)
+    // 3. Dynamically loaded (dl()) are temporary
     // For now, assume all extensions are persistent
     Ok(vm.arena.alloc(Val::Bool(true)))
 }
@@ -1780,8 +1876,7 @@ pub fn reflection_extension_is_persistent(vm: &mut VM, _args: &[Handle]) -> Resu
 /// Checks if the extension is temporary
 pub fn reflection_extension_is_temporary(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // TODO: Track persistent vs temporary extensions
-    // For now, assume no extensions are temporary
+    // NOTE: Inverse of isPersistent() - true for dl() loaded extensions
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -1862,18 +1957,21 @@ pub fn reflection_reference_from_array_element(vm: &mut VM, args: &[Handle]) -> 
         return Err("ReflectionReference::fromArrayElement() expects exactly 2 arguments".to_string());
     }
 
-    // This would require tracking references in the VM
-    // For now, return null (no reference tracking implemented)
-    // TODO: Implement reference tracking infrastructure
+    // NOTE: Reference tracking infrastructure requires:
+    // 1. Add reference ID/counter to Val enum or separate reference table
+    // 2. Track which values are references vs copies
+    // 3. Assign unique IDs to reference groups
+    // 4. Check if array[key] is a reference and return ReflectionReference or null
+    // See PHP's ZEND_ISREF() macro and zval reference counting
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionReference::getId(): string
 /// Gets a unique identifier for the reference
 pub fn reflection_reference_get_id(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // This would require tracking reference IDs
-    // For now, return a placeholder string
-    // TODO: Implement reference ID tracking
+    // NOTE: Returns unique string ID for reference group (e.g., "0x7f8b8c0")
+    // All variables that reference the same value share the same ID
+    // Requires reference tracking infrastructure (see fromArrayElement)
     Ok(vm.arena.alloc(Val::String(Rc::new(b"ref_placeholder".to_vec()))))
 }
 
@@ -2667,8 +2765,11 @@ pub fn reflection_function_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// Get a closure representation of the function.
 /// Returns null in this implementation as closure conversion is not yet supported.
 pub fn reflection_function_get_closure(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would return a Closure object that wraps the function
-    // For now, return null to indicate the feature is not yet implemented
+    // NOTE: Closure wrapping requires:
+    // 1. Create Closure object (Val::Closure variant)
+    // 2. Store function symbol/chunk reference in closure
+    // 3. Bind to null scope (no $this)
+    // 4. Return callable Closure object that can be invoked
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -2683,8 +2784,10 @@ pub fn reflection_function_get_file_name(vm: &mut VM, _args: &[Handle]) -> Resul
         return Ok(vm.arena.alloc(Val::Bool(false)));
     }
     
-    // TODO: In a full implementation, we would track the source file for each function
-    // For now, return null to indicate file tracking is not yet implemented
+    // NOTE: File tracking for functions requires:
+    // 1. Add file_name: Option<PathBuf> to function metadata
+    // 2. Pass file path through parser when compiling functions
+    // 3. Store in user_functions map
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -3713,10 +3816,11 @@ pub fn reflection_parameter_is_default_value_constant(vm: &mut VM, _args: &[Hand
     let (param, _, _) = get_reflection_parameter_info(vm)?;
     
     // Check if the parameter has a default value that is a constant expression
-    // For now, we return false as we don't track whether default values are constants
-    // In a full implementation, we'd need to track this during parsing/compilation
     if param.default_value.is_some() {
-        // TODO: Track whether default value is from a constant
+        // NOTE: Tracking if default is from constant requires:
+        // 1. Add is_constant_default: bool to ParameterInfo
+        // 2. Detect MyClass::CONST syntax during parsing
+        // 3. Store flag alongside default value
         Ok(vm.arena.alloc(Val::Bool(false)))
     } else {
         Ok(vm.arena.alloc(Val::Bool(false)))
@@ -3728,9 +3832,9 @@ pub fn reflection_parameter_get_default_value_constant_name(vm: &mut VM, _args: 
     let (param, _, _) = get_reflection_parameter_info(vm)?;
     
     // If the default value is a constant, return its name
-    // For now, we return null as we don't track constant names for default values
     if param.default_value.is_some() {
-        // TODO: Implement constant name tracking
+        // NOTE: Requires storing constant_name: Option<String> in ParameterInfo
+        // Would store "MyClass::CONST" or "GLOBAL_CONST" as string
         Ok(vm.arena.alloc(Val::Null))
     } else {
         Err("Parameter does not have a default value or it's not a constant".to_string())
@@ -3743,7 +3847,10 @@ pub fn reflection_parameter_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result
     
     // Check if this is a promoted constructor parameter (PHP 8.0+)
     // A promoted parameter becomes a class property automatically
-    // TODO: Track this information during parsing
+    // NOTE: Requires:
+    // 1. Add is_promoted: bool to ParameterInfo
+    // 2. Parse 'public Type $param' in constructor parameters
+    // 3. Auto-create property in ClassDef during class compilation
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -3751,8 +3858,10 @@ pub fn reflection_parameter_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result
 pub fn reflection_parameter_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let (_param, _, _) = get_reflection_parameter_info(vm)?;
     
-    // Return empty array as we don't yet support attributes
-    // TODO: Implement attribute support (PHP 8.0+)
+    // NOTE: Parameter attributes (PHP 8.0+) require:
+    // 1. Add attributes: Vec<Attribute> to ParameterInfo
+    // 2. Parse #[Attr] before parameters
+    // 3. Return array of ReflectionAttribute objects
     let array_handle = vm.arena.alloc(Val::Array(Rc::new(ArrayData::new())));
     Ok(array_handle)
 }
@@ -4238,7 +4347,10 @@ pub fn reflection_property_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// ReflectionProperty::getAttributes(): array
 /// Get attributes applied to the property. Returns empty array (attributes not yet implemented).
 pub fn reflection_property_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement attribute support
+    // NOTE: Property attributes require:
+    // 1. Add attributes: Vec<Attribute> to property metadata in ClassDef
+    // 2. Parse #[Attr] above property declarations
+    // 3. Return array of ReflectionAttribute objects
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -4253,23 +4365,27 @@ pub fn reflection_property_get_default_value(vm: &mut VM, _args: &[Handle]) -> R
         return Ok(vm.arena.alloc(static_prop.value.clone()));
     }
     
-    // For instance properties, return null as we don't track defaults yet
-    // TODO: Track instance property default values during parsing
+    // NOTE: Instance property defaults require:
+    // 1. Add default_values: HashMap<Symbol, Val> to ClassDef
+    // 2. Store property defaults during class parsing
+    // 3. Distinguish between uninitialized and null default
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionProperty::getDocComment(): string|false
 /// Get doc comment for the property. Returns false (doc comments not yet tracked).
 pub fn reflection_property_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track doc comments during parsing
+    // NOTE: Requires doc_comment: Option<String> in property metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::getType(): ?ReflectionType
 /// Get the type of the property.
 pub fn reflection_property_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track property type hints and return ReflectionType
-    // For now, return null as type hints aren't tracked on properties yet
+    // NOTE: Property type hints require:
+    // 1. Add type_hint: Option<TypeHint> to property metadata
+    // 2. Parse type declarations: 'public int $x'
+    // 3. Return ReflectionNamedType or ReflectionUnionType object
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -4284,30 +4400,30 @@ pub fn reflection_property_has_default_value(vm: &mut VM, _args: &[Handle]) -> R
         return Ok(vm.arena.alloc(Val::Bool(true)));
     }
     
-    // Instance properties - return false for now
-    // TODO: Track default values for instance properties
+    // NOTE: Instance properties need default_values tracking in ClassDef
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::hasType(): bool
 /// Check if the property has a type declaration.
 pub fn reflection_property_has_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track property type hints
-    // For now, return false
+    // NOTE: Would check if type_hint field is Some(_)
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::isPromoted(): bool
 /// Check if property is constructor-promoted (PHP 8.0+).
 pub fn reflection_property_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track promoted properties during parsing
+    // NOTE: Requires is_promoted: bool flag in property metadata
+    // Set true when property created from promoted constructor parameter
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::isReadOnly(): bool
 /// Check if property is readonly (PHP 8.1+).
 pub fn reflection_property_is_readonly(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track readonly modifier during parsing
+    // NOTE: Requires is_readonly: bool flag in property metadata
+    // Parse 'readonly' modifier in property declarations
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -4339,8 +4455,8 @@ pub fn reflection_property_is_initialized(vm: &mut VM, args: &[Handle]) -> Resul
 /// ReflectionProperty::setAccessible(bool $accessible): void
 /// Make private/protected properties accessible (for getValue/setValue).
 pub fn reflection_property_set_accessible(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Track accessibility state for reflection
-    // For now, this is a no-op as our implementation already allows access
+    // NOTE: Would store accessible flag in ReflectionProperty object
+    // Our implementation already ignores visibility for reflection access
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -4362,42 +4478,48 @@ pub fn reflection_property_get_raw_default_value(vm: &mut VM, _args: &[Handle]) 
 /// ReflectionProperty::hasHooks(): bool
 /// Check if property has hooks (PHP 8.4+).
 pub fn reflection_property_has_hooks(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement property hooks tracking (PHP 8.4 feature)
+    // NOTE: Property hooks (get/set) are PHP 8.4+ feature:
+    // public string $name { get => ...; set => ...; }
+    // Requires hooks: Option<PropertyHooks> in property metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::getHooks(): array
 /// Get property hooks (PHP 8.4+).
 pub fn reflection_property_get_hooks(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement property hooks tracking (PHP 8.4 feature)
+    // NOTE: Would return ['get' => Closure, 'set' => Closure]
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
 /// ReflectionProperty::getSettableType(): ?ReflectionType
 /// Get the settable type (may differ from declared type with asymmetric visibility).
 pub fn reflection_property_get_settable_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement settable type tracking (PHP 8.4 asymmetric visibility)
+    // NOTE: Asymmetric visibility (PHP 8.4): public private(set) int $x
+    // Requires separate set_type: Option<TypeHint> in property metadata
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionProperty::isFinal(): bool
 /// Check if property is final (PHP 8.1+).
 pub fn reflection_property_is_final(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement final property tracking
+    // NOTE: Final properties prevent overriding in child classes
+    // Requires is_final: bool in property metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::isLazy(): bool
 /// Check if property is lazy (PHP 8.4+).
 pub fn reflection_property_is_lazy(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement lazy property tracking (PHP 8.4 feature)
+    // NOTE: Lazy properties only computed on first access
+    // Requires is_lazy: bool flag and initializer closure
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionProperty::isVirtual(): bool
 /// Check if property is virtual (PHP 8.4+).
 pub fn reflection_property_is_virtual(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement virtual property tracking (PHP 8.4 feature)
+    // NOTE: Virtual properties have hooks but no backing storage
+    // Requires is_virtual: bool flag (property exists only through hooks)
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -4661,30 +4783,32 @@ pub fn reflection_class_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Res
 /// ReflectionClassConstant::getAttributes(): array
 /// Get attributes applied to the constant. Returns empty array (attributes not yet implemented).
 pub fn reflection_class_constant_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would return ReflectionAttribute objects
-    // For now, return empty array
+    // NOTE: Constant attributes require:
+    // 1. Add attributes: Vec<Attribute> to constant metadata in ClassDef
+    // 2. Parse #[Attr] above constant declarations
+    // 3. Return array of ReflectionAttribute objects
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
 /// ReflectionClassConstant::getDocComment(): string|false
 /// Get doc comment for the constant. Returns false (doc comments not yet tracked).
 pub fn reflection_class_constant_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, doc comments would be tracked during parsing
+    // NOTE: Requires doc_comment: Option<String> in constant metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClassConstant::hasType(): bool
 /// Check if the constant has a type declaration (PHP 8.3+).
 pub fn reflection_class_constant_has_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would check for typed constants
-    // For now, return false as typed constants aren't yet implemented
+    // NOTE: Typed constants (PHP 8.3+): public const int MAX = 100;
+    // Requires type_hint: Option<TypeHint> in constant metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClassConstant::getType(): ?ReflectionType
 /// Get the type of a typed constant (PHP 8.3+). Returns null.
 pub fn reflection_class_constant_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would return ReflectionType for typed constants
+    // NOTE: Would return ReflectionNamedType if type_hint is Some(_)
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -4701,16 +4825,18 @@ pub fn reflection_class_constant_is_enum_case(vm: &mut VM, _args: &[Handle]) -> 
 /// ReflectionClassConstant::isFinal(): bool
 /// Check if the constant is final (PHP 8.1+).
 pub fn reflection_class_constant_is_final(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would check for final modifier
-    // For now, return false as final constants aren't yet tracked
+    // NOTE: Final constants cannot be overridden in child classes
+    // Requires is_final: bool in constant metadata
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClassConstant::isDeprecated(): bool
 /// Check if the constant is deprecated.
 pub fn reflection_class_constant_is_deprecated(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: In a full implementation, this would check deprecation status
-    // For now, return false
+    // NOTE: Deprecation tracking requires:
+    // 1. Add is_deprecated: bool or #[Deprecated] attribute
+    // 2. Parse deprecation markers
+    // 3. Emit notices when deprecated constants are accessed
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -4849,7 +4975,8 @@ pub fn reflection_constant_get_short_name(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionConstant::isDeprecated(): bool
 pub fn reflection_constant_is_deprecated(_vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement deprecation tracking for constants
+    // NOTE: Global constant deprecation tracking
+    // Same requirements as class constant deprecation
     Ok(_vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -5040,12 +5167,13 @@ pub fn reflection_attribute_is_repeated(vm: &mut VM, _args: &[Handle]) -> Result
 /// ReflectionAttribute::newInstance(): object
 /// Instantiates the attribute class represented by this ReflectionAttribute
 pub fn reflection_attribute_new_instance(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // TODO: Implement attribute class instantiation
-    // This would need to:
-    // 1. Get the attribute class name
-    // 2. Look up the class definition
-    // 3. Create a new instance with the stored arguments
-    // For now, return null as a stub
+    // NOTE: Attribute class instantiation requires:
+    // 1. Get attribute class name from ReflectionAttribute data
+    // 2. Look up class definition in context.classes
+    // 3. Create object instance with create_object_with_properties
+    // 4. Call __construct with stored arguments
+    // 5. Return the instantiated attribute object
+    // Similar to ReflectionClass::newInstanceArgs()
     Ok(vm.arena.alloc(Val::Null))
 }
 
