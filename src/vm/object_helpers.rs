@@ -4,24 +4,46 @@
 //! These helpers are inspired by PHP's internal object creation patterns found in
 //! `$PHP_SRC_PATH/Zend/zend_objects_API.c` and reflection implementations.
 //!
+//! ## Constructor Behavior
+//!
+//! **IMPORTANT:** These helpers create objects WITHOUT calling `__construct()`.
+//!
+//! This matches PHP's internal object creation pattern used by:
+//! - `zend_objects_new()` - Core object allocation without constructor
+//! - Reflection classes (ReflectionMethod, ReflectionClass, etc.)
+//! - Built-in extensions creating internal objects
+//! - `ReflectionClass::newInstanceWithoutConstructor()`
+//!
+//! If you need to create objects that should call `__construct()` (equivalent to
+//! PHP's `object_init_with_constructor()` or normal `new ClassName()`), you should
+//! use the VM's normal instantiation mechanisms instead.
+//!
+//! ## When to Use These Helpers
+//!
+//! Use these helpers when you need to:
+//! - Create internal objects with pre-set properties (like Reflection* classes)
+//! - Bypass constructor logic for internal implementation details
+//! - Create objects where properties are set directly by the runtime
+//! - Implement internal APIs that need object creation without side effects
+//!
 //! ## Usage
 //!
 //! ```ignore
 //! use crate::vm::object_helpers::create_object;
 //!
-//! // Create an object with properties
-//! let obj = create_object!(vm, b"MyClass", {
-//!     b"property1" => Val::String(Rc::new(b"value".to_vec())),
-//!     b"property2" => Val::Int(42),
+//! // Create an object with properties (NO constructor call)
+//! let obj = create_object!(vm, b"ReflectionMethod", {
+//!     b"class" => Val::String(Rc::new(b"MyClass".to_vec())),
+//!     b"name" => Val::String(Rc::new(b"myMethod".to_vec())),
 //! })?;
 //!
 //! // Or use the function directly
 //! let obj = create_object_with_properties(
 //!     vm,
-//!     b"MyClass",
+//!     b"ReflectionMethod",
 //!     &[
-//!         (b"prop1", Val::String(Rc::new(b"value".to_vec()))),
-//!         (b"prop2", Val::Int(42)),
+//!         (b"class", Val::String(Rc::new(b"value".to_vec()))),
+//!         (b"name", Val::String(Rc::new(b"value".to_vec()))),
 //!     ],
 //! )?;
 //! ```
@@ -32,9 +54,17 @@ use std::collections::HashSet;
 
 /// Create a PHP object with the specified class and properties
 ///
-/// This function creates an object, allocates it to the arena, and populates
-/// it with the given properties in a single operation. Properties are specified
-/// as an array of (name, value) tuples.
+/// **IMPORTANT:** This function does NOT call `__construct()`. It creates objects
+/// in the same way as PHP's internal `zend_objects_new()` function.
+///
+/// This is the correct approach for:
+/// - Creating internal objects (Reflection*, DateTime*, etc.)
+/// - Implementing internal APIs that bypass user constructors
+/// - Setting up objects with predefined properties before any user code runs
+///
+/// For normal object instantiation that requires `__construct()` to be called
+/// (equivalent to `new ClassName()` or PHP's `object_init_with_constructor()`),
+/// use the VM's standard object instantiation flow instead.
 ///
 /// # Arguments
 ///
@@ -49,12 +79,13 @@ use std::collections::HashSet;
 /// # Example
 ///
 /// ```ignore
+/// // Create a ReflectionMethod without calling __construct
 /// let obj = create_object_with_properties(
 ///     vm,
 ///     b"ReflectionMethod",
 ///     &[
 ///         (b"class", Val::String(Rc::new(class_name_bytes))),
-///         (b"method", Val::String(Rc::new(method_name_bytes))),
+///         (b"name", Val::String(Rc::new(method_name_bytes))),
 ///     ],
 /// )?;
 /// ```
@@ -70,6 +101,12 @@ use std::collections::HashSet;
 ///
 /// Pre-allocation of property handles (step 4) is necessary to avoid multiple
 /// mutable borrows of `vm.arena`, which would violate Rust's borrowing rules.
+///
+/// # PHP Source Reference
+///
+/// This implementation mirrors PHP's `zend_objects_new()` pattern, NOT
+/// `object_init_with_constructor()`. See `Zend/zend_objects.c` and
+/// `Zend/zend_API.c` in the PHP source for the distinction.
 #[inline]
 pub fn create_object_with_properties(
     vm: &mut VM,
@@ -94,21 +131,25 @@ pub fn create_object_with_properties(
     for (prop_name, prop_val) in properties {
         let prop_sym = vm.context.interner.intern(prop_name);
         let prop_handle = vm.arena.alloc(prop_val.clone());
-        prop_handles.push((prop_sym, prop_handle));
-    }
-
-    // Insert all properties
-    if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(obj_payload_handle).value {
-        for (prop_sym, prop_handle) in prop_handles {
-            obj_data.properties.insert(prop_sym, prop_handle);
-        }
-    }
-
-    Ok(obj_handle)
-}
-
-/// Create an empty PHP object with the specified class
+    **IMPORTANT:** This function does NOT call `__construct()`.
 ///
+/// This is useful when you need to create an object and set properties
+/// later using standard property access operations, without triggering
+/// constructor logic. Matches PHP's `zend_objects_new()` behavior.
+///
+/// # Arguments
+///
+/// * `vm` - Mutable reference to the VM
+/// * `class_name` - Class name as a byte slice (e.g., `b"MyClass"`)
+///
+/// # Returns
+///
+/// A `Result` containing the `Handle` to the created object, or a `String` error message
+///
+/// # Example
+///
+/// ```ignore
+/// // Create object without calling __construct
 /// This is useful when you need to create an object and set properties
 /// later using standard property access operations.
 ///
