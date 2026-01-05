@@ -11733,6 +11733,37 @@ impl VM {
             self.resolve_class_name(class_name)?
         };
 
+        // Check for native method first
+        let native_method = self.find_native_method(resolved_class, method_name);
+        if let Some(native_entry) = native_method {
+            if !native_entry.is_static {
+                return Err(VmError::RuntimeError(
+                    "Non-static method called statically".into(),
+                ));
+            }
+
+            self.check_method_visibility(
+                native_entry.declaring_class,
+                native_entry.visibility,
+                Some(method_name),
+            )?;
+
+            // Collect args
+            let args = self.collect_call_args(arg_count)?;
+
+            // Pop class/method names if dynamic
+            if is_dynamic {
+                self.operand_stack.pop(); // method name
+                self.operand_stack.pop(); // class name
+            }
+
+            // Call native handler (no $this for static methods)
+            let result = (native_entry.handler)(self, &args).map_err(VmError::RuntimeError)?;
+
+            self.operand_stack.push(result);
+            return Ok(());
+        }
+
         let mut method_lookup = self.find_method(resolved_class, method_name);
 
         if method_lookup.is_none() {
