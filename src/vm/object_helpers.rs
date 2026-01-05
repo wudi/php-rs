@@ -131,7 +131,22 @@ pub fn create_object_with_properties(
     for (prop_name, prop_val) in properties {
         let prop_sym = vm.context.interner.intern(prop_name);
         let prop_handle = vm.arena.alloc(prop_val.clone());
-    **IMPORTANT:** This function does NOT call `__construct()`.
+        prop_handles.push((prop_sym, prop_handle));
+    }
+
+    // Insert all properties
+    if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(obj_payload_handle).value {
+        for (prop_sym, prop_handle) in prop_handles {
+            obj_data.properties.insert(prop_sym, prop_handle);
+        }
+    }
+
+    Ok(obj_handle)
+}
+
+/// Create an empty PHP object with the specified class
+///
+/// **IMPORTANT:** This function does NOT call `__construct()`.
 ///
 /// This is useful when you need to create an object and set properties
 /// later using standard property access operations, without triggering
@@ -150,21 +165,6 @@ pub fn create_object_with_properties(
 ///
 /// ```ignore
 /// // Create object without calling __construct
-/// This is useful when you need to create an object and set properties
-/// later using standard property access operations.
-///
-/// # Arguments
-///
-/// * `vm` - Mutable reference to the VM
-/// * `class_name` - Class name as a byte slice (e.g., `b"MyClass"`)
-///
-/// # Returns
-///
-/// A `Result` containing the `Handle` to the created object, or a `String` error message
-///
-/// # Example
-///
-/// ```ignore
 /// let obj = create_empty_object(vm, b"MyClass")?;
 /// // Set properties later through normal property access
 /// ```

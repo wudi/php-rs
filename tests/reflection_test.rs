@@ -279,15 +279,12 @@ fn test_reflection_class_get_parent_class() {
         class ChildClass extends ParentClass {}
         
         $rc = new ReflectionClass('ChildClass');
-        return $rc->getParentClass();
+        $parent = $rc->getParentClass();
+        return $parent->getName();
     "#);
     
-    // Should return parent class name or ReflectionClass object
-    if let Val::String(s) = result {
-        assert_eq!(s.as_ref(), b"ParentClass");
-    } else {
-        panic!("Expected string result");
-    }
+    // Returns ReflectionClass object for parent, verify by getting name
+    assert_eq!(result, Val::String(Rc::new(b"ParentClass".to_vec())));
 }
 
 #[test]
@@ -1484,11 +1481,12 @@ fn test_reflection_class_get_method() {
         }
         
         $rc = new ReflectionClass('TestClass');
-        return $rc->getMethod('myMethod');
+        $rm = $rc->getMethod('myMethod');
+        return $rm->getName();
     "#);
     
-    // For now, returns string when method exists
-    assert!(matches!(result, Val::String(_)));
+    // Returns ReflectionMethod object, verify by getting name
+    assert_eq!(result, Val::String(Rc::new(b"myMethod".to_vec())));
 }
 
 #[test]
@@ -1499,11 +1497,12 @@ fn test_reflection_class_get_property() {
         }
         
         $rc = new ReflectionClass('TestClass');
-        return $rc->getProperty('myProp');
+        $rp = $rc->getProperty('myProp');
+        return $rp->getName();
     "#);
     
-    // For now, returns string when property exists
-    assert!(matches!(result, Val::String(_)));
+    // Returns ReflectionProperty object, verify by getting name
+    assert_eq!(result, Val::String(Rc::new(b"myProp".to_vec())));
 }
 
 #[test]
