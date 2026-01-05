@@ -3,11 +3,10 @@
 //! Reference: $PHP_SRC_PATH/ext/reflection/
 //! Reference: $PHP_SRC_PATH/Zend/zend_reflection.c
 
-use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
+use crate::core::value::{ArrayData, ArrayKey, Handle, Symbol, Val, Visibility};
 use crate::runtime::context::{ClassDef, MethodEntry, ParameterInfo, RequestContext, TypeHint};
 use crate::vm::engine::VM;
 use crate::vm::object_helpers::create_object_with_properties;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
