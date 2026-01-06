@@ -763,14 +763,7 @@ pub fn reflection_class_is_instance(vm: &mut VM, args: &[Handle]) -> Result<Hand
         return Ok(vm.arena.alloc(Val::Bool(false)));
     };
     
-    // Simple check: are they the same class?
-    let is_instance = obj_class_sym == class_name;
-    
-    // NOTE: Complete instanceof behavior requires:
-    // 1. Walking parent chain (class_def.parent) recursively
-    // 2. Checking if class_name is in obj_class_def.interfaces
-    // 3. Recursively checking parent class interfaces
-    // See PHP's instanceof implementation in Zend/zend_operators.c
+    let is_instance = vm.is_instance_of_class(obj_class_sym, class_name);
     
     Ok(vm.arena.alloc(Val::Bool(is_instance)))
 }

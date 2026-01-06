@@ -1559,6 +1559,34 @@ fn test_reflection_class_is_instance() {
 }
 
 #[test]
+fn test_reflection_class_is_instance_parent_chain() {
+    let result = run_php(r#"<?php
+        class ParentClass {}
+        class ChildClass extends ParentClass {}
+
+        $obj = new ChildClass();
+        $rc = new ReflectionClass('ParentClass');
+        return $rc->isInstance($obj);
+    "#);
+
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
+fn test_reflection_class_is_instance_interface() {
+    let result = run_php(r#"<?php
+        interface TestInterface {}
+        class ImplClass implements TestInterface {}
+
+        $obj = new ImplClass();
+        $rc = new ReflectionClass('TestInterface');
+        return $rc->isInstance($obj);
+    "#);
+
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
 fn test_reflection_class_is_subclass_of() {
     let result = run_php(r#"<?php
         class ParentClass {}

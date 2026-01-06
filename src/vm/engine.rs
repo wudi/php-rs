@@ -11526,19 +11526,8 @@ impl VM {
 
     /// Get a human-readable type name for a value
     /// Check if a class is a subclass of another (or the same class)
-    fn is_instance_of_class(&self, obj_class: Symbol, target_class: Symbol) -> bool {
-        if obj_class == target_class {
-            return true;
-        }
-
-        // Check parent classes
-        if let Some(class_def) = self.context.classes.get(&obj_class) {
-            if let Some(parent) = class_def.parent {
-                return self.is_instance_of_class(parent, target_class);
-            }
-        }
-
-        false
+    pub(crate) fn is_instance_of_class(&self, obj_class: Symbol, target_class: Symbol) -> bool {
+        self.is_subclass_of(obj_class, target_class)
     }
 
     /// Convert a ReturnType to a human-readable string
