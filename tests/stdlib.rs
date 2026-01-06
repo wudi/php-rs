@@ -1,6 +1,6 @@
 mod common;
 
-use common::run_code_vm_only;
+use common::{run_code_capture_output, run_code_vm_only};
 use php_rs::core::value::Val;
 
 #[test]
@@ -67,4 +67,13 @@ fn test_explode() {
 fn test_var_dump() {
     // Just ensure it doesn't panic
     run_code_vm_only("<?php var_dump([1, 'a', null]);");
+}
+
+#[test]
+fn test_var_dump_capture_output() {
+    let (_, output) = run_code_capture_output("<?php var_dump([1, 'a', null]);").unwrap();
+    assert!(output.contains("array(3)"));
+    assert!(output.contains("int(1)"));
+    assert!(output.contains("string(1) \"a\""));
+    assert!(output.contains("NULL"));
 }

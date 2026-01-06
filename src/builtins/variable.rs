@@ -1,8 +1,10 @@
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
+use std::fmt::Write as FmtWrite;
 use std::rc::Rc;
 
 pub fn php_var_dump(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    let mut output = String::new();
     for arg in args {
         // Check for __debugInfo
         let class_sym = if let Val::Object(obj_handle) = vm.arena.get(*arg).value {
@@ -27,41 +29,46 @@ pub fn php_var_dump(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 if let Ok(res_handle) = res {
                     let res_val = vm.arena.get(res_handle);
                     if let Val::Array(arr) = &res_val.value {
-                        println!(
-                            "object({}) ({}) {{",
-                            String::from_utf8_lossy(
-                                vm.context.interner.lookup(class).unwrap_or(b"")
-                            ),
-                            arr.map.len()
+                        let class_name = String::from_utf8_lossy(
+                            vm.context.interner.lookup(class).unwrap_or(b""),
                         );
+                        let _ = writeln!(output, "object({}) ({}) {{", class_name, arr.map.len());
                         for (key, val_handle) in arr.map.iter() {
                             match key {
-                                crate::core::value::ArrayKey::Int(i) => print!("  [{}]=>\n", i),
+                                crate::core::value::ArrayKey::Int(i) => {
+                                    let _ = writeln!(output, "  [{}]=>", i);
+                                }
                                 crate::core::value::ArrayKey::Str(s) => {
-                                    print!("  [\"{}\"]=>\n", String::from_utf8_lossy(s))
+                                    let _ = writeln!(
+                                        output,
+                                        "  [\"{}\"]=>",
+                                        String::from_utf8_lossy(s)
+                                    );
                                 }
                             }
-                            dump_value(vm, *val_handle, 1);
+                            dump_value(vm, *val_handle, 1, &mut output);
                         }
-                        println!("}}");
+                        output.push_str("}\n");
                         continue;
                     }
                 }
             }
         }
 
-        dump_value(vm, *arg, 0);
+        dump_value(vm, *arg, 0, &mut output);
     }
+    vm.print_bytes(output.as_bytes())?;
     Ok(vm.arena.alloc(Val::Null))
 }
 
-fn dump_value(vm: &VM, handle: Handle, depth: usize) {
+fn dump_value(vm: &VM, handle: Handle, depth: usize, output: &mut String) {
     let val = vm.arena.get(handle);
     let indent = "  ".repeat(depth);
 
     match &val.value {
         Val::String(s) => {
-            println!(
+            let _ = writeln!(
+                output,
                 "{}string({}) \"{}\"",
                 indent,
                 s.len(),
@@ -69,33 +76,45 @@ fn dump_value(vm: &VM, handle: Handle, depth: usize) {
             );
         }
         Val::Int(i) => {
-            println!("{}int({})", indent, i);
+            let _ = writeln!(output, "{}int({})", indent, i);
         }
         Val::Float(f) => {
-            println!("{}float({})", indent, f);
+            let _ = writeln!(output, "{}float({})", indent, f);
         }
         Val::Bool(b) => {
-            println!("{}bool({})", indent, b);
+            let _ = writeln!(output, "{}bool({})", indent, b);
         }
         Val::Null => {
-            println!("{}NULL", indent);
+            let _ = writeln!(output, "{}NULL", indent);
         }
         Val::ConstArray(arr) => {
             // ConstArray shouldn't appear at runtime, but handle it just in case
-            println!("{}array({}) {{ /* const array */ }}", indent, arr.len());
+            let _ = writeln!(
+                output,
+                "{}array({}) {{ /* const array */ }}",
+                indent,
+                arr.len()
+            );
         }
         Val::Array(arr) => {
-            println!("{}array({}) {{", indent, arr.map.len());
+            let _ = writeln!(output, "{}array({}) {{", indent, arr.map.len());
             for (key, val_handle) in arr.map.iter() {
                 match key {
-                    crate::core::value::ArrayKey::Int(i) => print!("{}  [{}]=>\n", indent, i),
+                    crate::core::value::ArrayKey::Int(i) => {
+                        let _ = writeln!(output, "{}  [{}]=>", indent, i);
+                    }
                     crate::core::value::ArrayKey::Str(s) => {
-                        print!("{}  [\"{}\"]=>\n", indent, String::from_utf8_lossy(s))
+                        let _ = writeln!(
+                            output,
+                            "{}  [\"{}\"]=>",
+                            indent,
+                            String::from_utf8_lossy(s)
+                        );
                     }
                 }
-                dump_value(vm, *val_handle, depth + 1);
+                dump_value(vm, *val_handle, depth + 1, output);
             }
-            println!("{}}}", indent);
+            let _ = writeln!(output, "{}}}", indent);
         }
         Val::Object(handle) => {
             // Dereference the object payload
@@ -106,7 +125,8 @@ fn dump_value(vm: &VM, handle: Handle, depth: usize) {
                     .interner
                     .lookup(obj.class)
                     .unwrap_or(b"<unknown>");
-                println!(
+                let _ = writeln!(
+                    output,
                     "{}object({})#{} ({}) {{",
                     indent,
                     String::from_utf8_lossy(class_name),
@@ -119,25 +139,30 @@ fn dump_value(vm: &VM, handle: Handle, depth: usize) {
                         .interner
                         .lookup(*prop_sym)
                         .unwrap_or(b"<unknown>");
-                    println!("{}  [\"{}\"]=>", indent, String::from_utf8_lossy(prop_name));
-                    dump_value(vm, *prop_handle, depth + 1);
+                    let _ = writeln!(
+                        output,
+                        "{}  [\"{}\"]=>",
+                        indent,
+                        String::from_utf8_lossy(prop_name)
+                    );
+                    dump_value(vm, *prop_handle, depth + 1, output);
                 }
-                println!("{}}}", indent);
+                let _ = writeln!(output, "{}}}", indent);
             } else {
-                println!("{}object(INVALID)", indent);
+                let _ = writeln!(output, "{}object(INVALID)", indent);
             }
         }
         Val::ObjPayload(_) => {
-            println!("{}ObjPayload(Internal)", indent);
+            let _ = writeln!(output, "{}ObjPayload(Internal)", indent);
         }
         Val::Resource(_) => {
-            println!("{}resource", indent);
+            let _ = writeln!(output, "{}resource", indent);
         }
         Val::AppendPlaceholder => {
-            println!("{}AppendPlaceholder", indent);
+            let _ = writeln!(output, "{}AppendPlaceholder", indent);
         }
         Val::Uninitialized => {
-            println!("{}uninitialized", indent);
+            let _ = writeln!(output, "{}uninitialized", indent);
         }
     }
 }
@@ -164,7 +189,7 @@ pub fn php_var_export(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if return_res {
         Ok(vm.arena.alloc(Val::String(output.into_bytes().into())))
     } else {
-        print!("{}", output);
+        vm.print_bytes(output.as_bytes())?;
         Ok(vm.arena.alloc(Val::Null))
     }
 }
