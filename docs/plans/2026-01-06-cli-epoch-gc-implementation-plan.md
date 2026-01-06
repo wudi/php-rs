@@ -343,3 +343,4 @@ git commit -m "Add CLI epoch reclamation trigger"
 ## Open Questions
 - Does `crossbeam-epoch` allow deferring destruction of `Zval` values containing `Rc` without `Send`/`Sync`? If not, decide whether to wrap with `Arc` or isolate non-`Send` contents.
 - Should reclamation be explicit (per opcode loop) or threshold-based (bytes allocated) for CLI?
+- `crossbeam-epoch` can run deferred destructors on another thread; if we keep `Rc` inside `Val`, do we enforce single-threaded collection or migrate to `Arc` for epoch-managed values?
