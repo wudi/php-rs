@@ -2320,6 +2320,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "crc32fast",
+ "crossbeam-epoch",
  "ctrlc",
  "digest",
  "encoding_rs",
