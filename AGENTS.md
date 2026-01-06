@@ -1,11 +1,5 @@
 # Repository Guidelines
 
-## Consistency Guarantee
-- Features must maintain the same behavior as native PHP.
-- PHP source code in local folder `$PHP_SRC_PATH` for in-depth study of how native PHP is implemented.
-- Before implementing each feature, it is necessary to research how PHP implements it.
-- Do not implement features that do not exist in PHP.
-
 ## Project Structure & Module Organization
 - `src/` contains the Rust implementation of the PHP interpreter. Major areas include the parser (`src/parser/`), VM/executor (`src/vm/`), runtime extensions (`src/runtime/`), and builtins (`src/builtins/`).
 - `src/bin/` hosts the CLI entry points: `php` and `php-fpm`.
@@ -42,3 +36,41 @@
 - Test native php result via `php` command
 - Reflection Example from Shell `php --rf strlen` `php --rc finfo` `php --re json` `php --ri dom`
 
+## Programming Style
+- Follow Rust idioms and best practices.
+- Write clear, maintainable code with comments explaining complex logic.
+- Avoid unnecessary optimizations; prioritize readability and correctness.
+- Modularize code effectively to enhance maintainability and scalability.
+- Adhere to SOLID principles where applicable.
+- Use error handling best practices, leveraging Rust's `Result` and `Option` types appropriately.
+- Document public APIs with Rustdoc comments for clarity and usability.
+- Utilize Rust's powerful type system to enforce invariants and reduce runtime errors.
+- Leverage Rust's concurrency features safely when dealing with multi-threaded contexts.
+- Employ Rust's pattern matching capabilities to simplify control flow and enhance code clarity.
+- Make use of Rust's standard library and ecosystem crates to avoid reinventing the wheel.
+- Write unit tests for critical components to ensure reliability and facilitate future changes.
+- Engage in code reviews to maintain code quality and share knowledge among team members.
+- Continuously refactor code to improve structure and eliminate technical debt.
+- Boldly refactor without backward compatibility, as long as PHP behavior remains unchanged.
+- Strive for idiomatic Rust code that is easy to understand and maintain.
+- Use Rust's module system effectively to organize code and manage visibility.
+- Follow Rust's naming conventions consistently throughout the codebase.
+- Utilize Rust's macros judiciously to reduce boilerplate while maintaining code clarity.
+- Embrace Rust's ownership model to ensure memory safety
+
+## Requirements
+- Rust toolchain (stable) installed via [rustup](https://rustup.rs/).
+- PHP source code available in the local folder specified by the environment variable `$PHP_SRC_PATH` for reference and study.
+- Familiarity with PHP internals and behavior to ensure feature parity.
+- Before implementing each feature, it is necessary to research how PHP implements it, and do not implement features that do not exist in PHP.
+
+## Workflow
+- Fully understand the PHP feature to be implemented by studying the PHP source code.
+- Planning the implementation approach, considering how to map PHP concepts to Rust constructs.
+- Write plans in to docs/IMPLEMENTATION_PLANS.md for tracking and discussion.
+- Discuss the plan with the team to gather feedback and suggestions.
+- Implement the feature in Rust, adhering to the project's coding standards and guidelines.
+- Write tests to verify the correctness of the implementation, ensuring they cover various edge cases.
+- Run the full test suite to ensure no existing functionality is broken.
+- Remove any temporary code, docs or debug statements used during development.
+- No summary is required after each completion, but reasons are required for incomplete/partial completion.
