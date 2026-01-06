@@ -1525,23 +1525,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 if self.current_token.kind == TokenKind::OpenParen {
                     self.bump();
                 }
-                let mut items = bumpalo::collections::Vec::new_in(self.arena);
-                while self.current_token.kind != TokenKind::CloseParen
-                    && self.current_token.kind != TokenKind::Eof
-                {
-                    if self.current_token.kind == TokenKind::SemiColon {
-                        self.errors.push(ParseError {
-                            span: self.current_token.span,
-                            message: "Unexpected ';'",
-                        });
-                        self.bump();
-                        continue;
-                    }
-                    items.push(self.parse_array_item());
-                    if self.current_token.kind == TokenKind::Comma {
-                        self.bump();
-                    }
-                }
+                let mut items = self.parse_array_items(TokenKind::CloseParen, false, false);
                 if self.current_token.kind == TokenKind::CloseParen {
                     self.bump();
                 }
@@ -1557,41 +1541,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 if self.current_token.kind == TokenKind::OpenParen {
                     self.bump();
                 }
-                let mut items = bumpalo::collections::Vec::new_in(self.arena);
-                while self.current_token.kind != TokenKind::CloseParen
-                    && self.current_token.kind != TokenKind::Eof
-                {
-                    if self.current_token.kind == TokenKind::SemiColon {
-                        self.errors.push(ParseError {
-                            span: self.current_token.span,
-                            message: "Unexpected ';'",
-                        });
-                        self.bump();
-                        continue;
-                    }
-                    if self.current_token.kind == TokenKind::Comma {
-                        // Empty slot in list()
-                        items.push(ArrayItem {
-                            key: None,
-                            value: self.arena.alloc(Expr::Error {
-                                span: self.current_token.span,
-                            }),
-                            by_ref: false,
-                            unpack: false,
-                            span: self.current_token.span,
-                        });
-                        self.bump();
-                        continue;
-                    }
-                    items.push(self.parse_array_item());
-                    if self.current_token.kind == TokenKind::Comma {
-                        self.bump();
-                        // allow trailing comma
-                        if self.current_token.kind == TokenKind::CloseParen {
-                            break;
-                        }
-                    }
-                }
+                let mut items = self.parse_array_items(TokenKind::CloseParen, true, true);
                 if self.current_token.kind == TokenKind::CloseParen {
                     self.bump();
                 }
@@ -1605,38 +1555,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 // Short array syntax [1, 2, 3]
                 let start = token.span.start;
                 self.bump();
-                let mut items = bumpalo::collections::Vec::new_in(self.arena);
-                while self.current_token.kind != TokenKind::CloseBracket
-                    && self.current_token.kind != TokenKind::Eof
-                {
-                    if self.current_token.kind == TokenKind::SemiColon {
-                        self.errors.push(ParseError {
-                            span: self.current_token.span,
-                            message: "Unexpected ';'",
-                        });
-                        self.bump();
-                        continue;
-                    }
-                    if self.current_token.kind == TokenKind::Comma {
-                        // Empty slot in short array destructuring [a, , b]
-                        items.push(ArrayItem {
-                            key: None,
-                            value: self.arena.alloc(Expr::Error {
-                                span: self.current_token.span,
-                            }),
-                            by_ref: false,
-                            unpack: false,
-                            span: self.current_token.span,
-                        });
-                        self.bump();
-                        continue;
-                    }
-
-                    items.push(self.parse_array_item());
-                    if self.current_token.kind == TokenKind::Comma {
-                        self.bump();
-                    }
-                }
+                let mut items = self.parse_array_items(TokenKind::CloseBracket, true, false);
                 if self.current_token.kind == TokenKind::CloseBracket {
                     self.bump();
                 }
@@ -1777,6 +1696,56 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 span: expr1.span(),
             }
         }
+    }
+
+    fn consume_unexpected_semicolon(&mut self) -> bool {
+        if self.current_token.kind == TokenKind::SemiColon {
+            self.errors.push(ParseError {
+                span: self.current_token.span,
+                message: "Unexpected ';'",
+            });
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn parse_array_items(
+        &mut self,
+        terminator: TokenKind,
+        allow_empty_slots: bool,
+        break_on_trailing_comma: bool,
+    ) -> bumpalo::collections::Vec<'ast, ArrayItem<'ast>> {
+        let mut items = bumpalo::collections::Vec::new_in(self.arena);
+        while self.current_token.kind != terminator && self.current_token.kind != TokenKind::Eof {
+            if self.consume_unexpected_semicolon() {
+                continue;
+            }
+            if allow_empty_slots && self.current_token.kind == TokenKind::Comma {
+                // Empty slot in list() or short array destructuring [a, , b]
+                items.push(ArrayItem {
+                    key: None,
+                    value: self.arena.alloc(Expr::Error {
+                        span: self.current_token.span,
+                    }),
+                    by_ref: false,
+                    unpack: false,
+                    span: self.current_token.span,
+                });
+                self.bump();
+                continue;
+            }
+
+            items.push(self.parse_array_item());
+            if self.current_token.kind == TokenKind::Comma {
+                self.bump();
+                if break_on_trailing_comma && self.current_token.kind == terminator {
+                    break;
+                }
+            }
+        }
+        items
     }
 
     fn parse_interpolated_string(&mut self, end_token: TokenKind) -> ExprId<'ast> {
