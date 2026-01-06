@@ -1529,6 +1529,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 while self.current_token.kind != TokenKind::CloseParen
                     && self.current_token.kind != TokenKind::Eof
                 {
+                    if self.current_token.kind == TokenKind::SemiColon {
+                        self.errors.push(ParseError {
+                            span: self.current_token.span,
+                            message: "Unexpected ';'",
+                        });
+                        self.bump();
+                        continue;
+                    }
                     items.push(self.parse_array_item());
                     if self.current_token.kind == TokenKind::Comma {
                         self.bump();
@@ -1553,6 +1561,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 while self.current_token.kind != TokenKind::CloseParen
                     && self.current_token.kind != TokenKind::Eof
                 {
+                    if self.current_token.kind == TokenKind::SemiColon {
+                        self.errors.push(ParseError {
+                            span: self.current_token.span,
+                            message: "Unexpected ';'",
+                        });
+                        self.bump();
+                        continue;
+                    }
                     if self.current_token.kind == TokenKind::Comma {
                         // Empty slot in list()
                         items.push(ArrayItem {
@@ -1593,6 +1609,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 while self.current_token.kind != TokenKind::CloseBracket
                     && self.current_token.kind != TokenKind::Eof
                 {
+                    if self.current_token.kind == TokenKind::SemiColon {
+                        self.errors.push(ParseError {
+                            span: self.current_token.span,
+                            message: "Unexpected ';'",
+                        });
+                        self.bump();
+                        continue;
+                    }
                     if self.current_token.kind == TokenKind::Comma {
                         // Empty slot in short array destructuring [a, , b]
                         items.push(ArrayItem {
