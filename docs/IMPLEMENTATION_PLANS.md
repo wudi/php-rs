@@ -5,3 +5,4 @@
 - 2026-01-06: Array literal unexpected semicolon recovery (`docs/plans/2026-01-06-array-literal-unexpected-semicolon.md`)
 - 2026-01-06: ReflectionClass::isInstance instanceof semantics (`docs/plans/2026-01-06-reflection-class-isinstance.md`)
 - 2026-01-06: ReflectionClass::isSubclassOf multi-level inheritance (`docs/plans/2026-01-06-reflection-class-issubclassof.md`)
+- 2026-01-06: ReflectionClass::newInstance implementation (`docs/plans/2026-01-06-reflection-class-newinstance.md`)

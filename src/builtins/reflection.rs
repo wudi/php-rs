@@ -3,11 +3,11 @@
 //! Reference: $PHP_SRC_PATH/ext/reflection/
 //! Reference: $PHP_SRC_PATH/Zend/zend_reflection.c
 
-use crate::core::value::{ArrayData, ArrayKey, Handle, Symbol, Val, Visibility};
+use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{ClassDef, MethodEntry, ParameterInfo, RequestContext, TypeHint};
-use crate::vm::engine::VM;
+use crate::vm::engine::{PropertyCollectionMode, VM};
 use crate::vm::object_helpers::create_object_with_properties;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 //=============================================================================
@@ -570,7 +570,7 @@ pub fn reflection_class_implements_interface(vm: &mut VM, args: &[Handle]) -> Re
 /// ReflectionClass::getNamespaceName(): string
 pub fn reflection_class_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
-    let class_name_bytes = lookup_symbol(vm, class_name);
+    let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     
     // Find last backslash to extract namespace
     if let Some(pos) = class_name_bytes.iter().rposition(|&b| b == b'\\') {
@@ -584,7 +584,7 @@ pub fn reflection_class_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Res
 /// ReflectionClass::getShortName(): string
 pub fn reflection_class_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
-    let class_name_bytes = lookup_symbol(vm, class_name);
+    let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     
     // Find last backslash to extract short name
     if let Some(pos) = class_name_bytes.iter().rposition(|&b| b == b'\\') {
@@ -598,7 +598,7 @@ pub fn reflection_class_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<
 /// ReflectionClass::inNamespace(): bool
 pub fn reflection_class_in_namespace(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
-    let class_name_bytes = lookup_symbol(vm, class_name);
+    let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     
     let has_namespace = class_name_bytes.iter().any(|&b| b == b'\\');
     Ok(vm.arena.alloc(Val::Bool(has_namespace)))
@@ -812,15 +812,86 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
 }
 
 /// ReflectionClass::newInstance(...$args): object
-pub fn reflection_class_new_instance(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Implementation requires:
-    // 1. Get class name from ReflectionClass object
-    // 2. Create new object instance with create_object_with_properties
-    // 3. Look up __construct method if it exists
-    // 4. Call constructor with provided args (variadic)
-    // 5. Return the initialized object
-    // Similar to VM's new_object opcode but driven by reflection
-    Ok(vm.arena.alloc(Val::Null))
+pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
+
+    if class_def.is_abstract && !class_def.is_interface {
+        return Err(format!(
+            "Cannot instantiate abstract class {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+    if class_def.is_interface {
+        return Err(format!(
+            "Cannot instantiate interface {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+    if class_def.is_trait {
+        return Err(format!(
+            "Cannot instantiate trait {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+
+    let properties = vm.collect_properties(class_name, PropertyCollectionMode::All);
+    let obj_data = ObjectData {
+        class: class_name,
+        properties,
+        internal: None,
+        dynamic_properties: HashSet::new(),
+    };
+    let payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
+    let obj_handle = vm.arena.alloc(Val::Object(payload_handle));
+
+    let constructor_sym = vm.context.interner.intern(b"__construct");
+    if let Some((_func, visibility, _is_static, _defined_class)) =
+        vm.find_method(class_name, constructor_sym)
+    {
+        if visibility != Visibility::Public {
+            return Err(format!(
+                "Access to non-public constructor of class {}",
+                String::from_utf8_lossy(&class_name_bytes)
+            ));
+        }
+
+        let method_name_handle = vm
+            .arena
+            .alloc(Val::String(Rc::new(b"__construct".to_vec())));
+        let mut arr_data = ArrayData::new();
+        arr_data.push(obj_handle);
+        arr_data.push(method_name_handle);
+        let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
+
+        let ctor_args: smallvec::SmallVec<[Handle; 8]> = args.iter().copied().collect();
+        vm.call_callable(callable_handle, ctor_args)
+            .map_err(|e| format!("Constructor invocation error: {:?}", e))?;
+    } else if let Some(native_entry) = vm.find_native_method(class_name, constructor_sym) {
+        if native_entry.visibility != Visibility::Public {
+            return Err(format!(
+                "Access to non-public constructor of class {}",
+                String::from_utf8_lossy(&class_name_bytes)
+            ));
+        }
+
+        let saved_this = vm.frames.last().and_then(|f| f.this);
+        if let Some(frame) = vm.frames.last_mut() {
+            frame.this = Some(obj_handle);
+        }
+        (native_entry.handler)(vm, args).map_err(|e| format!("{:?}", e))?;
+        if let Some(frame) = vm.frames.last_mut() {
+            frame.this = saved_this;
+        }
+    } else if !args.is_empty() {
+        return Err(format!(
+            "Class {} does not have a constructor, so you cannot pass any constructor arguments",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+
+    Ok(obj_handle)
 }
 
 /// ReflectionClass::newInstanceArgs(array $args): object

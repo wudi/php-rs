@@ -11,7 +11,7 @@ mod common;
 
 use common::{run_code_with_vm, run_php};
 use php_rs::core::value::{ArrayKey, Val};
-use php_rs::vm::engine::VM;
+use php_rs::vm::engine::{VM, VmError};
 use std::rc::Rc;
 
 fn get_array_idx(vm: &VM, val: &Val, idx: i64) -> Val {
@@ -114,6 +114,62 @@ fn test_reflection_class_is_trait() {
         assert_eq!(map.len(), 2);
     } else {
         panic!("Expected array result");
+    }
+}
+
+#[test]
+fn test_reflection_class_new_instance_calls_constructor() {
+    let (result, vm) = run_code_with_vm(r#"<?php
+        class CtorClass {
+            public int $value = 0;
+            public function __construct(int $v) { $this->value = $v; }
+        }
+        $rc = new ReflectionClass('CtorClass');
+        $obj = $rc->newInstance(42);
+        return [$obj instanceof CtorClass, $obj->value];
+    "#).unwrap();
+
+    assert_eq!(get_array_idx(&vm, &result, 0), Val::Bool(true));
+    assert_eq!(get_array_idx(&vm, &result, 1), Val::Int(42));
+}
+
+#[test]
+fn test_reflection_class_new_instance_no_constructor_with_args_throws() {
+    let result = run_code_with_vm(r#"<?php
+        class NoCtor {}
+        $rc = new ReflectionClass('NoCtor');
+        $rc->newInstance(1);
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert!(
+                msg.contains("Class NoCtor does not have a constructor, so you cannot pass any constructor arguments"),
+                "unexpected error: {msg}"
+            );
+        }
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+}
+
+#[test]
+fn test_reflection_class_new_instance_non_public_constructor_throws() {
+    let result = run_code_with_vm(r#"<?php
+        class PrivateCtor {
+            private function __construct() {}
+        }
+        $rc = new ReflectionClass('PrivateCtor');
+        $rc->newInstance();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert!(
+                msg.contains("Access to non-public constructor of class PrivateCtor"),
+                "unexpected error: {msg}"
+            );
+        }
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
     }
 }
 
