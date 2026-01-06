@@ -6,9 +6,10 @@ use php_rs::core::value::{ArrayData, ArrayKey, Val};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::Parser as PhpParser;
 use php_rs::runtime::context::{EngineBuilder, EngineContext};
-use php_rs::vm::engine::{VM, VmError};
+use php_rs::vm::engine::{OutputWriter, StdoutWriter, VM, VmError};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -56,6 +57,64 @@ fn create_engine() -> anyhow::Result<Arc<EngineContext>> {
         .map_err(|e| anyhow::anyhow!("Failed to build engine: {}", e))
 }
 
+#[derive(Default)]
+struct ReplOutputState {
+    wrote_output: bool,
+    last_byte: Option<u8>,
+}
+
+impl ReplOutputState {
+    fn reset(&mut self) {
+        self.wrote_output = false;
+        self.last_byte = None;
+    }
+
+    fn note_write(&mut self, bytes: &[u8]) {
+        if let Some(&last) = bytes.last() {
+            self.wrote_output = true;
+            self.last_byte = Some(last);
+        }
+    }
+
+    fn needs_trailing_newline(&self) -> bool {
+        self.wrote_output && self.last_byte != Some(b'\n')
+    }
+}
+
+struct TrackingOutputWriter<W: OutputWriter> {
+    inner: W,
+    state: Rc<RefCell<ReplOutputState>>,
+}
+
+impl<W: OutputWriter> TrackingOutputWriter<W> {
+    fn new(inner: W, state: Rc<RefCell<ReplOutputState>>) -> Self {
+        Self { inner, state }
+    }
+}
+
+impl<W: OutputWriter> OutputWriter for TrackingOutputWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        self.state.borrow_mut().note_write(bytes);
+        self.inner.write(bytes)
+    }
+
+    fn flush(&mut self) -> Result<(), VmError> {
+        self.inner.flush()
+    }
+}
+
+fn append_repl_trailing_newline_if_needed(
+    vm: &mut VM,
+    output_state: &Rc<RefCell<ReplOutputState>>,
+) -> Result<(), VmError> {
+    if output_state.borrow().needs_trailing_newline() {
+        vm.print_bytes(b"\n")
+            .map_err(VmError::RuntimeError)?;
+        vm.flush_output()?;
+    }
+    Ok(())
+}
+
 fn run_repl() -> anyhow::Result<()> {
     let mut rl = DefaultEditor::new()?;
     if let Err(_) = rl.load_history("history.txt") {
@@ -67,6 +126,9 @@ fn run_repl() -> anyhow::Result<()> {
 
     let engine_context = create_engine()?;
     let mut vm = VM::new_with_sapi(engine_context, php_rs::sapi::SapiMode::Cli);
+    let output_state = Rc::new(RefCell::new(ReplOutputState::default()));
+    let output_writer = TrackingOutputWriter::new(StdoutWriter::default(), output_state.clone());
+    vm.set_output_writer(Box::new(output_writer));
 
     loop {
         let readline = rl.readline("php > ");
@@ -94,7 +156,12 @@ fn run_repl() -> anyhow::Result<()> {
                     format!("<?php {}", line)
                 };
 
+                output_state.borrow_mut().reset();
                 if let Err(e) = execute_source(&source_code, None, &mut vm) {
+                    println!("Error: {:?}", e);
+                    continue;
+                }
+                if let Err(e) = append_repl_trailing_newline_if_needed(&mut vm, &output_state) {
                     println!("Error: {:?}", e);
                 }
             }
@@ -258,4 +325,63 @@ fn execute_source(source: &str, file_path: Option<&Path>, vm: &mut VM) -> Result
     vm.run(Rc::new(chunk))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct BufferedState {
+        pending: Vec<u8>,
+        flushed: Vec<u8>,
+    }
+
+    struct BufferedOutputWriter {
+        state: Arc<Mutex<BufferedState>>,
+    }
+
+    impl BufferedOutputWriter {
+        fn new(state: Arc<Mutex<BufferedState>>) -> Self {
+            Self { state }
+        }
+    }
+
+    impl OutputWriter for BufferedOutputWriter {
+        fn write(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+            let mut state = self.state.lock().unwrap();
+            state.pending.extend_from_slice(bytes);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), VmError> {
+            let mut state = self.state.lock().unwrap();
+            let pending = std::mem::take(&mut state.pending);
+            state.flushed.extend_from_slice(&pending);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn repl_appends_newline_when_output_has_no_trailing_newline() {
+        let engine_context = create_engine().expect("engine context");
+        let mut vm = VM::new_with_sapi(engine_context, php_rs::sapi::SapiMode::Cli);
+
+        let output_state = Rc::new(RefCell::new(ReplOutputState::default()));
+        let state = Arc::new(Mutex::new(BufferedState::default()));
+        let writer = TrackingOutputWriter::new(
+            BufferedOutputWriter::new(state.clone()),
+            output_state.clone(),
+        );
+        vm.set_output_writer(Box::new(writer));
+
+        output_state.borrow_mut().reset();
+        execute_source("<?php echo 123;", None, &mut vm).expect("execute source");
+        append_repl_trailing_newline_if_needed(&mut vm, &output_state)
+            .expect("append trailing newline");
+
+        let output = state.lock().unwrap().flushed.clone();
+        assert_eq!(output, b"123\n");
+    }
 }
