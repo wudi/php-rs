@@ -1,4 +1,4 @@
-use crate::core::value::{Handle, Val};
+use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
 use std::rc::Rc;
 
@@ -596,23 +596,84 @@ pub fn php_is_scalar(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 }
 
 pub fn php_getenv(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
-    if args.is_empty() {
-        // Validation: php_getenv without args returns array of all env vars (not implemented here yet)
-        // or just returns false?
-        // PHP documentation says: string|false getenv(( string $name = null [, bool $local_only = false ] ))
-        // If name is null, returns array of all env vars.
-        return Err("getenv() expects at least 1 parameter".into());
+    if args.len() > 2 {
+        return Err(format!(
+            "getenv() expects at most 2 parameters, {} given",
+            args.len()
+        ));
     }
 
-    let name_val = vm.arena.get(args[0]);
-    let name = match &name_val.value {
-        Val::String(s) => String::from_utf8_lossy(s).to_string(),
-        _ => return Err("getenv(): Parameter 1 must be string".into()),
+    let name_bytes = match args.get(0) {
+        None => None,
+        Some(handle) => match &vm.arena.get(*handle).value {
+            Val::Null => None,
+            _ => Some(vm.check_builtin_param_string(*handle, 1, "getenv")?),
+        },
     };
 
-    match std::env::var(&name) {
-        Ok(val) => Ok(vm.arena.alloc(Val::String(Rc::new(val.into_bytes())))),
-        Err(_) => Ok(vm.arena.alloc(Val::Bool(false))),
+    let local_only = if let Some(handle) = args.get(1) {
+        vm.check_builtin_param_bool(*handle, 2, "getenv")?
+    } else {
+        false
+    };
+
+    if name_bytes.is_none() {
+        let mut map = ArrayData::new();
+
+        for (key, value) in std::env::vars_os() {
+            let key_bytes = key.to_string_lossy().into_owned().into_bytes();
+            let value_bytes = value.to_string_lossy().into_owned().into_bytes();
+            map.insert(
+                ArrayKey::Str(Rc::new(key_bytes)),
+                vm.arena.alloc(Val::String(Rc::new(value_bytes))),
+            );
+        }
+
+        let env_sym = vm.context.interner.intern(b"_ENV");
+        if let Some(env_handle) = vm.context.globals.get(&env_sym) {
+            if let Val::Array(arr) = &vm.arena.get(*env_handle).value {
+                let mut entries = Vec::with_capacity(arr.map.len());
+                for (key, val_handle) in arr.map.iter() {
+                    let key_bytes = match key {
+                        ArrayKey::Str(s) => s.as_ref().clone(),
+                        ArrayKey::Int(i) => i.to_string().into_bytes(),
+                    };
+                    let val_bytes = vm.arena.get(*val_handle).value.to_php_string_bytes();
+                    entries.push((key_bytes, val_bytes));
+                }
+                for (key_bytes, val_bytes) in entries {
+                    map.insert(
+                        ArrayKey::Str(Rc::new(key_bytes)),
+                        vm.arena.alloc(Val::String(Rc::new(val_bytes))),
+                    );
+                }
+            }
+        }
+
+        return Ok(vm.arena.alloc(Val::Array(Rc::new(map))));
+    }
+
+    let name_bytes = name_bytes.unwrap();
+    if !local_only {
+        let env_sym = vm.context.interner.intern(b"_ENV");
+        if let Some(env_handle) = vm.context.globals.get(&env_sym) {
+            if let Val::Array(arr) = &vm.arena.get(*env_handle).value {
+                let key = ArrayKey::Str(Rc::new(name_bytes.clone()));
+                if let Some(val_handle) = arr.map.get(&key) {
+                    let val_bytes = vm.arena.get(*val_handle).value.to_php_string_bytes();
+                    return Ok(vm.arena.alloc(Val::String(Rc::new(val_bytes))));
+                }
+            }
+        }
+    }
+
+    let name = String::from_utf8_lossy(&name_bytes).to_string();
+    match std::env::var_os(&name) {
+        Some(val) => {
+            let bytes = val.to_string_lossy().into_owned().into_bytes();
+            Ok(vm.arena.alloc(Val::String(Rc::new(bytes))))
+        }
+        None => Ok(vm.arena.alloc(Val::Bool(false))),
     }
 }
 
