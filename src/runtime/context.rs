@@ -4,6 +4,7 @@ use crate::core::value::{Handle, Symbol, Val, Visibility};
 use crate::runtime::extension::Extension;
 use crate::runtime::registry::ExtensionRegistry;
 use crate::runtime::resource_manager::ResourceManager;
+use crate::vm::memory::{MemoryApi, VmHeap};
 use crate::vm::engine::VM;
 use indexmap::IndexMap;
 use std::any::{Any, TypeId};
@@ -237,6 +238,8 @@ pub struct RequestContext {
     pub extension_data: HashMap<TypeId, Box<dyn Any>>,
     /// Unified resource manager for type-safe resource handling
     pub resource_manager: ResourceManager,
+    /// Public memory allocation API for extensions
+    pub memory_api: MemoryApi,
 }
 
 impl RequestContext {
@@ -262,6 +265,7 @@ impl RequestContext {
             next_resource_id: 1,
             extension_data: HashMap::new(),
             resource_manager: ResourceManager::new(),
+            memory_api: MemoryApi::new_unbound(),
         };
 
         // Copy constants from extension registry in bulk
@@ -401,6 +405,14 @@ impl RequestContext {
     pub fn set_extension_data<T: 'static>(&mut self, data: T) {
         self.extension_data
             .insert(TypeId::of::<T>(), Box::new(data));
+    }
+
+    pub fn bind_memory_api(&mut self, heap: &mut VmHeap) {
+        self.memory_api.bind(heap);
+    }
+
+    pub fn alloc_bytes(&mut self, len: usize) -> crate::vm::memory::MemoryBlock {
+        self.memory_api.alloc_bytes(len)
     }
 
     /// Get or initialize extension-specific data

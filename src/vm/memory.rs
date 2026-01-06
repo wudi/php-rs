@@ -2,7 +2,9 @@ use crate::core::heap::Arena;
 use crate::core::value::{Handle, Val, Zval};
 use crate::sapi::SapiMode;
 use crossbeam_epoch as epoch;
+use std::any::Any;
 use std::ptr::NonNull;
+use std::rc::Rc;
 
 pub trait HeapPolicy {
     fn alloc(&mut self, val: Val) -> Handle;
@@ -152,6 +154,47 @@ impl VmHeap {
 
     pub fn policy_name(&self) -> &'static str {
         self.policy.name()
+    }
+}
+
+pub struct MemoryBlock {
+    data: Rc<Vec<u8>>,
+    handle: Option<Handle>,
+}
+
+impl MemoryBlock {
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.data.as_ptr()
+    }
+}
+
+pub struct MemoryApi {
+    heap: Option<NonNull<VmHeap>>,
+}
+
+impl MemoryApi {
+    pub fn new_unbound() -> Self {
+        Self { heap: None }
+    }
+
+    pub fn bind(&mut self, heap: &mut VmHeap) {
+        self.heap = Some(NonNull::from(heap));
+    }
+
+    pub fn alloc_bytes(&mut self, len: usize) -> MemoryBlock {
+        let data = Rc::new(vec![0u8; len]);
+        let handle = if let Some(mut heap) = self.heap {
+            let resource: Rc<dyn Any> = data.clone();
+            Some(unsafe { heap.as_mut() }.alloc(Val::Resource(resource)))
+        } else {
+            None
+        };
+
+        MemoryBlock { data, handle }
     }
 }
 

@@ -772,6 +772,7 @@ impl VM {
             disable_functions: std::collections::HashSet::new(),
             disable_classes: std::collections::HashSet::new(),
         };
+        vm.context.bind_memory_api(&mut vm.arena);
         vm.initialize_superglobals();
         vm
     }
