@@ -126,6 +126,7 @@ pub struct ClassDef {
     pub static_properties: HashMap<Symbol, StaticPropertyEntry>, // Static properties with type hints
     pub abstract_methods: HashSet<Symbol>,
     pub allows_dynamic_properties: bool, // Set by #[AllowDynamicProperties] attribute
+    pub doc_comment: Option<Rc<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,6 +341,7 @@ impl RequestContext {
                     static_properties: HashMap::new(),
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: true,
+                    doc_comment: None,
                 },
             );
 

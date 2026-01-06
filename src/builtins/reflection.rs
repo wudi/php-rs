@@ -956,11 +956,13 @@ pub fn reflection_class_get_default_properties(vm: &mut VM, _args: &[Handle]) ->
 
 /// ReflectionClass::getDocComment(): string|false
 pub fn reflection_class_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Doc comment tracking requires:
-    // 1. Add doc_comment: Option<String> field to ClassDef
-    // 2. Capture /** */ comments before class declarations in parser
-    // 3. Associate comment with the following declaration
-    // 4. Return comment string or false if not present
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if let Some(comment) = class_def.doc_comment {
+        return Ok(vm.arena.alloc(Val::String(comment)));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
