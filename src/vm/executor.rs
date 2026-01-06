@@ -167,7 +167,7 @@ pub fn execute_code_with_config(
     let (chunk, _) = emitter.compile(&program.statements);
 
     // Create VM and execute
-    let mut vm = VM::new_with_context(request_context);
+    let mut vm = VM::new_with_context_and_sapi(request_context, crate::sapi::SapiMode::Cli);
 
     // Apply configuration - set initial globals
     // This must be done after VM creation so we have access to the arena

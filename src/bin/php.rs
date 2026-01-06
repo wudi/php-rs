@@ -66,7 +66,7 @@ fn run_repl() -> anyhow::Result<()> {
     println!("Type 'exit' or 'quit' to quit");
 
     let engine_context = create_engine()?;
-    let mut vm = VM::new(engine_context);
+    let mut vm = VM::new_with_sapi(engine_context, php_rs::sapi::SapiMode::Cli);
 
     loop {
         let readline = rl.readline("php > ");
@@ -127,7 +127,7 @@ fn run_file(path: PathBuf, args: Vec<String>) -> anyhow::Result<()> {
     }
 
     let engine_context = create_engine()?;
-    let mut vm = VM::new(engine_context);
+    let mut vm = VM::new_with_sapi(engine_context, php_rs::sapi::SapiMode::Cli);
 
     // Fix $_SERVER variables to match the script being run
     let server_sym = vm.context.interner.intern(b"_SERVER");

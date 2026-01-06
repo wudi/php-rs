@@ -355,43 +355,7 @@ pub struct VM {
 
 impl VM {
     pub fn new(engine_context: Arc<EngineContext>) -> Self {
-        let trace_includes = std::env::var_os("PHP_VM_TRACE_INCLUDE").is_some();
-        if trace_includes {
-            eprintln!("[php-vm] include tracing enabled");
-        }
-        let mut vm = Self {
-            arena: VmHeap::new(SapiMode::Cli),
-            operand_stack: Stack::new(),
-            frames: Vec::new(),
-            context: RequestContext::new(engine_context),
-            last_return_value: None,
-            silence_stack: Vec::new(),
-            pending_calls: Vec::new(),
-            output_writer: Box::new(StdoutWriter::default()),
-            error_handler: Box::new(StderrErrorHandler::default()),
-            output_buffers: Vec::new(),
-            implicit_flush: false,
-            url_rewrite_vars: HashMap::new(),
-            trace_includes,
-            superglobal_map: HashMap::new(),
-            var_handle_map: HashMap::new(),
-            pending_undefined: HashMap::new(),
-            suppress_undefined_notice: false,
-            execution_start_time: SystemTime::now(),
-            executing_finally: false,
-            finally_return_value: None,
-            builtin_call_strict: false,
-            opcodes_executed: 0,
-            function_calls: 0,
-            memory_limit: 0,         // Unlimited by default
-            allow_file_io: true,     // Allow by default
-            allow_network: true,     // Allow by default
-            allowed_functions: None, // All functions allowed by default
-            disable_functions: std::collections::HashSet::new(),
-            disable_classes: std::collections::HashSet::new(),
-        };
-        vm.initialize_superglobals();
-        vm
+        Self::new_with_sapi(engine_context, SapiMode::Cli)
     }
 
     /// Instantiate a class and call its constructor.
@@ -764,12 +728,21 @@ impl VM {
     }
 
     pub fn new_with_context(context: RequestContext) -> Self {
+        Self::new_with_context_and_sapi(context, SapiMode::Cli)
+    }
+
+    pub fn new_with_sapi(engine_context: Arc<EngineContext>, mode: SapiMode) -> Self {
+        let context = RequestContext::new(engine_context);
+        Self::new_with_context_and_sapi(context, mode)
+    }
+
+    pub fn new_with_context_and_sapi(context: RequestContext, mode: SapiMode) -> Self {
         let trace_includes = std::env::var_os("PHP_VM_TRACE_INCLUDE").is_some();
         if trace_includes {
             eprintln!("[php-vm] include tracing enabled");
         }
         let mut vm = Self {
-            arena: VmHeap::new(SapiMode::Cli),
+            arena: VmHeap::new(mode),
             operand_stack: Stack::new(),
             frames: Vec::new(),
             context,

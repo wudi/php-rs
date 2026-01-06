@@ -406,7 +406,7 @@ async fn execute_php(
 
     let output_buffer = Arc::new(Mutex::new(Vec::new()));
     let error_buffer = Arc::new(Mutex::new(Vec::new()));
-    let mut vm = VM::new(Arc::clone(engine));
+    let mut vm = VM::new_with_sapi(Arc::clone(engine), php_rs::sapi::SapiMode::FpmFcgi);
 
     // Use SAPI to initialize superglobals
     php_rs::sapi::init_superglobals(
