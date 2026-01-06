@@ -327,10 +327,8 @@ pub fn reflection_class_is_abstract(vm: &mut VM, _args: &[Handle]) -> Result<Han
 pub fn reflection_class_is_final(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
-    // Check if class has final modifier (we need to add this to ClassDef)
-    // For now, return false as placeholder
-    Ok(vm.arena.alloc(Val::Bool(false)))
+
+    Ok(vm.arena.alloc(Val::Bool(class_def.is_final)))
 }
 
 /// ReflectionClass::isInterface(): bool
@@ -730,13 +728,14 @@ pub fn reflection_class_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<H
     
     // These constants match PHP's ReflectionClass constants
     const IS_EXPLICIT_ABSTRACT: i64 = 64;
+    const IS_FINAL: i64 = 32;
     
     if class_def.is_abstract {
         modifiers |= IS_EXPLICIT_ABSTRACT;
     }
-    // NOTE: IS_FINAL support requires adding is_final: bool field to ClassDef struct
-    // and tracking the final modifier during parsing in src/parser/class.rs
-    // Once available: if class_def.is_final { modifiers |= IS_FINAL; }
+    if class_def.is_final {
+        modifiers |= IS_FINAL;
+    }
     
     Ok(vm.arena.alloc(Val::Int(modifiers)))
 }
@@ -1908,6 +1907,7 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
 
     // PHP modifier constants:
     // IS_STATIC = 1, IS_ABSTRACT = 2, IS_FINAL = 4
+    // ReflectionClass modifiers: IS_FINAL = 32, IS_EXPLICIT_ABSTRACT = 64
     // IS_PUBLIC = 256, IS_PROTECTED = 512, IS_PRIVATE = 1024
     // IS_READONLY = 2048
 
@@ -1926,10 +1926,10 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
     if modifiers & 1 != 0 {  // IS_STATIC
         names.push(b"static".to_vec());
     }
-    if modifiers & 2 != 0 {  // IS_ABSTRACT
+    if modifiers & 2 != 0 || modifiers & 64 != 0 {  // IS_ABSTRACT / IS_EXPLICIT_ABSTRACT
         names.push(b"abstract".to_vec());
     }
-    if modifiers & 4 != 0 {  // IS_FINAL
+    if modifiers & 4 != 0 || modifiers & 32 != 0 {  // IS_FINAL
         names.push(b"final".to_vec());
     }
     if modifiers & 2048 != 0 {  // IS_READONLY
