@@ -1,8 +1,8 @@
-# CLI GC + SAPI-Switched Memory Model Design
+# CLI GC (Epoch) + SAPI-Switched Memory Model Design
 
 ## Goals
 - Provide an open memory allocation API for extensions/packages.
-- Support two allocation policies: FPM request-scoped arena and CLI incremental GC.
+- Support two allocation policies: FPM request-scoped arena and CLI epoch-based GC.
 - Keep PHP behavior unchanged while improving long-running CLI memory behavior.
 
 ## Architecture Overview
@@ -13,7 +13,7 @@
 ## Components
 - `MemoryManager` (VM-owned): routes allocations to the active policy and tracks thresholds.
 - `ArenaPolicy` (FPM): bump allocation, bulk free at request end.
-- `IncrementalGcPolicy` (CLI): tri-color incremental collector with a worklist, write barrier, and sweeping.
+- `EpochGcPolicy` (CLI): epoch-based reclamation using `crossbeam-epoch`.
 - `GcRootProvider` trait: allows RequestContext/VM subsystems to enumerate roots.
 
 ## Root Set (CLI)
@@ -27,22 +27,26 @@
 - Typed helpers for extensions to allocate stable buffers
 - Same API routes to arena or GC depending on SAPI mode
 
-## GC Mechanics (CLI Incremental)
-- Tri-color marking with a gray worklist.
-- Automatic GC triggers when `allocated_since_gc` crosses a threshold.
-- Safepoints in opcode dispatch/loop boundaries advance the collector in small slices.
-- Write barrier on mutable container operations (arrays/objects) to maintain incremental invariants.
+## GC Mechanics (CLI Epoch-Based)
+- Use `crossbeam-epoch` to manage reclamation epochs for GC-managed runtime values.
+- Each VM run-loop iteration enters a pinned epoch guard; allocations are tagged with the current epoch.
+- Retire unreachable objects by deferring destruction until all active guards have advanced past the retire epoch.
+- CLI remains long-lived; collection is paced by allocation thresholds that trigger reclamation cycles.
+- FPM does not use epoch GC; it frees request memory via arena reset on request end.
 
 ## Error Handling
-- On allocation failure, attempt a full GC cycle; if still failing, return `VmError::OutOfMemory`.
-- Unsafe mutations must go through guarded APIs to preserve write barrier correctness.
+- On allocation failure, attempt a reclamation cycle; if still failing, return `VmError::OutOfMemory`.
+- Ensure extension allocation APIs fail fast with clear errors when memory cannot be reclaimed.
 
 ## Testing
-- Unit tests: graph traversal, cycles, and write barrier behavior.
+- Unit tests: epoch guard usage, retire timing, and reclamation safety.
 - Root enumeration tests for globals and RequestContext data.
 - Integration tests: long-running CLI script keeps memory stable; FPM request frees allocations.
 - Extension-style test for allocation API lifetime across SAPI modes.
 
+## Dependencies
+- Add `crossbeam-epoch` for CLI epoch-based reclamation.
+
 ## Open Questions
-- Exact GC slice size and threshold tuning (initial values, adaptive strategy).
-- Whether CLI should expose manual GC triggers for debugging/testing.
+- Threshold tuning for reclamation cycles in CLI mode.
+- Whether CLI should expose manual reclamation triggers for debugging/testing.
