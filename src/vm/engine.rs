@@ -3858,6 +3858,7 @@ impl VM {
                     is_interface: false,
                     is_trait: false,
                     is_abstract: false,
+                    is_final: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -5977,6 +5978,7 @@ impl VM {
                     is_interface: false,
                     is_trait: false,
                     is_abstract: false,
+                    is_final: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -5997,6 +5999,7 @@ impl VM {
                     is_interface: true,
                     is_trait: false,
                     is_abstract: true,
+                    is_final: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6017,6 +6020,7 @@ impl VM {
                     is_interface: false,
                     is_trait: true,
                     is_abstract: false,
+                    is_final: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6039,6 +6043,29 @@ impl VM {
             OpCode::FinalizeClass(class_name) => {
                 // Validate interface implementation after all methods are defined
                 if let Some(class_def) = self.context.classes.get(&class_name) {
+                    if let Some(parent_sym) = class_def.parent {
+                        if let Some(parent_def) = self.context.classes.get(&parent_sym) {
+                            if parent_def.is_final {
+                                let class_name_str = self
+                                    .context
+                                    .interner
+                                    .lookup(class_name)
+                                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                                    .unwrap_or_else(|| format!("{:?}", class_name));
+                                let parent_name_str = self
+                                    .context
+                                    .interner
+                                    .lookup(parent_sym)
+                                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                                    .unwrap_or_else(|| format!("{:?}", parent_sym));
+                                return Err(VmError::RuntimeError(format!(
+                                    "Class {} cannot extend final class {}",
+                                    class_name_str, parent_name_str
+                                )));
+                            }
+                        }
+                    }
+
                     for &interface_name in &class_def.interfaces.clone() {
                         self.validate_interface_implementation(class_name, interface_name)?;
                     }
@@ -6057,6 +6084,11 @@ impl VM {
             OpCode::MarkAbstract(class_name) => {
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
                     class_def.is_abstract = true;
+                }
+            }
+            OpCode::MarkFinal(class_name) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.is_final = true;
                 }
             }
             OpCode::UseTrait(class_name, trait_name) => {

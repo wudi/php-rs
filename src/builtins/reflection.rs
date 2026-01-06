@@ -327,10 +327,8 @@ pub fn reflection_class_is_abstract(vm: &mut VM, _args: &[Handle]) -> Result<Han
 pub fn reflection_class_is_final(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
-    // Check if class has final modifier (we need to add this to ClassDef)
-    // For now, return false as placeholder
-    Ok(vm.arena.alloc(Val::Bool(false)))
+
+    Ok(vm.arena.alloc(Val::Bool(class_def.is_final)))
 }
 
 /// ReflectionClass::isInterface(): bool
@@ -730,13 +728,14 @@ pub fn reflection_class_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<H
     
     // These constants match PHP's ReflectionClass constants
     const IS_EXPLICIT_ABSTRACT: i64 = 64;
+    const IS_FINAL: i64 = 32;
     
     if class_def.is_abstract {
         modifiers |= IS_EXPLICIT_ABSTRACT;
     }
-    // NOTE: IS_FINAL support requires adding is_final: bool field to ClassDef struct
-    // and tracking the final modifier during parsing in src/parser/class.rs
-    // Once available: if class_def.is_final { modifiers |= IS_FINAL; }
+    if class_def.is_final {
+        modifiers |= IS_FINAL;
+    }
     
     Ok(vm.arena.alloc(Val::Int(modifiers)))
 }
@@ -1908,6 +1907,7 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
 
     // PHP modifier constants:
     // IS_STATIC = 1, IS_ABSTRACT = 2, IS_FINAL = 4
+    // ReflectionClass modifiers: IS_FINAL = 32, IS_EXPLICIT_ABSTRACT = 64
     // IS_PUBLIC = 256, IS_PROTECTED = 512, IS_PRIVATE = 1024
     // IS_READONLY = 2048
 
@@ -1926,10 +1926,10 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
     if modifiers & 1 != 0 {  // IS_STATIC
         names.push(b"static".to_vec());
     }
-    if modifiers & 2 != 0 {  // IS_ABSTRACT
+    if modifiers & 2 != 0 || modifiers & 64 != 0 {  // IS_ABSTRACT / IS_EXPLICIT_ABSTRACT
         names.push(b"abstract".to_vec());
     }
-    if modifiers & 4 != 0 {  // IS_FINAL
+    if modifiers & 4 != 0 || modifiers & 32 != 0 {  // IS_FINAL
         names.push(b"final".to_vec());
     }
     if modifiers & 2048 != 0 {  // IS_READONLY
@@ -6137,6 +6137,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![b"Reflector".to_vec()],
             methods: reflection_class_methods,
             constants: HashMap::new(),
@@ -6161,6 +6162,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionClass".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_object_methods,
             constants: HashMap::new(),
@@ -6229,6 +6231,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionClass".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_enum_methods,
             constants: HashMap::new(),
@@ -6270,6 +6273,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionClassConstant".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_enum_unit_case_methods,
             constants: HashMap::new(),
@@ -6293,6 +6297,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionEnumUnitCase".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_enum_backed_case_methods,
             constants: HashMap::new(),
@@ -6415,6 +6420,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_extension_methods,
             constants: HashMap::new(),
@@ -6483,6 +6489,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_zend_extension_methods,
             constants: HashMap::new(),
@@ -6569,6 +6576,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_generator_methods,
             constants: HashMap::new(),
@@ -6637,6 +6645,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_fiber_methods,
             constants: HashMap::new(),
@@ -6777,6 +6786,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_function_abstract_methods,
             constants: HashMap::new(),
@@ -6809,6 +6819,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_methods,
             constants: HashMap::new(),
@@ -6821,6 +6832,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"Exception".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: HashMap::new(),  // Inherits all methods from Exception
             constants: HashMap::new(),
@@ -6833,6 +6845,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: true,  // This is an interface
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: HashMap::new(),  // Interface methods are abstract
             constants: HashMap::new(),
@@ -6865,6 +6878,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_reference_methods,
             constants: HashMap::new(),
@@ -7014,6 +7028,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_method_methods,
             constants: HashMap::new(),
@@ -7199,6 +7214,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_parameter_methods,
             constants: HashMap::new(),
@@ -7402,6 +7418,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_function_methods,
             constants: HashMap::new(),
@@ -7677,6 +7694,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_property_methods,
             constants: HashMap::new(),
@@ -7835,6 +7853,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_class_constant_methods,
             constants: HashMap::new(),
@@ -7939,6 +7958,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_constant_methods,
             constants: HashMap::new(),
@@ -8013,6 +8033,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_attribute_methods,
             constants: reflection_attribute_constants,
@@ -8054,6 +8075,7 @@ impl Extension for ReflectionExtension {
             parent: None,
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_type_methods,
             constants: HashMap::new(),
@@ -8113,6 +8135,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionType".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_named_type_methods,
             constants: HashMap::new(),
@@ -8163,6 +8186,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionType".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_union_type_methods,
             constants: HashMap::new(),
@@ -8213,6 +8237,7 @@ impl Extension for ReflectionExtension {
             parent: Some(b"ReflectionType".to_vec()),
             is_interface: false,
             is_trait: false,
+            is_final: false,
             interfaces: vec![],
             methods: reflection_intersection_type_methods,
             constants: HashMap::new(),

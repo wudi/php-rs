@@ -10,6 +10,7 @@ pub struct NativeClassDef {
     pub parent: Option<Vec<u8>>,
     pub is_interface: bool,
     pub is_trait: bool,
+    pub is_final: bool,
     pub interfaces: Vec<Vec<u8>>,
     pub methods: HashMap<Vec<u8>, NativeMethodEntry>,
     pub constants: HashMap<Vec<u8>, (Val, Visibility)>,
