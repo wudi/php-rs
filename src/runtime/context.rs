@@ -325,7 +325,7 @@ impl RequestContext {
                     is_interface: native_class.is_interface,
                     is_trait: native_class.is_trait,
                     is_abstract: false,
-                    is_final: false,
+                    is_final: native_class.is_final,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces,

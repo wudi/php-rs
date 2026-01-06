@@ -1536,6 +1536,16 @@ fn test_reflection_class_is_final() {
 }
 
 #[test]
+fn test_reflection_class_is_final_native() {
+    let result = run_php(r#"<?php
+        $rc = new ReflectionClass('Closure');
+        return $rc->isFinal();
+    "#);
+
+    assert_eq!(result, Val::Bool(true));
+}
+
+#[test]
 fn test_reflection_class_is_instance() {
     let result = run_php(r#"<?php
         class TestClass {}

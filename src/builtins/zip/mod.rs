@@ -385,6 +385,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         parent: None,
         is_interface: false,
         is_trait: false,
+        is_final: false,
         interfaces: Vec::new(),
         methods: zip_methods,
         constants: zip_constants,
