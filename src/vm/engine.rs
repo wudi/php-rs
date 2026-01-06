@@ -6022,6 +6022,15 @@ impl VM {
                 };
                 self.context.classes.insert(name, class_def);
             }
+            OpCode::SetClassDocComment(class_name, const_idx) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    let frame = self.frames.last().unwrap();
+                    let val = frame.chunk.constants[const_idx as usize].clone();
+                    if let Val::String(comment) = val {
+                        class_def.doc_comment = Some(comment);
+                    }
+                }
+            }
             OpCode::AddInterface(class_name, interface_name) => {
                 // Just add the interface - validation happens later in FinalizeClass
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {

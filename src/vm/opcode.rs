@@ -117,6 +117,7 @@ pub enum OpCode {
     DefClass(Symbol, Option<Symbol>), // Define class (name, parent)
     DefInterface(Symbol),             // Define interface (name)
     DefTrait(Symbol),                 // Define trait (name)
+    SetClassDocComment(Symbol, u16),  // (class_name, const_idx)
     AddInterface(Symbol, Symbol),     // (class_name, interface_name)
     UseTrait(Symbol, Symbol),         // (class_name, trait_name)
     AllowDynamicProperties(Symbol), // Mark class as allowing dynamic properties (for #[AllowDynamicProperties])

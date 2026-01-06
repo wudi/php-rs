@@ -852,6 +852,7 @@ impl<'src> Emitter<'src> {
                 implements,
                 attributes,
                 modifiers,
+                doc_comment,
                 ..
             } => {
                 let class_name_str = self.get_text(name.span);
@@ -867,6 +868,15 @@ impl<'src> Emitter<'src> {
                 self.chunk
                     .code
                     .push(OpCode::DefClass(class_sym, parent_sym));
+
+                if let Some(doc_comment) = doc_comment {
+                    let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
+                    let idx = self.add_constant(Val::String(Rc::new(comment)));
+                    self.chunk
+                        .code
+                        .push(OpCode::SetClassDocComment(class_sym, idx as u16));
+                }
+
 
                 // Check if class is abstract
                 let is_abstract = modifiers.iter().any(|m| m.kind == TokenKind::Abstract);
@@ -917,12 +927,22 @@ impl<'src> Emitter<'src> {
                 name,
                 members,
                 extends,
+                doc_comment,
                 ..
             } => {
                 let name_str = self.get_text(name.span);
                 let sym = self.interner.intern(name_str);
 
                 self.chunk.code.push(OpCode::DefInterface(sym));
+
+                if let Some(doc_comment) = doc_comment {
+                    let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
+                    let idx = self.add_constant(Val::String(Rc::new(comment)));
+                    self.chunk
+                        .code
+                        .push(OpCode::SetClassDocComment(sym, idx as u16));
+                }
+
 
                 for interface in *extends {
                     let interface_str = self.get_text(interface.span);
@@ -937,11 +957,25 @@ impl<'src> Emitter<'src> {
                 self.emit_members(sym, members);
                 self.current_class = prev_class;
             }
-            Stmt::Trait { name, members, .. } => {
+            Stmt::Trait {
+                name,
+                members,
+                doc_comment,
+                ..
+            } => {
                 let name_str = self.get_text(name.span);
                 let sym = self.interner.intern(name_str);
 
                 self.chunk.code.push(OpCode::DefTrait(sym));
+
+                if let Some(doc_comment) = doc_comment {
+                    let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
+                    let idx = self.add_constant(Val::String(Rc::new(comment)));
+                    self.chunk
+                        .code
+                        .push(OpCode::SetClassDocComment(sym, idx as u16));
+                }
+
 
                 let prev_trait = self.current_trait;
                 self.current_trait = Some(sym);
