@@ -775,7 +775,7 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
     }
 
     let class_name = get_reflection_class_name(vm)?;
-    let class_def = get_class_def(vm, class_name)?;
+    let _ = get_class_def(vm, class_name)?;
     
     let parent_name_val = vm.arena.get(args[0]).value.clone();
     let parent_name_bytes: Vec<u8> = match parent_name_val {
@@ -802,23 +802,13 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
     };
     
     let parent_sym = vm.context.interner.intern(&parent_name_bytes);
-    
-    // Check if parent_sym is in the parent chain
-    if let Some(parent) = class_def.parent {
-        if parent == parent_sym {
-            return Ok(vm.arena.alloc(Val::Bool(true)));
-        }
-        // NOTE: Need to recursively check parent's parent for multi-level inheritance:
-        // let mut current = parent;
-        // while let Some(parent_def) = get_class_def(vm, current).ok() {
-        //     if let Some(grandparent) = parent_def.parent {
-        //         if grandparent == parent_sym { return true; }
-        //         current = grandparent;
-        //     } else { break; }
-        // }
+
+    if class_name == parent_sym {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
     }
-    
-    Ok(vm.arena.alloc(Val::Bool(false)))
+
+    let is_subclass = vm.is_subclass_of(class_name, parent_sym);
+    Ok(vm.arena.alloc(Val::Bool(is_subclass)))
 }
 
 /// ReflectionClass::newInstance(...$args): object

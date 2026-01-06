@@ -9,9 +9,20 @@
 
 mod common;
 
-use common::run_php;
-use php_rs::core::value::Val;
+use common::{run_code_with_vm, run_php};
+use php_rs::core::value::{ArrayKey, Val};
+use php_rs::vm::engine::VM;
 use std::rc::Rc;
+
+fn get_array_idx(vm: &VM, val: &Val, idx: i64) -> Val {
+    if let Val::Array(arr) = val {
+        let key = ArrayKey::Int(idx);
+        let handle = arr.map.get(&key).expect("Array index not found");
+        vm.arena.get(*handle).value.clone()
+    } else {
+        panic!("Expected array result");
+    }
+}
 
 #[test]
 fn test_reflection_class_basic() {
@@ -104,6 +115,33 @@ fn test_reflection_class_is_trait() {
     } else {
         panic!("Expected array result");
     }
+}
+
+#[test]
+fn test_reflection_class_is_subclass_of_multilevel_and_interfaces() {
+    let (result, vm) = run_code_with_vm(r#"<?php
+        interface BaseInterface {}
+        interface ChildInterface extends BaseInterface {}
+        class GrandParentClass {}
+        class ParentClass extends GrandParentClass {}
+        class ChildClass extends ParentClass implements ChildInterface {}
+
+        $rc_child = new ReflectionClass('ChildClass');
+        $rc_parent = new ReflectionClass('ParentClass');
+        $rc_interface = new ReflectionClass('ChildInterface');
+
+        return [
+            $rc_child->isSubclassOf('GrandParentClass'),
+            $rc_child->isSubclassOf('BaseInterface'),
+            $rc_parent->isSubclassOf('ParentClass'),
+            $rc_interface->isSubclassOf('BaseInterface')
+        ];
+    "#).unwrap();
+
+    assert_eq!(get_array_idx(&vm, &result, 0), Val::Bool(true));
+    assert_eq!(get_array_idx(&vm, &result, 1), Val::Bool(true));
+    assert_eq!(get_array_idx(&vm, &result, 2), Val::Bool(false));
+    assert_eq!(get_array_idx(&vm, &result, 3), Val::Bool(true));
 }
 
 #[test]
