@@ -49,16 +49,17 @@
 //! - Zend Compile: `$PHP_SRC_PATH/Zend/zend_compile.c` - Visibility rules
 
 use crate::compiler::chunk::{ClosureData, CodeChunk, ReturnType, UserFunc};
-use crate::core::heap::Arena;
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{
     ClassDef, EngineContext, MethodEntry, MethodSignature, ParameterInfo, PropertyEntry,
     RequestContext, StaticPropertyEntry, TypeHint,
 };
+use crate::sapi::SapiMode;
 use crate::vm::frame::{
     ArgList, CallFrame, GeneratorData, GeneratorState, SubGenState, SubIterator,
 };
 use crate::vm::opcode::OpCode;
+use crate::vm::memory::VmHeap;
 use crate::vm::stack::Stack;
 use indexmap::IndexMap;
 use std::cell::RefCell;
@@ -309,7 +310,7 @@ const SUPERGLOBAL_SPECS: &[(SuperglobalKind, &[u8])] = &[
 ];
 
 pub struct VM {
-    pub arena: Arena,
+    pub arena: VmHeap,
     pub operand_stack: Stack,
     pub frames: Vec<CallFrame>,
     pub context: RequestContext,
@@ -359,7 +360,7 @@ impl VM {
             eprintln!("[php-vm] include tracing enabled");
         }
         let mut vm = Self {
-            arena: Arena::new(),
+            arena: VmHeap::new(SapiMode::Cli),
             operand_stack: Stack::new(),
             frames: Vec::new(),
             context: RequestContext::new(engine_context),
@@ -768,7 +769,7 @@ impl VM {
             eprintln!("[php-vm] include tracing enabled");
         }
         let mut vm = Self {
-            arena: Arena::new(),
+            arena: VmHeap::new(SapiMode::Cli),
             operand_stack: Stack::new(),
             frames: Vec::new(),
             context,

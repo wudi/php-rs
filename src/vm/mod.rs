@@ -11,6 +11,7 @@ pub mod executor;
 pub mod frame;
 mod frame_helpers;
 pub mod inc_dec;
+pub mod memory;
 pub mod object_helpers;
 pub mod opcode;
 mod opcode_executor;
