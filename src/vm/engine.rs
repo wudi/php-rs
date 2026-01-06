@@ -310,7 +310,7 @@ const SUPERGLOBAL_SPECS: &[(SuperglobalKind, &[u8])] = &[
 ];
 
 pub struct VM {
-    pub arena: VmHeap,
+    pub arena: Box<VmHeap>,
     pub operand_stack: Stack,
     pub frames: Vec<CallFrame>,
     pub context: RequestContext,
@@ -742,7 +742,7 @@ impl VM {
             eprintln!("[php-vm] include tracing enabled");
         }
         let mut vm = Self {
-            arena: VmHeap::new(mode),
+            arena: Box::new(VmHeap::new(mode)),
             operand_stack: Stack::new(),
             frames: Vec::new(),
             context,
@@ -772,7 +772,7 @@ impl VM {
             disable_functions: std::collections::HashSet::new(),
             disable_classes: std::collections::HashSet::new(),
         };
-        vm.context.bind_memory_api(&mut vm.arena);
+        vm.context.bind_memory_api(vm.arena.as_mut());
         vm.initialize_superglobals();
         vm
     }

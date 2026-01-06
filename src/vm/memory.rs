@@ -171,6 +171,7 @@ impl VmHeap {
 
 pub struct MemoryBlock {
     data: Rc<Vec<u8>>,
+    heap: Option<NonNull<VmHeap>>,
     handle: Option<Handle>,
 }
 
@@ -181,6 +182,14 @@ impl MemoryBlock {
 
     pub fn as_ptr(&self) -> *const u8 {
         self.data.as_ptr()
+    }
+}
+
+impl Drop for MemoryBlock {
+    fn drop(&mut self) {
+        if let (Some(handle), Some(mut heap)) = (self.handle, self.heap) {
+            unsafe { heap.as_mut() }.free(handle);
+        }
     }
 }
 
@@ -199,6 +208,7 @@ impl MemoryApi {
 
     pub fn alloc_bytes(&mut self, len: usize) -> MemoryBlock {
         let data = Rc::new(vec![0u8; len]);
+        let heap_ptr = self.heap;
         let handle = if let Some(mut heap) = self.heap {
             let resource: Rc<dyn Any> = data.clone();
             Some(unsafe { heap.as_mut() }.alloc(Val::Resource(resource)))
@@ -206,7 +216,11 @@ impl MemoryApi {
             None
         };
 
-        MemoryBlock { data, handle }
+        MemoryBlock {
+            data,
+            heap: heap_ptr,
+            handle,
+        }
     }
 }
 
