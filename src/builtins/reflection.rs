@@ -5,7 +5,7 @@
 
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{ClassDef, MethodEntry, ParameterInfo, RequestContext, TypeHint};
-use crate::vm::engine::{PropertyCollectionMode, VM};
+use crate::vm::engine::{PropertyCollectionMode, VM, VmError};
 use crate::vm::object_helpers::create_object_with_properties;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -866,8 +866,12 @@ pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Han
         let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
 
         let ctor_args: smallvec::SmallVec<[Handle; 8]> = args.iter().copied().collect();
-        vm.call_callable(callable_handle, ctor_args)
-            .map_err(|e| format!("Constructor invocation error: {:?}", e))?;
+        if let Err(err) = vm.call_callable(callable_handle, ctor_args) {
+            return Err(match err {
+                VmError::RuntimeError(msg) => msg,
+                other => format!("Constructor invocation error: {:?}", other),
+            });
+        }
     } else if let Some(native_entry) = vm.find_native_method(class_name, constructor_sym) {
         if native_entry.visibility != Visibility::Public {
             return Err(format!(
@@ -880,7 +884,7 @@ pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Han
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = Some(obj_handle);
         }
-        (native_entry.handler)(vm, args).map_err(|e| format!("{:?}", e))?;
+        (native_entry.handler)(vm, args)?;
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = saved_this;
         }
