@@ -13,6 +13,7 @@ pub trait HeapPolicy {
     fn free(&mut self, h: Handle);
     fn len(&self) -> usize;
     fn name(&self) -> &'static str;
+    fn maybe_reclaim(&mut self);
 }
 
 pub struct ArenaPolicy {
@@ -51,6 +52,8 @@ impl HeapPolicy for ArenaPolicy {
     fn name(&self) -> &'static str {
         "arena"
     }
+
+    fn maybe_reclaim(&mut self) {}
 }
 
 pub struct EpochPolicy {
@@ -114,6 +117,11 @@ impl HeapPolicy for EpochPolicy {
     fn name(&self) -> &'static str {
         "epoch"
     }
+
+    fn maybe_reclaim(&mut self) {
+        let guard = self.local.pin();
+        guard.flush();
+    }
 }
 
 pub struct VmHeap {
@@ -154,6 +162,10 @@ impl VmHeap {
 
     pub fn policy_name(&self) -> &'static str {
         self.policy.name()
+    }
+
+    pub fn maybe_reclaim(&mut self) {
+        self.policy.maybe_reclaim();
     }
 }
 

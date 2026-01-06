@@ -2847,6 +2847,8 @@ impl VM {
         let mut instructions_until_timeout_check = TIMEOUT_CHECK_INTERVAL;
         const MEMORY_CHECK_INTERVAL: u64 = 5000; // Check every 5000 instructions (less frequent)
         let mut instructions_until_memory_check = MEMORY_CHECK_INTERVAL;
+        const GC_CHECK_INTERVAL: u64 = 1000; // Opportunistic reclamation cadence
+        let mut instructions_until_gc_check = GC_CHECK_INTERVAL;
 
         while self.frames.len() > target_depth {
             // Increment opcode counter for profiling
@@ -2864,6 +2866,13 @@ impl VM {
             if instructions_until_memory_check == 0 {
                 self.check_memory_limit()?;
                 instructions_until_memory_check = MEMORY_CHECK_INTERVAL;
+            }
+
+            // Periodically allow heap reclamation in long-running CLI sessions
+            instructions_until_gc_check -= 1;
+            if instructions_until_gc_check == 0 {
+                self.arena.maybe_reclaim();
+                instructions_until_gc_check = GC_CHECK_INTERVAL;
             }
 
             let op = {
