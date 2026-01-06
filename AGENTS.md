@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Consistency Guarantee
+- Features must maintain the same behavior as native PHP.
+- PHP source code in local folder `$PHP_SRC_PATH` for in-depth study of how native PHP is implemented.
+- Before implementing each feature, it is necessary to research how PHP implements it.
+- Do not implement features that do not exist in PHP.
+
 ## Project Structure & Module Organization
 - `src/` contains the Rust implementation of the PHP interpreter. Major areas include the parser (`src/parser/`), VM/executor (`src/vm/`), runtime extensions (`src/runtime/`), and builtins (`src/builtins/`).
 - `src/bin/` hosts the CLI entry points: `php` and `php-fpm`.
@@ -29,3 +35,10 @@
 
 ## Configuration & Dependencies Notes
 - The project depends on several extension-related crates (OpenSSL, MySQL, PDO drivers). Keep new dependencies justified and scoped to the relevant extension module.
+
+## Tools for view info:
+- View function signatures via `php --rf <functionName>`
+- View class declaration information via `php --rc <className>`
+- Test native php result via `php` command
+- Reflection Example from Shell `php --rf strlen` `php --rc finfo` `php --re json` `php --ri dom`
+
