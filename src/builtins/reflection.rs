@@ -1527,17 +1527,31 @@ pub fn reflection_class_get_reflection_constants(vm: &mut VM, _args: &[Handle]) 
 
 /// ReflectionClass::getExtension(): ?ReflectionExtension
 pub fn reflection_class_get_extension(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Extension tracking requires:
-    // 1. Add extension_name: Option<Symbol> field to ClassDef
-    // 2. Set during class registration for built-in classes
-    // 3. Return ReflectionExtension object or null for user classes
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if let Some(ext_sym) = class_def.extension_name {
+        let ext_name = lookup_symbol(vm, ext_sym).to_vec();
+        return create_object_with_properties(
+            vm,
+            b"ReflectionExtension",
+            &[(b"name", Val::String(Rc::new(ext_name)))],
+        );
+    }
+
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionClass::getExtensionName(): string|false
 pub fn reflection_class_get_extension_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Returns extension name string or false for user-defined classes
-    // Requires extension_name field in ClassDef (see getExtension above)
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if let Some(ext_sym) = class_def.extension_name {
+        let ext_name = lookup_symbol(vm, ext_sym).to_vec();
+        return Ok(vm.arena.alloc(Val::String(Rc::new(ext_name))));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 

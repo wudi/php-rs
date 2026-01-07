@@ -34,3 +34,16 @@ fn reflection_class_extension_object() {
     assert!(output.contains("bool(true)"));
     assert!(output.contains("string(10) \"Reflection\""));
 }
+
+#[test]
+fn reflection_class_extension_user_class_object() {
+    let script = r#"<?php
+        class Foo {}
+        $rc = new ReflectionClass('Foo');
+        var_dump($rc->getExtension());
+        var_dump($rc->getExtensionName());
+    "#;
+    let (_val, output) = run_code_capture_output(script).expect("Execution failed");
+    assert!(output.contains("NULL"));
+    assert!(output.contains("bool(false)"));
+}
