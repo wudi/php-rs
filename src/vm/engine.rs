@@ -2283,6 +2283,68 @@ impl VM {
 
     /// Check if writing a dynamic property should emit a deprecation warning
     /// Reference: $PHP_SRC_PATH/Zend/zend_object_handlers.c - zend_std_write_property
+    /// Direct property assignment with all checks (readonly, type validation, dynamic property)
+    fn assign_property_direct(
+        &mut self,
+        payload_handle: Handle,
+        obj_handle: Handle,
+        class_name: Symbol,
+        prop_name: Symbol,
+        val_handle: Handle,
+        prop_exists: bool,
+    ) -> Result<(), VmError> {
+        // Check for dynamic property deprecation (PHP 8.2+)
+        if !prop_exists {
+            self.check_dynamic_property_write(obj_handle, prop_name);
+        }
+
+        // Check readonly constraint
+        let prop_info = self.walk_inheritance_chain(class_name, |def, cls| {
+            def.properties
+                .get(&prop_name)
+                .map(|entry| (entry.is_readonly, cls))
+        });
+
+        if let Some((is_readonly, defining_class)) = prop_info {
+            if is_readonly {
+                // Check if already initialized in object
+                let payload_zval = self.arena.get(payload_handle);
+                if let Val::ObjPayload(obj_data) = &payload_zval.value {
+                    if let Some(current_handle) = obj_data.properties.get(&prop_name) {
+                        let current_val = &self.arena.get(*current_handle).value;
+                        if !matches!(current_val, Val::Uninitialized) {
+                            let class_str = String::from_utf8_lossy(
+                                self.context
+                                    .interner
+                                    .lookup(defining_class)
+                                    .unwrap_or(b"???"),
+                            );
+                            let prop_str = String::from_utf8_lossy(
+                                self.context.interner.lookup(prop_name).unwrap_or(b"???"),
+                            );
+                            return Err(VmError::RuntimeError(format!(
+                                "Cannot modify readonly property {}::${}",
+                                class_str, prop_str
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate property type (check class definition for type hint)
+        self.validate_property_type(class_name, prop_name, val_handle)?;
+
+        // Insert the property value
+        let payload_zval = self.arena.get_mut(payload_handle);
+        if let Val::ObjPayload(obj_data) = &mut payload_zval.value {
+            obj_data.properties.insert(prop_name, val_handle);
+            Ok(())
+        } else {
+            Err(VmError::RuntimeError("Invalid object payload".into()))
+        }
+    }
+
     pub(crate) fn check_dynamic_property_write(
         &mut self,
         obj_handle: Handle,
@@ -7269,15 +7331,8 @@ impl VM {
                 let visibility_check =
                     self.check_prop_visibility(class_name, prop_name, current_scope);
 
-                let mut use_magic = false;
-
-                if prop_exists {
-                    if visibility_check.is_err() {
-                        use_magic = true;
-                    }
-                } else {
-                    use_magic = true;
-                }
+                // Determine if __set magic method should be used
+                let use_magic = !prop_exists || visibility_check.is_err();
 
                 if use_magic {
                     let magic_set = self.context.interner.intern(b"__set");
@@ -7308,117 +7363,26 @@ impl VM {
 
                         self.operand_stack.push(val_handle);
                         self.push_frame(frame);
-                    } else {
-                        if let Err(e) = visibility_check {
-                            return Err(e);
-                        }
-
-                        // Check for dynamic property deprecation (PHP 8.2+)
-                        if !prop_exists {
-                            self.check_dynamic_property_write(obj_handle, prop_name);
-                        }
-
-                        // Check readonly constraint
-                        let prop_info = self.walk_inheritance_chain(class_name, |def, cls| {
-                            def.properties
-                                .get(&prop_name)
-                                .map(|entry| (entry.is_readonly, cls))
-                        });
-
-                        if let Some((is_readonly, defining_class)) = prop_info {
-                            if is_readonly {
-                                // Check if already initialized in object
-                                let payload_zval = self.arena.get(payload_handle);
-                                if let Val::ObjPayload(obj_data) = &payload_zval.value {
-                                    if let Some(current_handle) =
-                                        obj_data.properties.get(&prop_name)
-                                    {
-                                        let current_val = &self.arena.get(*current_handle).value;
-                                        if !matches!(current_val, Val::Uninitialized) {
-                                            let class_str = String::from_utf8_lossy(
-                                                self.context
-                                                    .interner
-                                                    .lookup(defining_class)
-                                                    .unwrap_or(b"???"),
-                                            );
-                                            let prop_str = String::from_utf8_lossy(
-                                                self.context
-                                                    .interner
-                                                    .lookup(prop_name)
-                                                    .unwrap_or(b"???"),
-                                            );
-                                            return Err(VmError::RuntimeError(format!(
-                                                "Cannot modify readonly property {}::${}",
-                                                class_str, prop_str
-                                            )));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Validate property type (check class definition for type hint)
-                        self.validate_property_type(class_name, prop_name, val_handle)?;
-
-                        let payload_zval = self.arena.get_mut(payload_handle);
-                        if let Val::ObjPayload(obj_data) = &mut payload_zval.value {
-                            obj_data.properties.insert(prop_name, val_handle);
-                        }
-                        self.operand_stack.push(val_handle);
+                        return Ok(());
                     }
-                } else {
-                    // Check for dynamic property deprecation (PHP 8.2+)
-                    if !prop_exists {
-                        self.check_dynamic_property_write(obj_handle, prop_name);
+                    
+                    // No __set method - fall through to direct assignment
+                    if let Err(e) = visibility_check {
+                        return Err(e);
                     }
-
-                    // Check readonly constraint
-                    let prop_info = self.walk_inheritance_chain(class_name, |def, cls| {
-                        def.properties
-                            .get(&prop_name)
-                            .map(|entry| (entry.is_readonly, cls))
-                    });
-
-                    if let Some((is_readonly, defining_class)) = prop_info {
-                        if is_readonly {
-                            let payload_zval = self.arena.get(payload_handle);
-                            if let Val::ObjPayload(obj_data) = &payload_zval.value {
-                                if let Some(current_handle) = obj_data.properties.get(&prop_name) {
-                                    let current_val = &self.arena.get(*current_handle).value;
-                                    if !matches!(current_val, Val::Uninitialized) {
-                                        let class_str = String::from_utf8_lossy(
-                                            self.context
-                                                .interner
-                                                .lookup(defining_class)
-                                                .unwrap_or(b"???"),
-                                        );
-                                        let prop_str = String::from_utf8_lossy(
-                                            self.context
-                                                .interner
-                                                .lookup(prop_name)
-                                                .unwrap_or(b"???"),
-                                        );
-                                        return Err(VmError::RuntimeError(format!(
-                                            "Cannot modify readonly property {}::${}",
-                                            class_str, prop_str
-                                        )));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Validate property type (check class definition for type hint)
-                    self.validate_property_type(class_name, prop_name, val_handle)?;
-
-                    let payload_zval = self.arena.get_mut(payload_handle);
-                    if let Val::ObjPayload(obj_data) = &mut payload_zval.value {
-                        obj_data.properties.insert(prop_name, val_handle);
-                    } else {
-                        return Err(VmError::RuntimeError("Invalid object payload".into()));
-                    }
-                    self.operand_stack.push(val_handle);
                 }
+
+                // Direct property assignment (common path)
+                self.assign_property_direct(
+                    payload_handle,
+                    obj_handle,
+                    class_name,
+                    prop_name,
+                    val_handle,
+                    prop_exists,
+                )?;
+                
+                self.operand_stack.push(val_handle);
             }
             OpCode::CallMethod(method_name, arg_count) => {
                 self.exec_call_method(method_name, arg_count, false)?;
