@@ -6572,6 +6572,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_class_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_class_construct),
+            extension_name: None,
         });
 
         // Register ReflectionObject (extends ReflectionClass)
@@ -6597,6 +6598,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_object_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_object_construct),
+            extension_name: None,
         });
 
         // Register ReflectionEnum (extends ReflectionClass)
@@ -6666,6 +6668,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_enum_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_enum_construct),
+            extension_name: None,
         });
 
         // Register ReflectionEnumUnitCase (extends ReflectionClassConstant)
@@ -6708,6 +6711,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_enum_unit_case_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_enum_unit_case_construct),
+            extension_name: None,
         });
 
         // Register ReflectionEnumBackedCase (extends ReflectionEnumUnitCase)
@@ -6732,6 +6736,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_enum_backed_case_methods,
             constants: HashMap::new(),
             constructor: None, // Inherits constructor from parent
+            extension_name: None,
         });
 
         // Register ReflectionExtension
@@ -6855,6 +6860,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_extension_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_extension_construct),
+            extension_name: None,
         });
 
         // Register ReflectionZendExtension
@@ -6924,6 +6930,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_zend_extension_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_zend_extension_construct),
+            extension_name: None,
         });
 
         // Register ReflectionGenerator
@@ -7011,6 +7018,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_generator_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_generator_construct),
+            extension_name: None,
         });
 
         // Register ReflectionFiber
@@ -7080,6 +7088,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_fiber_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_fiber_construct),
+            extension_name: None,
         });
 
         // Register ReflectionFunctionAbstract (abstract class)
@@ -7221,6 +7230,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_function_abstract_methods,
             constants: HashMap::new(),
             constructor: None,  // Abstract class - cannot be instantiated
+            extension_name: None,
         });
 
         // Register Reflection (static utility class)
@@ -7254,6 +7264,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_methods,
             constants: HashMap::new(),
             constructor: None,  // No constructor for static class
+            extension_name: None,
         });
 
         // Register ReflectionException (extends Exception)
@@ -7267,6 +7278,7 @@ impl Extension for ReflectionExtension {
             methods: HashMap::new(),  // Inherits all methods from Exception
             constants: HashMap::new(),
             constructor: None,  // Uses Exception's constructor
+            extension_name: None,
         });
 
         // Register Reflector interface
@@ -7280,6 +7292,7 @@ impl Extension for ReflectionExtension {
             methods: HashMap::new(),  // Interface methods are abstract
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Register ReflectionReference
@@ -7313,6 +7326,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_reference_methods,
             constants: HashMap::new(),
             constructor: None,  // No explicit constructor, uses default
+            extension_name: None,
         });
 
         // Register ReflectionMethod
@@ -7472,6 +7486,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_method_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_method_construct),
+            extension_name: None,
         });
 
         // Register ReflectionParameter
@@ -7658,6 +7673,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_parameter_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_parameter_construct),
+            extension_name: None,
         });
 
         // Register ReflectionFunction
@@ -7871,6 +7887,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_function_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_function_construct),
+            extension_name: None,
         });
 
         // Register ReflectionProperty
@@ -8147,6 +8164,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_property_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_property_construct),
+            extension_name: None,
         });
 
         // Register ReflectionClassConstant
@@ -8306,6 +8324,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_class_constant_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_class_constant_construct),
+            extension_name: None,
         });
 
         // Register ReflectionConstant
@@ -8411,6 +8430,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_constant_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_constant_construct),
+            extension_name: None,
         });
 
         // Register ReflectionAttribute
@@ -8486,6 +8506,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_attribute_methods,
             constants: reflection_attribute_constants,
             constructor: Some(reflection_attribute_construct),
+            extension_name: None,
         });
 
         // Register ReflectionType (base class)
@@ -8528,6 +8549,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_type_methods,
             constants: HashMap::new(),
             constructor: None, // Abstract-like base class
+            extension_name: None,
         });
 
         // Register ReflectionNamedType (extends ReflectionType)
@@ -8588,6 +8610,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_named_type_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_named_type_construct),
+            extension_name: None,
         });
 
         // Register ReflectionUnionType (extends ReflectionType)
@@ -8639,6 +8662,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_union_type_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_union_type_construct),
+            extension_name: None,
         });
 
         // Register ReflectionIntersectionType (extends ReflectionType)
@@ -8690,6 +8714,7 @@ impl Extension for ReflectionExtension {
             methods: reflection_intersection_type_methods,
             constants: HashMap::new(),
             constructor: Some(reflection_intersection_type_construct),
+            extension_name: None,
         });
 
         ExtensionResult::Success

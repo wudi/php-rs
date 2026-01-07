@@ -423,6 +423,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: attribute_constants,
             constructor: None,
+            extension_name: None,
         });
 
         // ========================================
@@ -440,6 +441,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Throwable interface (base for all exceptions/errors, extends Stringable)
@@ -453,6 +455,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Traversable interface (root iterator interface)
@@ -466,6 +469,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Iterator interface
@@ -479,6 +483,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // IteratorAggregate interface
@@ -492,6 +497,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Countable interface
@@ -505,6 +511,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // ArrayAccess interface
@@ -518,6 +525,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Serializable interface (deprecated since PHP 8.1)
@@ -531,6 +539,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // UnitEnum interface (PHP 8.1+)
@@ -544,6 +553,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // BackedEnum interface (PHP 8.1+)
@@ -557,6 +567,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // ========================================
@@ -607,6 +618,7 @@ impl Extension for CoreExtension {
             methods: closure_methods,
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // stdClass - empty class for generic objects
@@ -620,6 +632,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Generator class (final, implements Iterator)
@@ -698,6 +711,7 @@ impl Extension for CoreExtension {
             methods: generator_methods,
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Fiber class (PHP 8.1+)
@@ -800,6 +814,7 @@ impl Extension for CoreExtension {
             methods: fiber_methods,
             constants: HashMap::new(),
             constructor: Some(class::fiber_construct),
+            extension_name: None,
         });
 
         // WeakReference class (PHP 7.4+)
@@ -838,6 +853,7 @@ impl Extension for CoreExtension {
             methods: weakref_methods,
             constants: HashMap::new(),
             constructor: Some(class::weak_reference_construct),
+            extension_name: None,
         });
 
         // WeakMap class (PHP 8.0+, implements ArrayAccess, Countable, IteratorAggregate)
@@ -904,6 +920,7 @@ impl Extension for CoreExtension {
             methods: weakmap_methods,
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // SensitiveParameterValue class (PHP 8.2+)
@@ -942,6 +959,7 @@ impl Extension for CoreExtension {
             methods: sensitive_methods,
             constants: HashMap::new(),
             constructor: Some(class::sensitive_parameter_value_construct),
+            extension_name: None,
         });
 
         // __PHP_Incomplete_Class (used during unserialization)
@@ -955,6 +973,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // ========================================
@@ -1045,6 +1064,7 @@ impl Extension for CoreExtension {
             methods: exception_methods.clone(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // RuntimeException
@@ -1058,6 +1078,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // LogicException
@@ -1071,6 +1092,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // Error class (PHP 7+)
@@ -1084,6 +1106,7 @@ impl Extension for CoreExtension {
             methods: exception_methods.clone(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // TypeError
@@ -1097,6 +1120,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // ArithmeticError
@@ -1110,6 +1134,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // DivisionByZeroError
@@ -1123,6 +1148,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // ParseError
@@ -1136,6 +1162,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // AssertionError
@@ -1149,6 +1176,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // CompileError (PHP 7.3+)
@@ -1162,6 +1190,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // ValueError (PHP 8.0+)
@@ -1175,6 +1204,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // UnhandledMatchError (PHP 8.0+)
@@ -1188,6 +1218,7 @@ impl Extension for CoreExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: Some(exception::exception_construct),
+            extension_name: None,
         });
 
         // Output Control functions

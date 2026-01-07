@@ -222,6 +222,7 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         methods: pdo_methods,
         constants: pdo_constants,
         constructor: None, // Used __construct method instead
+        extension_name: None,
     });
 
     // 2. Register PDOStatement Class
@@ -336,6 +337,7 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         methods: st_methods,
         constants: HashMap::new(),
         constructor: None,
+        extension_name: None,
     });
 
     // 3. Register PDOException Class
@@ -349,6 +351,7 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         methods: HashMap::new(),
         constants: HashMap::new(),
         constructor: None,
+        extension_name: None,
     });
 
     // 4. Register Constants

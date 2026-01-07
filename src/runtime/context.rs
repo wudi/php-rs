@@ -149,6 +149,7 @@ pub struct ClassDef {
     pub start_line: Option<u32>,
     pub end_line: Option<u32>,
     pub is_internal: bool,
+    pub extension_name: Option<Symbol>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,6 +376,7 @@ impl RequestContext {
                     start_line: None,
                     end_line: None,
                     is_internal: true,
+                    extension_name: None,
                 },
             );
 

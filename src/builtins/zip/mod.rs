@@ -390,6 +390,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         methods: zip_methods,
         constants: zip_constants,
         constructor: None,
+        extension_name: None,
     });
 
     // Procedural functions

@@ -358,6 +358,7 @@ impl Extension for OpenSSLExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         registry.register_class(NativeClassDef {
@@ -370,6 +371,7 @@ impl Extension for OpenSSLExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         registry.register_class(NativeClassDef {
@@ -382,6 +384,7 @@ impl Extension for OpenSSLExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         ExtensionResult::Success

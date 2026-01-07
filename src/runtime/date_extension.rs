@@ -63,6 +63,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // ========================================
@@ -121,6 +122,7 @@ impl Extension for DateExtension {
             methods: datetimezone_methods,
             constants: HashMap::new(),
             constructor: Some(datetime::php_datetimezone_construct),
+            extension_name: None,
         });
 
         // DateTime class
@@ -223,6 +225,7 @@ impl Extension for DateExtension {
             methods: datetime_methods.clone(),
             constants: HashMap::new(),
             constructor: Some(datetime::php_datetime_construct),
+            extension_name: None,
         });
 
         // DateTimeImmutable class (shares same methods as DateTime)
@@ -236,6 +239,7 @@ impl Extension for DateExtension {
             methods: datetime_methods,
             constants: HashMap::new(),
             constructor: Some(datetime::php_datetime_construct),
+            extension_name: None,
         });
 
         // DateInterval class
@@ -266,6 +270,7 @@ impl Extension for DateExtension {
             methods: dateinterval_methods,
             constants: HashMap::new(),
             constructor: Some(datetime::php_dateinterval_construct),
+            extension_name: None,
         });
 
         // DatePeriod class (implements Iterator)
@@ -367,6 +372,7 @@ impl Extension for DateExtension {
             methods: dateperiod_methods,
             constants: dateperiod_constants,
             constructor: Some(datetime::php_dateperiod_construct),
+            extension_name: None,
         });
 
         // ========================================
@@ -384,6 +390,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateObjectError (extends DateError)
@@ -397,6 +404,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateRangeError (extends DateError)
@@ -410,6 +418,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateException (extends Exception)
@@ -423,6 +432,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateInvalidOperationException (extends DateException)
@@ -436,6 +446,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateInvalidTimeZoneException (extends DateException)
@@ -449,6 +460,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateMalformedIntervalStringException (extends DateException)
@@ -462,6 +474,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateMalformedPeriodStringException (extends DateException)
@@ -475,6 +488,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // DateMalformedStringException (extends DateException)
@@ -488,6 +502,7 @@ impl Extension for DateExtension {
             methods: HashMap::new(),
             constants: HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // ========================================

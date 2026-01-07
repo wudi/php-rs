@@ -204,6 +204,7 @@ mod tests {
             start_line: None,
             end_line: None,
             is_internal: false,
+            extension_name: None,
         };
         vm.context.classes.insert(grandparent_sym, grandparent_def);
 
@@ -234,6 +235,7 @@ mod tests {
             start_line: None,
             end_line: None,
             is_internal: false,
+            extension_name: None,
         };
         vm.context.classes.insert(parent_sym, parent_def);
 
@@ -264,6 +266,7 @@ mod tests {
             start_line: None,
             end_line: None,
             is_internal: false,
+            extension_name: None,
         };
         vm.context.classes.insert(child_sym, child_def);
 
@@ -306,6 +309,7 @@ mod tests {
             start_line: None,
             end_line: None,
             is_internal: false,
+            extension_name: None,
         };
         vm.context.classes.insert(parent_sym, parent_def);
 
@@ -336,6 +340,7 @@ mod tests {
             start_line: None,
             end_line: None,
             is_internal: false,
+            extension_name: None,
         };
         vm.context.classes.insert(child_sym, child_def);
 

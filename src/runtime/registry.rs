@@ -15,6 +15,7 @@ pub struct NativeClassDef {
     pub methods: HashMap<Vec<u8>, NativeMethodEntry>,
     pub constants: HashMap<Vec<u8>, (Val, Visibility)>,
     pub constructor: Option<NativeHandler>,
+    pub extension_name: Option<Vec<u8>>,
 }
 
 /// Native method entry for extension-provided class methods

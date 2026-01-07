@@ -60,6 +60,7 @@ impl Extension for ZlibExtension {
             methods: std::collections::HashMap::new(),
             constants: std::collections::HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         registry.register_class(NativeClassDef {
@@ -72,6 +73,7 @@ impl Extension for ZlibExtension {
             methods: std::collections::HashMap::new(),
             constants: std::collections::HashMap::new(),
             constructor: None,
+            extension_name: None,
         });
 
         // Register constants

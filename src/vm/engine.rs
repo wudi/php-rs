@@ -3942,6 +3942,7 @@ impl VM {
                     start_line: None,
                     end_line: None,
                     is_internal: false,
+                    extension_name: None,
                 };
                 self.context.classes.insert(name_sym, class_def);
             }
@@ -6078,6 +6079,7 @@ impl VM {
                     start_line: None,
                     end_line: None,
                     is_internal: false,
+                    extension_name: None,
                 };
                 self.context.classes.insert(name, class_def);
             }
@@ -6115,6 +6117,7 @@ impl VM {
                     start_line: None,
                     end_line: None,
                     is_internal: false,
+                    extension_name: None,
                 };
                 self.context.classes.insert(name, class_def);
             }
@@ -6152,6 +6155,7 @@ impl VM {
                     start_line: None,
                     end_line: None,
                     is_internal: false,
+                    extension_name: None,
                 };
                 self.context.classes.insert(name, class_def);
             }
