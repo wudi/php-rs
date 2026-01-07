@@ -130,6 +130,7 @@ pub enum Stmt<'ast> {
         implements: &'ast [Name<'ast>],
         members: &'ast [ClassMember<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Interface {
@@ -138,6 +139,7 @@ pub enum Stmt<'ast> {
         extends: &'ast [Name<'ast>],
         members: &'ast [ClassMember<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Trait {
@@ -145,6 +147,7 @@ pub enum Stmt<'ast> {
         name: &'ast Token,
         members: &'ast [ClassMember<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Enum {
@@ -154,6 +157,7 @@ pub enum Stmt<'ast> {
         implements: &'ast [Name<'ast>],
         members: &'ast [ClassMember<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Namespace {

@@ -119,6 +119,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 implements: self.arena.alloc_slice_copy(&implements),
                 members: &[],
                 doc_comment,
+                close_brace_span: None,
                 span: Span::new(start, self.current_token.span.end),
             });
         }
@@ -138,6 +139,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             }));
         }
 
+        let close_brace_span = if self.current_token.kind == TokenKind::CloseBrace {
+            Some(self.current_token.span)
+        } else {
+            None
+        };
+
         if self.current_token.kind == TokenKind::CloseBrace {
             self.bump();
         } else {
@@ -147,7 +154,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             });
         }
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|span| span.end)
+            .unwrap_or(self.current_token.span.end);
 
         self.arena.alloc(Stmt::Class {
             attributes,
@@ -157,6 +166,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             implements: self.arena.alloc_slice_copy(&implements),
             members: self.arena.alloc_slice_copy(&members),
             doc_comment,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }
@@ -341,6 +351,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 extends: self.arena.alloc_slice_copy(&extends),
                 members: &[],
                 doc_comment,
+                close_brace_span: None,
                 span: Span::new(start, self.current_token.span.end),
             });
         }
@@ -353,6 +364,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             members.push(self.parse_class_member(ClassMemberCtx::Interface));
         }
 
+        let close_brace_span = if self.current_token.kind == TokenKind::CloseBrace {
+            Some(self.current_token.span)
+        } else {
+            None
+        };
+
         if self.current_token.kind == TokenKind::CloseBrace {
             self.bump();
         } else {
@@ -362,7 +379,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             });
         }
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|span| span.end)
+            .unwrap_or(self.current_token.span.end);
 
         self.arena.alloc(Stmt::Interface {
             attributes,
@@ -370,6 +389,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             extends: self.arena.alloc_slice_copy(&extends),
             members: self.arena.alloc_slice_copy(&members),
             doc_comment,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }
@@ -414,6 +434,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 name,
                 members: &[],
                 doc_comment,
+                close_brace_span: None,
                 span: Span::new(start, self.current_token.span.end),
             });
         }
@@ -426,6 +447,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             members.push(self.parse_class_member(ClassMemberCtx::Trait));
         }
 
+        let close_brace_span = if self.current_token.kind == TokenKind::CloseBrace {
+            Some(self.current_token.span)
+        } else {
+            None
+        };
+
         if self.current_token.kind == TokenKind::CloseBrace {
             self.bump();
         } else {
@@ -435,13 +462,16 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             });
         }
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|span| span.end)
+            .unwrap_or(self.current_token.span.end);
 
         self.arena.alloc(Stmt::Trait {
             attributes,
             name,
             members: self.arena.alloc_slice_copy(&members),
             doc_comment,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }
@@ -523,6 +553,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 implements: self.arena.alloc_slice_copy(&implements),
                 members: &[],
                 doc_comment,
+                close_brace_span: None,
                 span: Span::new(start, self.current_token.span.end),
             });
         }
@@ -537,6 +568,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             }));
         }
 
+        let close_brace_span = if self.current_token.kind == TokenKind::CloseBrace {
+            Some(self.current_token.span)
+        } else {
+            None
+        };
+
         if self.current_token.kind == TokenKind::CloseBrace {
             self.bump();
         } else {
@@ -546,7 +583,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             });
         }
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|span| span.end)
+            .unwrap_or(self.current_token.span.end);
 
         self.arena.alloc(Stmt::Enum {
             attributes,
@@ -555,6 +594,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             implements: self.arena.alloc_slice_copy(&implements),
             members: self.arena.alloc_slice_copy(&members),
             doc_comment,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }
