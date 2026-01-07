@@ -152,6 +152,10 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    pub(crate) fn source(&self) -> &'src [u8] {
+        self.input
+    }
+
     pub fn set_mode(&mut self, mode: LexerMode) {
         self.mode = mode;
     }

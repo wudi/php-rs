@@ -2,8 +2,8 @@ use crate::compiler::chunk::{CatchEntry, CodeChunk, FuncParam, ReturnType, UserF
 use crate::core::interner::Interner;
 use crate::core::value::{Symbol, Val, Visibility};
 use crate::parser::ast::{
-    AssignOp, BinaryOp, CastKind, ClassMember, Expr, IncludeKind, MagicConstKind, Stmt, StmtId,
-    Type, UnaryOp,
+    AssignOp, AttributeGroup, BinaryOp, CastKind, ClassMember, Expr, IncludeKind, MagicConstKind,
+    Stmt, StmtId, Type, UnaryOp,
 };
 use crate::parser::lexer::token::{Token, TokenKind};
 use crate::vm::opcode::OpCode;
@@ -195,6 +195,7 @@ impl<'src> Emitter<'src> {
         for member in members {
             match member {
                 ClassMember::Method {
+                    attributes,
                     name,
                     body,
                     params,
@@ -304,16 +305,36 @@ impl<'src> Emitter<'src> {
                         is_static,
                         is_abstract,
                     ));
+
+                    if !attributes.is_empty() {
+                        let attr_val = self.build_attribute_list(attributes);
+                        let idx = self.add_constant(attr_val);
+                        self.chunk
+                            .code
+                            .push(OpCode::SetMethodAttributes(class_sym, method_sym, idx as u16));
+                    }
                 }
                 ClassMember::Property {
+                    attributes,
                     entries,
                     modifiers,
                     ty,
+                    doc_comment,
                     ..
                 } => {
                     let visibility = self.get_visibility(modifiers);
                     let is_static = modifiers.iter().any(|t| t.kind == TokenKind::Static);
                     let is_readonly = modifiers.iter().any(|t| t.kind == TokenKind::Readonly);
+                    let doc_comment_idx = doc_comment.map(|doc_comment| {
+                        let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
+                        self.add_constant(Val::String(Rc::new(comment)))
+                    });
+                    let attr_idx = if !attributes.is_empty() {
+                        let attr_val = self.build_attribute_list(attributes);
+                        Some(self.add_constant(attr_val))
+                    } else {
+                        None
+                    };
 
                     // Extract type hint once for all properties in this declaration
                     let type_hint_opt = ty.and_then(|t| self.convert_type(t));
@@ -361,12 +382,42 @@ impl<'src> Emitter<'src> {
                                 is_readonly,
                             ));
                         }
+
+                        if let Some(doc_comment_idx) = doc_comment_idx {
+                            self.chunk.code.push(OpCode::SetPropertyDocComment(
+                                class_sym,
+                                prop_sym,
+                                doc_comment_idx as u16,
+                            ));
+                        }
+
+                        if let Some(attr_idx) = attr_idx {
+                            self.chunk.code.push(OpCode::SetPropertyAttributes(
+                                class_sym,
+                                prop_sym,
+                                attr_idx as u16,
+                            ));
+                        }
                     }
                 }
                 ClassMember::Const {
-                    consts, modifiers, ..
+                    attributes,
+                    consts,
+                    modifiers,
+                    doc_comment,
+                    ..
                 } => {
                     let visibility = self.get_visibility(modifiers);
+                    let doc_comment_idx = doc_comment.map(|doc_comment| {
+                        let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
+                        self.add_constant(Val::String(Rc::new(comment)))
+                    });
+                    let attr_idx = if !attributes.is_empty() {
+                        let attr_val = self.build_attribute_list(attributes);
+                        Some(self.add_constant(attr_val))
+                    } else {
+                        None
+                    };
                     for entry in *consts {
                         let const_name_str = self.get_text(entry.name.span);
                         let const_sym = self.interner.intern(const_name_str);
@@ -381,6 +432,22 @@ impl<'src> Emitter<'src> {
                             val_idx as u16,
                             visibility,
                         ));
+
+                        if let Some(doc_comment_idx) = doc_comment_idx {
+                            self.chunk.code.push(OpCode::SetClassConstDocComment(
+                                class_sym,
+                                const_sym,
+                                doc_comment_idx as u16,
+                            ));
+                        }
+
+                        if let Some(attr_idx) = attr_idx {
+                            self.chunk.code.push(OpCode::SetClassConstAttributes(
+                                class_sym,
+                                const_sym,
+                                attr_idx as u16,
+                            ));
+                        }
                     }
                 }
                 ClassMember::TraitUse { traits, .. } => {
@@ -753,6 +820,7 @@ impl<'src> Emitter<'src> {
                 self.patch_jump(jump_end_idx, end_label);
             }
             Stmt::Function {
+                attributes,
                 name,
                 params,
                 body,
@@ -844,6 +912,14 @@ impl<'src> Emitter<'src> {
                 self.chunk
                     .code
                     .push(OpCode::DefFunc(func_sym, const_idx as u32));
+
+                if !attributes.is_empty() {
+                    let attr_val = self.build_attribute_list(attributes);
+                    let idx = self.add_constant(attr_val);
+                    self.chunk
+                        .code
+                        .push(OpCode::SetFunctionAttributes(func_sym, idx as u16));
+                }
             }
             Stmt::Class {
                 name,
@@ -884,7 +960,13 @@ impl<'src> Emitter<'src> {
                         .code
                         .push(OpCode::SetClassDocComment(class_sym, idx as u16));
                 }
-
+                if !attributes.is_empty() {
+                    let attr_val = self.build_attribute_list(attributes);
+                    let idx = self.add_constant(attr_val);
+                    self.chunk
+                        .code
+                        .push(OpCode::SetClassAttributes(class_sym, idx as u16));
+                }
 
                 // Check if class is abstract
                 let is_abstract = modifiers.iter().any(|m| m.kind == TokenKind::Abstract);
@@ -3453,8 +3535,102 @@ impl<'src> Emitter<'src> {
                     Val::ConstArray(Rc::new(const_array))
                 }
             }
+            Expr::ClassConstFetch { class, constant, .. } => {
+                const TARGET_CLASS: i64 = 1 << 0;
+                const TARGET_FUNCTION: i64 = 1 << 1;
+                const TARGET_METHOD: i64 = 1 << 2;
+                const TARGET_PROPERTY: i64 = 1 << 3;
+                const TARGET_CLASS_CONST: i64 = 1 << 4;
+                const TARGET_PARAMETER: i64 = 1 << 5;
+                const TARGET_CONST: i64 = 1 << 6;
+                const TARGET_ALL: i64 = (1 << 7) - 1;
+                const IS_REPEATABLE: i64 = 1 << 7;
+
+                if let (Expr::Variable { span: class_span, .. }, Expr::Variable { span: const_span, .. }) =
+                    (class, constant)
+                {
+                    let class_name = self.get_text(*class_span);
+                    let const_name = self.get_text(*const_span);
+                    let is_attribute_class = class_name.eq_ignore_ascii_case(b"Attribute")
+                        || class_name.ends_with(b"\\Attribute")
+                        || class_name.ends_with(b"\\attribute");
+                    if is_attribute_class {
+                        let value = if const_name.eq_ignore_ascii_case(b"TARGET_CLASS") {
+                            TARGET_CLASS
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_FUNCTION") {
+                            TARGET_FUNCTION
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_METHOD") {
+                            TARGET_METHOD
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_PROPERTY") {
+                            TARGET_PROPERTY
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_CLASS_CONST") {
+                            TARGET_CLASS_CONST
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_PARAMETER") {
+                            TARGET_PARAMETER
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_CONST") {
+                            TARGET_CONST
+                        } else if const_name.eq_ignore_ascii_case(b"TARGET_ALL") {
+                            TARGET_ALL
+                        } else if const_name.eq_ignore_ascii_case(b"IS_REPEATABLE") {
+                            IS_REPEATABLE
+                        } else {
+                            0
+                        };
+                        return Val::Int(value);
+                    }
+                }
+
+                Val::Null
+            }
             _ => Val::Null,
         }
+    }
+
+    fn build_attribute_list(&self, groups: &[AttributeGroup]) -> Val {
+        use crate::core::value::ConstArrayKey;
+        use indexmap::IndexMap;
+
+        let mut attrs = IndexMap::new();
+        let mut attr_index = 0i64;
+
+        for group in groups {
+            for attr in group.attributes {
+                let name_bytes = self.get_text(attr.name.span);
+                let mut args = IndexMap::new();
+                let mut next_index = 0i64;
+
+                for arg in attr.args {
+                    let value = self.eval_constant_expr(arg.value);
+                    let key = if let Some(name) = arg.name {
+                        let key_bytes = self.get_text(name.span);
+                        ConstArrayKey::Str(Rc::new(key_bytes.to_vec()))
+                    } else {
+                        let key = ConstArrayKey::Int(next_index);
+                        next_index += 1;
+                        key
+                    };
+                    args.insert(key, value);
+                }
+
+                let mut attr_map = IndexMap::new();
+                attr_map.insert(
+                    ConstArrayKey::Str(Rc::new(b"name".to_vec())),
+                    Val::String(Rc::new(name_bytes.to_vec())),
+                );
+                attr_map.insert(
+                    ConstArrayKey::Str(Rc::new(b"args".to_vec())),
+                    Val::ConstArray(Rc::new(args)),
+                );
+
+                attrs.insert(
+                    ConstArrayKey::Int(attr_index),
+                    Val::ConstArray(Rc::new(attr_map)),
+                );
+                attr_index += 1;
+            }
+        }
+
+        Val::ConstArray(Rc::new(attrs))
     }
 
     fn get_text(&self, span: crate::parser::span::Span) -> &'src [u8] {

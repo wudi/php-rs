@@ -460,6 +460,79 @@ impl VM {
         Ok(self.context.interner.intern(&lower))
     }
 
+    fn decode_attribute_args(&mut self, val: Option<&Val>) -> Vec<crate::runtime::attributes::AttributeArg> {
+        use crate::core::value::ConstArrayKey;
+        use crate::runtime::attributes::AttributeArg;
+
+        let mut args = Vec::new();
+        let map = match val {
+            Some(Val::ConstArray(map)) => map,
+            _ => return args,
+        };
+
+        for (key, value) in map.iter() {
+            let name = match key {
+                ConstArrayKey::Str(s) => Some(self.context.interner.intern(s.as_ref())),
+                ConstArrayKey::Int(_) => None,
+            };
+            args.push(AttributeArg {
+                name,
+                value: value.clone(),
+            });
+        }
+
+        args
+    }
+
+    fn decode_attribute_list(
+        &mut self,
+        val: &Val,
+        target: u32,
+    ) -> Result<Vec<crate::runtime::attributes::AttributeInstance>, VmError> {
+        use crate::core::value::ConstArrayKey;
+        use crate::runtime::attributes::AttributeInstance;
+
+        let mut attrs = Vec::new();
+        let map = match val {
+            Val::ConstArray(map) => map,
+            _ => return Ok(attrs),
+        };
+
+        for (_key, attr_val) in map.iter() {
+            let attr_map = match attr_val {
+                Val::ConstArray(map) => map,
+                _ => continue,
+            };
+
+            let mut name_val = None;
+            let mut args_val = None;
+            for (key, value) in attr_map.iter() {
+                match key {
+                    ConstArrayKey::Str(s) if s.as_ref() == b"name" => name_val = Some(value),
+                    ConstArrayKey::Str(s) if s.as_ref() == b"args" => args_val = Some(value),
+                    _ => {}
+                }
+            }
+
+            let name_bytes = match name_val {
+                Some(Val::String(name)) => name.as_ref(),
+                _ => continue,
+            };
+            let name_sym = self.context.interner.intern(name_bytes);
+            let lc_name = self.intern_lowercase_symbol(name_sym)?;
+            let args = self.decode_attribute_args(args_val);
+
+            attrs.push(AttributeInstance {
+                name: name_sym,
+                lc_name,
+                args,
+                target,
+            });
+        }
+
+        Ok(attrs)
+    }
+
     fn register_superglobal_symbols(&mut self) {
         for (kind, name) in SUPERGLOBAL_SPECS {
             let sym = self.context.interner.intern(name);
@@ -1106,7 +1179,7 @@ impl VM {
             .into_owned()
     }
 
-    fn trigger_autoload(&mut self, class_name: Symbol) -> Result<(), VmError> {
+    pub(crate) fn trigger_autoload(&mut self, class_name: Symbol) -> Result<(), VmError> {
         let callsite_strict_types = self
             .frames
             .last()
@@ -3856,8 +3929,11 @@ impl VM {
                     methods,
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
+                    constant_attributes: HashMap::new(),
+                    constant_doc_comments: HashMap::new(),
                     static_properties: HashMap::new(),
                     abstract_methods: HashSet::new(),
+                    attributes: Vec::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
@@ -5987,8 +6063,11 @@ impl VM {
                     methods,
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
+                    constant_attributes: HashMap::new(),
+                    constant_doc_comments: HashMap::new(),
                     static_properties: HashMap::new(),
                     abstract_methods,
+                    attributes: Vec::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
@@ -6019,8 +6098,11 @@ impl VM {
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
+                    constant_attributes: HashMap::new(),
+                    constant_doc_comments: HashMap::new(),
                     static_properties: HashMap::new(),
                     abstract_methods: HashSet::new(),
+                    attributes: Vec::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
@@ -6051,8 +6133,11 @@ impl VM {
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
+                    constant_attributes: HashMap::new(),
+                    constant_doc_comments: HashMap::new(),
                     static_properties: HashMap::new(),
                     abstract_methods: HashSet::new(),
+                    attributes: Vec::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
@@ -6066,6 +6151,86 @@ impl VM {
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
                     class_def.start_line = start_line;
                     class_def.end_line = end_line;
+                }
+            }
+            OpCode::SetClassAttributes(class_name, const_idx) => {
+                let frame = self.frames.last().unwrap();
+                let val = frame.chunk.constants[const_idx as usize].clone();
+                let attrs = self.decode_attribute_list(
+                    &val,
+                    crate::runtime::attributes::ATTRIBUTE_TARGET_CLASS,
+                )?;
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.attributes = attrs;
+                }
+            }
+            OpCode::SetFunctionAttributes(function_name, const_idx) => {
+                let frame = self.frames.last().unwrap();
+                let val = frame.chunk.constants[const_idx as usize].clone();
+                let attrs = self.decode_attribute_list(
+                    &val,
+                    crate::runtime::attributes::ATTRIBUTE_TARGET_FUNCTION,
+                )?;
+                self.context.function_attributes.insert(function_name, attrs);
+            }
+            OpCode::SetMethodAttributes(class_name, method_name, const_idx) => {
+                let frame = self.frames.last().unwrap();
+                let val = frame.chunk.constants[const_idx as usize].clone();
+                let attrs = self.decode_attribute_list(
+                    &val,
+                    crate::runtime::attributes::ATTRIBUTE_TARGET_METHOD,
+                )?;
+                let method_key = self.intern_lowercase_symbol(method_name)?;
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    if let Some(method) = class_def.methods.get_mut(&method_key) {
+                        method.attributes = attrs;
+                    }
+                }
+            }
+            OpCode::SetPropertyAttributes(class_name, property_name, const_idx) => {
+                let frame = self.frames.last().unwrap();
+                let val = frame.chunk.constants[const_idx as usize].clone();
+                let attrs = self.decode_attribute_list(
+                    &val,
+                    crate::runtime::attributes::ATTRIBUTE_TARGET_PROPERTY,
+                )?;
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    if let Some(prop) = class_def.properties.get_mut(&property_name) {
+                        prop.attributes = attrs;
+                    }
+                }
+            }
+            OpCode::SetPropertyDocComment(class_name, property_name, const_idx) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    let frame = self.frames.last().unwrap();
+                    let val = frame.chunk.constants[const_idx as usize].clone();
+                    if let Val::String(comment) = val {
+                        if let Some(static_prop) = class_def.static_properties.get_mut(&property_name) {
+                            static_prop.doc_comment = Some(comment);
+                        } else if let Some(prop) = class_def.properties.get_mut(&property_name) {
+                            prop.doc_comment = Some(comment);
+                        }
+                    }
+                }
+            }
+            OpCode::SetClassConstAttributes(class_name, const_name, const_idx) => {
+                let frame = self.frames.last().unwrap();
+                let val = frame.chunk.constants[const_idx as usize].clone();
+                let attrs = self.decode_attribute_list(
+                    &val,
+                    crate::runtime::attributes::ATTRIBUTE_TARGET_CLASS_CONST,
+                )?;
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.constant_attributes.insert(const_name, attrs);
+                }
+            }
+            OpCode::SetClassConstDocComment(class_name, const_name, const_idx) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    let frame = self.frames.last().unwrap();
+                    let val = frame.chunk.constants[const_idx as usize].clone();
+                    if let Val::String(comment) = val {
+                        class_def.constant_doc_comments.insert(const_name, comment);
+                    }
                 }
             }
             OpCode::SetClassDocComment(class_name, const_idx) => {
@@ -6267,6 +6432,7 @@ impl VM {
                                     is_reference: p.by_ref,
                                     is_variadic: p.is_variadic,
                                     default_value: p.default_value.clone(),
+                                    attributes: Vec::new(),
                                 })
                                 .collect(),
                             return_type: func
@@ -6304,6 +6470,7 @@ impl VM {
                                 declaring_class: class_name,
                                 is_abstract,
                                 signature,
+                                attributes: Vec::new(),
                             };
                             class_def.methods.insert(lower_key, entry.clone());
 
@@ -6348,6 +6515,8 @@ impl VM {
                             visibility,
                             type_hint,
                             is_readonly,
+                            attributes: Vec::new(),
+                            doc_comment: None,
                         },
                     );
                 }
@@ -6410,6 +6579,7 @@ impl VM {
                             value: val,
                             visibility,
                             type_hint,
+                            doc_comment: None,
                         },
                     );
                 }
@@ -12316,6 +12486,7 @@ impl VM {
                     is_reference: p.by_ref,
                     is_variadic: p.is_variadic,
                     default_value: p.default_value.clone(),
+                    attributes: Vec::new(),
                 })
                 .collect(),
             return_type: parent_func

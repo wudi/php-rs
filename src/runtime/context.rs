@@ -1,6 +1,7 @@
 use crate::compiler::chunk::UserFunc;
 use crate::core::interner::Interner;
 use crate::core::value::{Handle, Symbol, Val, Visibility};
+use crate::runtime::attributes::AttributeInstance;
 use crate::runtime::extension::Extension;
 use crate::runtime::registry::ExtensionRegistry;
 use crate::runtime::resource_manager::ResourceManager;
@@ -65,6 +66,7 @@ pub struct ParameterInfo {
     pub is_reference: bool,
     pub is_variadic: bool,
     pub default_value: Option<Val>,
+    pub attributes: Vec<AttributeInstance>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,7 @@ pub struct MethodEntry {
     pub declaring_class: Symbol,
     pub is_abstract: bool,
     pub signature: MethodSignature,
+    pub attributes: Vec<AttributeInstance>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +102,8 @@ pub struct PropertyEntry {
     pub visibility: Visibility,
     pub type_hint: Option<TypeHint>,
     pub is_readonly: bool,
+    pub attributes: Vec<AttributeInstance>,
+    pub doc_comment: Option<Rc<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +111,7 @@ pub struct StaticPropertyEntry {
     pub value: Val,
     pub visibility: Visibility,
     pub type_hint: Option<TypeHint>,
+    pub doc_comment: Option<Rc<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,8 +129,11 @@ pub struct ClassDef {
     pub methods: HashMap<Symbol, MethodEntry>,
     pub properties: IndexMap<Symbol, PropertyEntry>, // Instance properties with type hints
     pub constants: HashMap<Symbol, (Val, Visibility)>,
+    pub constant_attributes: HashMap<Symbol, Vec<AttributeInstance>>,
+    pub constant_doc_comments: HashMap<Symbol, Rc<Vec<u8>>>,
     pub static_properties: HashMap<Symbol, StaticPropertyEntry>, // Static properties with type hints
     pub abstract_methods: HashSet<Symbol>,
+    pub attributes: Vec<AttributeInstance>,
     pub allows_dynamic_properties: bool, // Set by #[AllowDynamicProperties] attribute
     pub doc_comment: Option<Rc<Vec<u8>>>,
     pub file_name: Option<Rc<Vec<u8>>>,
@@ -229,6 +238,7 @@ pub struct RequestContext {
     pub config: PhpConfig,
     pub globals: HashMap<Symbol, Handle>,
     pub constants: HashMap<Symbol, Val>,
+    pub function_attributes: HashMap<Symbol, Vec<AttributeInstance>>,
     pub user_functions: HashMap<Symbol, Rc<UserFunc>>,
     pub classes: HashMap<Symbol, ClassDef>,
     pub included_files: HashSet<String>,
@@ -258,6 +268,7 @@ impl RequestContext {
             config,
             globals: HashMap::new(),
             constants: HashMap::new(),
+            function_attributes: HashMap::new(),
             user_functions: HashMap::new(),
             classes: HashMap::new(),
             included_files: HashSet::new(),
@@ -342,8 +353,11 @@ impl RequestContext {
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants,
+                    constant_attributes: HashMap::new(),
+                    constant_doc_comments: HashMap::new(),
                     static_properties: HashMap::new(),
                     abstract_methods: HashSet::new(),
+                    attributes: Vec::new(),
                     allows_dynamic_properties: true,
                     doc_comment: None,
                     file_name: None,

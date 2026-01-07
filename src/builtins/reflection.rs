@@ -4,6 +4,7 @@
 //! Reference: $PHP_SRC_PATH/Zend/zend_reflection.c
 
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
+use crate::runtime::attributes::AttributeInstance;
 use crate::runtime::context::{ClassDef, MethodEntry, ParameterInfo, RequestContext, TypeHint};
 use crate::vm::engine::{PropertyCollectionMode, VM, VmError};
 use crate::vm::object_helpers::create_object_with_properties;
@@ -138,6 +139,150 @@ fn get_method(class_def: &ClassDef, method_name: Symbol) -> Result<&MethodEntry,
         .methods
         .get(&method_name)
         .ok_or_else(|| format!("Method does not exist"))
+}
+
+fn build_reflection_attribute(
+    vm: &mut VM,
+    attr: &AttributeInstance,
+    is_repeated: bool,
+) -> Result<Handle, String> {
+    let reflection_attr_sym = vm.context.interner.intern(b"ReflectionAttribute");
+    let name_sym = vm.context.interner.intern(b"name");
+    let arguments_sym = vm.context.interner.intern(b"arguments");
+    let target_sym = vm.context.interner.intern(b"target");
+    let is_repeated_sym = vm.context.interner.intern(b"isRepeated");
+
+    let mut args_array = ArrayData::new();
+    let mut next_index = 0i64;
+    for arg in &attr.args {
+        let key = if let Some(name_sym) = arg.name {
+            let name_bytes = lookup_symbol(vm, name_sym).to_vec();
+            ArrayKey::Str(Rc::new(name_bytes))
+        } else {
+            let key = ArrayKey::Int(next_index);
+            next_index += 1;
+            key
+        };
+        let handle = vm.arena.alloc(arg.value.clone());
+        args_array.insert(key, handle);
+    }
+
+    let mut properties = indexmap::IndexMap::new();
+    let name_bytes = lookup_symbol(vm, attr.name).to_vec();
+    properties.insert(
+        name_sym,
+        vm.arena.alloc(Val::String(Rc::new(name_bytes))),
+    );
+    properties.insert(
+        arguments_sym,
+        vm.arena.alloc(Val::Array(Rc::new(args_array))),
+    );
+    properties.insert(target_sym, vm.arena.alloc(Val::Int(attr.target as i64)));
+    properties.insert(
+        is_repeated_sym,
+        vm.arena.alloc(Val::Bool(is_repeated)),
+    );
+
+    let obj_data = ObjectData {
+        class: reflection_attr_sym,
+        properties,
+        internal: None,
+        dynamic_properties: std::collections::HashSet::new(),
+    };
+    let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
+    Ok(vm.arena.alloc(Val::Object(obj_payload_handle)))
+}
+
+fn build_reflection_attribute_array(
+    vm: &mut VM,
+    attrs: &[AttributeInstance],
+) -> Result<Handle, String> {
+    let mut result = ArrayData::new();
+    for attr in attrs {
+        let is_repeated = attrs
+            .iter()
+            .filter(|other| other.lc_name == attr.lc_name)
+            .count()
+            > 1;
+        let attr_obj = build_reflection_attribute(vm, attr, is_repeated)?;
+        result.push(attr_obj);
+    }
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
+}
+
+fn parse_attribute_filters(vm: &VM, args: &[Handle]) -> Result<(Option<Vec<u8>>, i64), String> {
+    const REFLECTION_ATTRIBUTE_IS_INSTANCEOF: i64 = 2;
+
+    if args.len() > 2 {
+        return Err("getAttributes() expects at most 2 arguments".to_string());
+    }
+
+    let name = if let Some(arg0) = args.get(0) {
+        match &vm.arena.get(*arg0).value {
+            Val::Null => None,
+            Val::String(s) => Some(s.to_vec()),
+            _ => return Err("Attribute name must be a string or null".to_string()),
+        }
+    } else {
+        None
+    };
+
+    let flags = if let Some(arg1) = args.get(1) {
+        match vm.arena.get(*arg1).value {
+            Val::Int(i) => i,
+            _ => return Err("Attribute filter flags must be an integer".to_string()),
+        }
+    } else {
+        0
+    };
+
+    if flags & !REFLECTION_ATTRIBUTE_IS_INSTANCEOF != 0 {
+        return Err("Attribute filter flags must be a valid attribute filter flag".to_string());
+    }
+
+    Ok((name, flags))
+}
+
+fn apply_attribute_filters(
+    vm: &mut VM,
+    attrs: &[AttributeInstance],
+    name: Option<Vec<u8>>,
+    flags: i64,
+) -> Result<Vec<AttributeInstance>, String> {
+    const REFLECTION_ATTRIBUTE_IS_INSTANCEOF: i64 = 2;
+
+    let Some(name) = name else {
+        return Ok(attrs.to_vec());
+    };
+
+    if (flags & REFLECTION_ATTRIBUTE_IS_INSTANCEOF) != 0 {
+        let name_sym = vm.context.interner.intern(&name);
+        if !vm.context.classes.contains_key(&name_sym) {
+            vm.trigger_autoload(name_sym)
+                .map_err(|e| format!("{:?}", e))?;
+        }
+        let base_sym = vm
+            .context
+            .classes
+            .get_key_value(&name_sym)
+            .map(|(k, _)| *k)
+            .ok_or_else(|| format!("Class \"{}\" not found", String::from_utf8_lossy(&name)))?;
+
+        return Ok(attrs
+            .iter()
+            .filter(|attr| vm.is_subclass_of(attr.name, base_sym))
+            .cloned()
+            .collect());
+    }
+
+    let name_lower: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
+    Ok(attrs
+        .iter()
+        .filter(|attr| {
+            lookup_symbol(vm, attr.lc_name).eq(name_lower.as_slice())
+        })
+        .cloned()
+        .collect())
 }
 
 /// Convert visibility to modifier flags
@@ -1054,13 +1199,9 @@ pub fn reflection_class_is_iterable(vm: &mut VM, _args: &[Handle]) -> Result<Han
 
 /// ReflectionClass::getAttributes(): array
 pub fn reflection_class_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Attribute reflection (PHP 8.0+) requires:
-    // 1. Add attributes: Vec<Attribute> field to ClassDef
-    // 2. Parse #[Attribute] syntax in src/parser/class.rs
-    // 3. Store attribute name, arguments, and target flags
-    // 4. Return array of ReflectionAttribute objects
-    // See PHP's reflection_class_get_attributes in ext/reflection/php_reflection.c
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    build_reflection_attribute_array(vm, &class_def.attributes)
 }
 
 /// ReflectionClass::getDefaultProperties(): array
@@ -2718,6 +2859,18 @@ pub fn reflection_function_get_parameters(vm: &mut VM, _args: &[Handle]) -> Resu
     Ok(vm.arena.alloc(Val::Array(Rc::new(arr_data))))
 }
 
+/// ReflectionFunction::getAttributes(): array
+pub fn reflection_function_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let func_sym = get_reflection_function_name(vm)?;
+    let attrs = vm
+        .context
+        .function_attributes
+        .get(&func_sym)
+        .cloned()
+        .unwrap_or_default();
+    build_reflection_attribute_array(vm, &attrs)
+}
+
 /// ReflectionFunction::isUserDefined(): bool
 pub fn reflection_function_is_user_defined(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
@@ -3099,6 +3252,20 @@ pub fn reflection_method_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<
     }
     
     Ok(vm.arena.alloc(Val::Int(modifiers)))
+}
+
+/// ReflectionMethod::getAttributes(): array
+pub fn reflection_method_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let data = get_reflection_method_data(vm)?;
+    let class_def = get_class_def(vm, data.class_name)?;
+    let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
+    let method_lower: Vec<u8> = method_name_bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let method_sym = vm.context.interner.intern(&method_lower);
+    let method_entry = class_def
+        .methods
+        .get(&method_sym)
+        .ok_or_else(|| "Method not found".to_string())?;
+    build_reflection_attribute_array(vm, &method_entry.attributes)
 }
 
 /// ReflectionMethod::isPublic(): bool
@@ -4496,13 +4663,14 @@ pub fn reflection_property_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 }
 
 /// ReflectionProperty::getAttributes(): array
-/// Get attributes applied to the property. Returns empty array (attributes not yet implemented).
 pub fn reflection_property_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Property attributes require:
-    // 1. Add attributes: Vec<Attribute> to property metadata in ClassDef
-    // 2. Parse #[Attr] above property declarations
-    // 3. Return array of ReflectionAttribute objects
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_property_data(vm)?;
+    let class_def = get_class_def(vm, data.class_name)?;
+    if let Some(prop) = class_def.properties.get(&data.property_name) {
+        build_reflection_attribute_array(vm, &prop.attributes)
+    } else {
+        Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    }
 }
 
 /// ReflectionProperty::getDefaultValue(): mixed
@@ -4524,9 +4692,28 @@ pub fn reflection_property_get_default_value(vm: &mut VM, _args: &[Handle]) -> R
 }
 
 /// ReflectionProperty::getDocComment(): string|false
-/// Get doc comment for the property. Returns false (doc comments not yet tracked).
+/// Get doc comment for the property.
 pub fn reflection_property_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Requires doc_comment: Option<String> in property metadata
+    let data = get_reflection_property_data(vm)?;
+    let class_def = get_class_def(vm, data.class_name)?;
+
+    if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
+        if let Some(comment) = &static_prop.doc_comment {
+            return Ok(vm.arena.alloc(Val::String(comment.clone())));
+        }
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    let doc_comment = vm.walk_class_hierarchy(data.class_name, |def, _| {
+        def.properties
+            .get(&data.property_name)
+            .and_then(|entry| entry.doc_comment.clone())
+    });
+
+    if let Some(comment) = doc_comment {
+        return Ok(vm.arena.alloc(Val::String(comment)));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -4932,19 +5119,26 @@ pub fn reflection_class_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Res
 }
 
 /// ReflectionClassConstant::getAttributes(): array
-/// Get attributes applied to the constant. Returns empty array (attributes not yet implemented).
 pub fn reflection_class_constant_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Constant attributes require:
-    // 1. Add attributes: Vec<Attribute> to constant metadata in ClassDef
-    // 2. Parse #[Attr] above constant declarations
-    // 3. Return array of ReflectionAttribute objects
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_class_constant_data(vm)?;
+    let class_def = get_class_def(vm, data.class_name)?;
+    if let Some(attrs) = class_def.constant_attributes.get(&data.constant_name) {
+        build_reflection_attribute_array(vm, attrs)
+    } else {
+        Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    }
 }
 
 /// ReflectionClassConstant::getDocComment(): string|false
-/// Get doc comment for the constant. Returns false (doc comments not yet tracked).
+/// Get doc comment for the constant.
 pub fn reflection_class_constant_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Requires doc_comment: Option<String> in constant metadata
+    let data = get_reflection_class_constant_data(vm)?;
+    let class_def = get_class_def(vm, data.class_name)?;
+
+    if let Some(comment) = class_def.constant_doc_comments.get(&data.constant_name) {
+        return Ok(vm.arena.alloc(Val::String(comment.clone())));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -5318,14 +5512,64 @@ pub fn reflection_attribute_is_repeated(vm: &mut VM, _args: &[Handle]) -> Result
 /// ReflectionAttribute::newInstance(): object
 /// Instantiates the attribute class represented by this ReflectionAttribute
 pub fn reflection_attribute_new_instance(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Attribute class instantiation requires:
-    // 1. Get attribute class name from ReflectionAttribute data
-    // 2. Look up class definition in context.classes
-    // 3. Create object instance with create_object_with_properties
-    // 4. Call __construct with stored arguments
-    // 5. Return the instantiated attribute object
-    // Similar to ReflectionClass::newInstanceArgs()
-    Ok(vm.arena.alloc(Val::Null))
+    let data = get_reflection_attribute_data(vm)?;
+    let name_bytes = lookup_symbol(vm, data.name).to_vec();
+    let class_sym = vm.context.interner.intern(&name_bytes);
+
+    if !vm.context.classes.contains_key(&class_sym) {
+        vm.trigger_autoload(class_sym)
+            .map_err(|e| format!("{:?}", e))?;
+    }
+
+    let class_def = vm
+        .context
+        .classes
+        .get(&class_sym)
+        .ok_or_else(|| format!("Attribute class \"{}\" not found", String::from_utf8_lossy(&name_bytes)))?;
+
+    let attribute_marker = class_def.attributes.iter().find(|attr| {
+        let attr_name = lookup_symbol(vm, attr.lc_name);
+        attr_name.eq_ignore_ascii_case(b"attribute") || attr_name.ends_with(b"\\attribute")
+    });
+
+    let marker = match attribute_marker {
+        Some(marker) => marker,
+        None => {
+            return Err(format!(
+                "Attempting to use non-attribute class \"{}\" as attribute",
+                String::from_utf8_lossy(&name_bytes)
+            ));
+        }
+    };
+
+    let mut flags = crate::runtime::attributes::ATTRIBUTE_TARGET_ALL;
+    if let Some(first_arg) = marker.args.first() {
+        if let Val::Int(i) = first_arg.value {
+            flags = i as u32;
+        }
+    }
+
+    let allowed_targets = flags & crate::runtime::attributes::ATTRIBUTE_TARGET_ALL;
+    if allowed_targets != 0 && (data.target as u32 & allowed_targets) == 0 {
+        return Err(format!(
+            "Attribute \"{}\" cannot target this location",
+            String::from_utf8_lossy(&name_bytes)
+        ));
+    }
+
+    if data.is_repeated && (flags & crate::runtime::attributes::ATTRIBUTE_IS_REPEATABLE) == 0 {
+        return Err(format!(
+            "Attribute \"{}\" must not be repeated",
+            String::from_utf8_lossy(&name_bytes)
+        ));
+    }
+
+    let mut arg_handles = Vec::with_capacity(data.arguments.len());
+    for arg in &data.arguments {
+        arg_handles.push(vm.arena.alloc(arg.clone()));
+    }
+
+    vm.instantiate_class(class_sym, &arg_handles)
 }
 
 //=============================================================================
@@ -7075,6 +7319,15 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
+
+        reflection_method_methods.insert(
+            b"getAttributes".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_get_attributes,
+                visibility: Visibility::Public,
+                is_static: false,
+            },
+        );
         
         reflection_method_methods.insert(
             b"isPublic".to_vec(),
@@ -7416,6 +7669,15 @@ impl Extension for ReflectionExtension {
             b"getParameters".to_vec(),
             NativeMethodEntry {
                 handler: reflection_function_get_parameters,
+                visibility: Visibility::Public,
+                is_static: false,
+            },
+        );
+
+        reflection_function_methods.insert(
+            b"getAttributes".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_function_get_attributes,
                 visibility: Visibility::Public,
                 is_static: false,
             },

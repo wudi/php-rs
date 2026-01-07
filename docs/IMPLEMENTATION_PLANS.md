@@ -10,3 +10,5 @@
 - 2026-01-07: ReflectionClass::newInstanceWithoutConstructor implementation (`docs/plans/2026-01-07-reflection-class-newinstance-without-constructor.md`)
 - 2026-01-07: ReflectionClass::getFileName implementation (`docs/plans/2026-01-07-reflection-class-getfilename.md`)
 - 2026-01-07: ReflectionClass line tracking (`docs/plans/2026-01-07-reflection-class-lines.md`)
+- 2026-01-07: Attribute reflection (PHP 8.5) (`docs/plans/2026-01-07-attribute-reflection.md`)
+- 2026-01-07: Reflection property/constant doc comments (PHP 8.5) (`docs/plans/2026-01-07-reflection-doc-comments.md`)

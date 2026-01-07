@@ -1,7 +1,8 @@
 use super::Parser;
-use crate::parser::ast::{Attribute, AttributeGroup};
+use crate::parser::ast::{Attribute, AttributeGroup, Expr, ParseError};
 use crate::parser::lexer::token::TokenKind;
 use crate::parser::span::Span;
+use std::collections::HashSet;
 
 impl<'src, 'ast> Parser<'src, 'ast> {
     pub(super) fn parse_attributes(&mut self) -> &'ast [AttributeGroup<'ast>] {
@@ -34,6 +35,46 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     }
                 } else {
                     break;
+                }
+            }
+
+            for attr in attributes.iter() {
+                let mut saw_named = false;
+                let mut seen_names: HashSet<Vec<u8>> = HashSet::new();
+
+                for arg in attr.args {
+                    if arg.unpack {
+                        self.errors.push(ParseError {
+                            span: arg.span,
+                            message: "Cannot use unpacking in attribute argument list",
+                        });
+                    }
+
+                    match arg.value {
+                        Expr::Closure { .. } | Expr::ArrowFunction { .. } => {
+                            self.errors.push(ParseError {
+                                span: arg.span,
+                                message: "Cannot create Closure as attribute argument",
+                            });
+                        }
+                        _ => {}
+                    }
+
+                    if let Some(name) = arg.name {
+                        saw_named = true;
+                        let name_bytes = name.text(self.lexer.source()).to_ascii_lowercase();
+                        if !seen_names.insert(name_bytes) {
+                            self.errors.push(ParseError {
+                                span: name.span,
+                                message: "Duplicate named argument",
+                            });
+                        }
+                    } else if saw_named {
+                        self.errors.push(ParseError {
+                            span: arg.span,
+                            message: "Cannot use positional argument after named argument",
+                        });
+                    }
                 }
             }
 

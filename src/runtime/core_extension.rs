@@ -5,6 +5,11 @@ use crate::builtins::{
 use crate::core::value::{Val, Visibility};
 use crate::runtime::context::RequestContext;
 use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
+use crate::runtime::attributes::{
+    ATTRIBUTE_IS_REPEATABLE, ATTRIBUTE_TARGET_ALL, ATTRIBUTE_TARGET_CLASS,
+    ATTRIBUTE_TARGET_CLASS_CONST, ATTRIBUTE_TARGET_CONST, ATTRIBUTE_TARGET_FUNCTION,
+    ATTRIBUTE_TARGET_METHOD, ATTRIBUTE_TARGET_PARAMETER, ATTRIBUTE_TARGET_PROPERTY,
+};
 use crate::runtime::registry::{ExtensionRegistry, NativeClassDef, NativeMethodEntry};
 use std::collections::HashMap;
 
@@ -365,6 +370,60 @@ impl Extension for CoreExtension {
         registry.register_function(b"proc_nice", exec::php_proc_nice);
         registry.register_function(b"proc_get_status", exec::php_proc_get_status);
         registry.register_function(b"set_time_limit", exec::php_set_time_limit);
+
+        // ========================================
+        // CORE PHP ATTRIBUTE SUPPORT
+        // ========================================
+
+        let mut attribute_constants = HashMap::new();
+        attribute_constants.insert(
+            b"TARGET_CLASS".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_CLASS as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_FUNCTION".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_FUNCTION as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_METHOD".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_METHOD as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_PROPERTY".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_PROPERTY as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_CLASS_CONST".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_CLASS_CONST as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_PARAMETER".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_PARAMETER as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_CONST".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_CONST as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"TARGET_ALL".to_vec(),
+            (Val::Int(ATTRIBUTE_TARGET_ALL as i64), Visibility::Public),
+        );
+        attribute_constants.insert(
+            b"IS_REPEATABLE".to_vec(),
+            (Val::Int(ATTRIBUTE_IS_REPEATABLE as i64), Visibility::Public),
+        );
+
+        registry.register_class(NativeClassDef {
+            name: b"Attribute".to_vec(),
+            parent: None,
+            is_interface: false,
+            is_trait: false,
+            is_final: true,
+            interfaces: vec![],
+            methods: HashMap::new(),
+            constants: attribute_constants,
+            constructor: None,
+        });
 
         // ========================================
         // CORE PHP INTERFACES
