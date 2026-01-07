@@ -7,3 +7,4 @@
 - 2026-01-06: ReflectionClass::isSubclassOf multi-level inheritance (`docs/plans/2026-01-06-reflection-class-issubclassof.md`)
 - 2026-01-06: ReflectionClass::newInstance implementation (`docs/plans/2026-01-06-reflection-class-newinstance.md`)
 - 2026-01-06: ReflectionClass::newInstanceArgs implementation (`docs/plans/2026-01-06-reflection-class-newinstance-args.md`)
+- 2026-01-07: ReflectionClass::newInstanceWithoutConstructor implementation (`docs/plans/2026-01-07-reflection-class-newinstance-without-constructor.md`)
