@@ -3854,6 +3854,7 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    is_internal: false,
                 };
                 self.context.classes.insert(name_sym, class_def);
             }
@@ -5975,6 +5976,7 @@ impl VM {
                     abstract_methods,
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
             }
@@ -5997,6 +5999,7 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
             }
@@ -6019,6 +6022,7 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
             }

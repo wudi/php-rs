@@ -901,6 +901,56 @@ fn reflection_class_new_instance_impl(
     Ok(obj_handle)
 }
 
+fn reflection_class_new_instance_without_constructor_impl(
+    vm: &mut VM,
+    class_name: Symbol,
+    class_def: &ClassDef,
+) -> Result<Handle, String> {
+    let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
+
+    if class_def.is_abstract && !class_def.is_interface {
+        return Err(format!(
+            "Cannot instantiate abstract class {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+    if class_def.is_interface {
+        return Err(format!(
+            "Cannot instantiate interface {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+    if class_def.is_trait {
+        return Err(format!(
+            "Cannot instantiate trait {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+    if class_def.is_enum {
+        return Err(format!(
+            "Cannot instantiate enum {}",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+
+    if class_def.is_internal && class_def.is_final {
+        return Err(format!(
+            "Class {} is an internal class marked as final that cannot be instantiated without invoking its constructor",
+            String::from_utf8_lossy(&class_name_bytes)
+        ));
+    }
+
+    let properties = vm.collect_properties(class_name, PropertyCollectionMode::All);
+    let obj_data = ObjectData {
+        class: class_name,
+        properties,
+        internal: None,
+        dynamic_properties: HashSet::new(),
+    };
+    let payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
+    Ok(vm.arena.alloc(Val::Object(payload_handle)))
+}
+
 pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
@@ -937,12 +987,9 @@ pub fn reflection_class_new_instance_args(vm: &mut VM, args: &[Handle]) -> Resul
 
 /// ReflectionClass::newInstanceWithoutConstructor(): object
 pub fn reflection_class_new_instance_without_constructor(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Implementation:
-    // 1. Get class name from ReflectionClass object
-    // 2. Create object with create_object_with_properties but skip __construct call
-    // 3. Initialize properties with their default values
-    // Used for unserialization and testing - bypasses normal construction
-    Ok(vm.arena.alloc(Val::Null))
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    reflection_class_new_instance_without_constructor_impl(vm, class_name, &class_def)
 }
 
 /// ReflectionClass::isAnonymous(): bool
@@ -973,9 +1020,8 @@ pub fn reflection_class_is_cloneable(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// ReflectionClass::isInternal(): bool
 pub fn reflection_class_is_internal(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
-    
-    // Class is internal if NOT in user-defined classes
-    let is_internal = !vm.context.classes.contains_key(&class_name);
+    let class_def = get_class_def(vm, class_name)?;
+    let is_internal = class_def.is_internal;
     
     Ok(vm.arena.alloc(Val::Bool(is_internal)))
 }
@@ -983,9 +1029,8 @@ pub fn reflection_class_is_internal(vm: &mut VM, _args: &[Handle]) -> Result<Han
 /// ReflectionClass::isUserDefined(): bool
 pub fn reflection_class_is_user_defined(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
-    
-    // Class is user-defined if in classes map
-    let is_user_defined = vm.context.classes.contains_key(&class_name);
+    let class_def = get_class_def(vm, class_name)?;
+    let is_user_defined = !class_def.is_internal;
     
     Ok(vm.arena.alloc(Val::Bool(is_user_defined)))
 }
