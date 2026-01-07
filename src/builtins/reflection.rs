@@ -5999,7 +5999,7 @@ pub struct ReflectionExtension;
 impl Extension for ReflectionExtension {
     fn info(&self) -> ExtensionInfo {
         ExtensionInfo {
-            name: "reflection",
+            name: "Reflection",
             version: "8.3.0",
             dependencies: &[],
         }

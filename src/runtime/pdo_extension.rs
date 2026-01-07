@@ -27,7 +27,7 @@ pub struct PdoExtension;
 impl Extension for PdoExtension {
     fn info(&self) -> ExtensionInfo {
         ExtensionInfo {
-            name: "pdo",
+            name: "PDO",
             version: "1.0.0",
             dependencies: &[],
         }
