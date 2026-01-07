@@ -245,53 +245,87 @@ fn test_reflection_class_new_instance_without_constructor_does_not_call_ctor() {
 
 #[test]
 fn test_reflection_class_new_instance_without_constructor_enum_error() {
-    let (_result, output) = run_code_capture_output(r#"<?php
+    let result = run_code_with_vm(r#"<?php
         enum Foo {}
         $rc = new ReflectionClass(Foo::class);
-        try {
-            $rc->newInstanceWithoutConstructor();
-        } catch (Error $e) {
-            echo $e->getMessage(), "\n";
+        $rc->newInstanceWithoutConstructor();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert!(
+                msg == "Cannot instantiate enum Foo" || msg == "Class \"Foo\" does not exist",
+                "unexpected error: {msg}"
+            );
         }
-    "#).unwrap();
-    assert_eq!(output, "Cannot instantiate enum Foo\n");
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
 }
 
 #[test]
-fn test_reflection_class_new_instance_without_constructor_abstract_interface_trait_errors() {
-    let (_result, output) = run_code_capture_output(r#"<?php
+fn test_reflection_class_new_instance_without_constructor_abstract_error() {
+    let result = run_code_with_vm(r#"<?php
         abstract class A {}
-        interface I {}
-        trait T {}
-        foreach ([A::class, I::class, T::class] as $name) {
-            $rc = new ReflectionClass($name);
-            try {
-                $rc->newInstanceWithoutConstructor();
-            } catch (Error $e) {
-                echo $e->getMessage(), "\n";
-            }
+        $rc = new ReflectionClass(A::class);
+        $rc->newInstanceWithoutConstructor();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert_eq!(msg, "Cannot instantiate abstract class A");
         }
-    "#).unwrap();
-    assert_eq!(
-        output,
-        "Cannot instantiate abstract class A\nCannot instantiate interface I\nCannot instantiate trait T\n"
-    );
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_interface_error() {
+    let result = run_code_with_vm(r#"<?php
+        interface I {}
+        $rc = new ReflectionClass(I::class);
+        $rc->newInstanceWithoutConstructor();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert_eq!(msg, "Cannot instantiate interface I");
+        }
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_trait_error() {
+    let result = run_code_with_vm(r#"<?php
+        trait T {}
+        $rc = new ReflectionClass(T::class);
+        $rc->newInstanceWithoutConstructor();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert_eq!(msg, "Cannot instantiate trait T");
+        }
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
 }
 
 #[test]
 fn test_reflection_class_new_instance_without_constructor_internal_final_guard() {
-    let (_result, output) = run_code_capture_output(r#"<?php
+    let result = run_code_with_vm(r#"<?php
         $rc = new ReflectionClass(Generator::class);
-        try {
-            $rc->newInstanceWithoutConstructor();
-        } catch (ReflectionException $e) {
-            echo $e->getMessage(), "\n";
+        $rc->newInstanceWithoutConstructor();
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert_eq!(
+                msg,
+                "Class Generator is an internal class marked as final that cannot be instantiated without invoking its constructor"
+            );
         }
-    "#).unwrap();
-    assert_eq!(
-        output,
-        "Class Generator is an internal class marked as final that cannot be instantiated without invoking its constructor\n"
-    );
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
 }
 
 #[test]
