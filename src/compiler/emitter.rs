@@ -3,9 +3,10 @@ use crate::core::interner::Interner;
 use crate::core::value::{Symbol, Val, Visibility};
 use crate::parser::ast::{
     AssignOp, AttributeGroup, BinaryOp, CastKind, ClassMember, Expr, IncludeKind, MagicConstKind,
-    Stmt, StmtId, TraitAdaptation, Type, UnaryOp,
+    Name, Stmt, StmtId, TraitAdaptation, Type, UnaryOp,
 };
 use crate::parser::lexer::token::{Token, TokenKind};
+use crate::parser::span::Span;
 use crate::vm::opcode::OpCode;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -148,6 +149,66 @@ impl<'src> Emitter<'src> {
             }
         }
         Visibility::Public // Default
+    }
+
+    /// Generate a unique name for an anonymous class
+    fn generate_anonymous_class_name(
+        &mut self,
+        parent_name: Option<&[u8]>,
+        span: &Span,
+    ) -> String {
+        let base_name = parent_name
+            .map(|p| format!("{}@anonymous", String::from_utf8_lossy(p)))
+            .unwrap_or_else(|| "class@anonymous".to_string());
+
+        let suffix = self
+            .file_path
+            .as_ref()
+            .map(|path| format!("\0{}:{}", path, span.start))
+            .unwrap_or_else(|| format!("\0{}", self.anonymous_class_counter));
+
+        self.anonymous_class_counter += 1;
+        format!("{}{}", base_name, suffix)
+    }
+
+    /// Emit common class definition opcodes (attributes, modifiers, interfaces)
+    fn emit_class_metadata(
+        &mut self,
+        class_sym: Symbol,
+        attributes: &[AttributeGroup],
+        modifiers: &[Token],
+        implements: &[Name],
+    ) {
+        // Handle attributes if any
+        if !attributes.is_empty() {
+            let attr_val = self.build_attribute_list(attributes);
+            let idx = self.add_constant(attr_val);
+            self.chunk
+                .code
+                .push(OpCode::SetClassAttributes(class_sym, idx as u16));
+        }
+
+        // Handle modifiers (abstract, final, readonly)
+        if modifiers.iter().any(|m| m.kind == TokenKind::Abstract) {
+            self.chunk.code.push(OpCode::MarkAbstract(class_sym));
+        }
+
+        if modifiers.iter().any(|m| m.kind == TokenKind::Final) {
+            self.chunk.code.push(OpCode::MarkFinal(class_sym));
+        }
+
+        if modifiers.iter().any(|m| m.kind == TokenKind::Readonly) {
+            self.chunk.code.push(OpCode::MarkReadonly(class_sym));
+        }
+
+        // Handle interfaces
+        for interface_name in implements {
+            let interface_str = self.get_text(interface_name.span);
+            let interface_sym = self.interner.intern(interface_str);
+            self.chunk
+                .code
+                .push(OpCode::AddInterface(class_sym, interface_sym));
+        }
     }
 
     pub fn compile(mut self, stmts: &[StmtId]) -> (CodeChunk, bool) {
@@ -1001,39 +1062,9 @@ impl<'src> Emitter<'src> {
                         .code
                         .push(OpCode::SetClassDocComment(class_sym, idx as u16));
                 }
-                if !attributes.is_empty() {
-                    let attr_val = self.build_attribute_list(attributes);
-                    let idx = self.add_constant(attr_val);
-                    self.chunk
-                        .code
-                        .push(OpCode::SetClassAttributes(class_sym, idx as u16));
-                }
 
-                // Check if class is abstract
-                let is_abstract = modifiers.iter().any(|m| m.kind == TokenKind::Abstract);
-                if is_abstract {
-                    self.chunk.code.push(OpCode::MarkAbstract(class_sym));
-                }
-
-                // Check if class is final
-                let is_final = modifiers.iter().any(|m| m.kind == TokenKind::Final);
-                if is_final {
-                    self.chunk.code.push(OpCode::MarkFinal(class_sym));
-                }
-
-                // Check if class is readonly
-                let is_readonly = modifiers.iter().any(|m| m.kind == TokenKind::Readonly);
-                if is_readonly {
-                    self.chunk.code.push(OpCode::MarkReadonly(class_sym));
-                }
-
-                for interface in *implements {
-                    let interface_str = self.get_text(interface.span);
-                    let interface_sym = self.interner.intern(interface_str);
-                    self.chunk
-                        .code
-                        .push(OpCode::AddInterface(class_sym, interface_sym));
-                }
+                // Emit class metadata (attributes, modifiers, interfaces)
+                self.emit_class_metadata(class_sym, attributes, modifiers, implements);
 
                 // Check for #[AllowDynamicProperties] attribute
                 for attr_group in *attributes {
@@ -2582,103 +2613,43 @@ impl<'src> Emitter<'src> {
                     span,
                 } = class
                 {
-                    // Generate unique name for anonymous class
-                    // PHP uses format: ParentClass@anonymous or class@anonymous if no parent
-                    let anon_name = if let Some(parent_name) = extends {
-                        let parent_str = self.get_text(parent_name.span);
-                        if let Some(file_path) = &self.file_path {
-                            format!(
-                                "{}@anonymous\0{}:{}",
-                                String::from_utf8_lossy(parent_str),
-                                file_path,
-                                span.start
-                            )
-                        } else {
-                            format!(
-                                "{}@anonymous\0{}",
-                                String::from_utf8_lossy(parent_str),
-                                self.anonymous_class_counter
-                            )
-                        }
+                    // Extract parent information once
+                    let (parent_name, parent_sym) = if let Some(parent_ref) = extends {
+                        let parent_str = self.get_text(parent_ref.span);
+                        (Some(parent_str), Some(self.interner.intern(parent_str)))
                     } else {
-                        if let Some(file_path) = &self.file_path {
-                            format!(
-                                "class@anonymous\0{}:{}",
-                                file_path,
-                                span.start
-                            )
-                        } else {
-                            format!("class@anonymous\0{}", self.anonymous_class_counter)
-                        }
+                        (None, None)
                     };
-                    self.anonymous_class_counter += 1;
-                    
+
+                    // Generate unique name and create class symbol
+                    let anon_name = self.generate_anonymous_class_name(parent_name, span);
                     let class_sym = self.interner.intern(anon_name.as_bytes());
 
-                    // Define the parent class
-                    let parent_sym = if let Some(parent_name) = extends {
-                        let parent_str = self.get_text(parent_name.span);
-                        Some(self.interner.intern(parent_str))
-                    } else {
-                        None
-                    };
-
+                    // Define class with parent
                     self.chunk
                         .code
                         .push(OpCode::DefClass(class_sym, parent_sym));
 
-                    // Set class lines (use span info)
+                    // Set class line information
                     let start_line = span.line_info(self.source).map(|info| info.line as u32);
                     let end_line = span.line_info(self.source).map(|info| info.line as u32);
                     self.chunk
                         .code
                         .push(OpCode::SetClassLines(class_sym, start_line, end_line));
 
-                    // Handle attributes if any
-                    if !attributes.is_empty() {
-                        let attr_val = self.build_attribute_list(attributes);
-                        let idx = self.add_constant(attr_val);
-                        self.chunk
-                            .code
-                            .push(OpCode::SetClassAttributes(class_sym, idx as u16));
-                    }
+                    // Emit class metadata (attributes, modifiers, interfaces)
+                    self.emit_class_metadata(class_sym, attributes, modifiers, implements);
 
-                    // Handle modifiers (abstract, final, readonly)
-                    let is_abstract = modifiers.iter().any(|m| m.kind == TokenKind::Abstract);
-                    if is_abstract {
-                        self.chunk.code.push(OpCode::MarkAbstract(class_sym));
-                    }
-
-                    let is_final = modifiers.iter().any(|m| m.kind == TokenKind::Final);
-                    if is_final {
-                        self.chunk.code.push(OpCode::MarkFinal(class_sym));
-                    }
-
-                    let is_readonly = modifiers.iter().any(|m| m.kind == TokenKind::Readonly);
-                    if is_readonly {
-                        self.chunk.code.push(OpCode::MarkReadonly(class_sym));
-                    }
-
-                    // Handle interfaces
-                    for interface_name in *implements {
-                        let interface_str = self.get_text(interface_name.span);
-                        let interface_sym = self.interner.intern(interface_str);
-                        self.chunk
-                            .code
-                            .push(OpCode::AddInterface(class_sym, interface_sym));
-                    }
-
-                    // Track class context while emitting members
+                    // Emit class members with proper context
                     let prev_class = self.current_class;
                     self.current_class = Some(class_sym);
                     self.emit_members(class_sym, members);
                     self.current_class = prev_class;
 
-                    // Finalize class
+                    // Finalize and instantiate
                     self.chunk.code.push(OpCode::FinalizeClass(class_sym));
 
-                    // Now instantiate the class with the constructor arguments
-                    // Note: We use the args from the New expression, not ctor_args which are just parsed for the class definition
+                    // Emit constructor arguments and instantiate
                     for arg in *args {
                         self.emit_expr(arg.value);
                     }
