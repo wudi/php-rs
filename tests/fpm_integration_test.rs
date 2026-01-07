@@ -238,3 +238,160 @@ fn test_fpm_concurrent_requests() {
         assert!(response.contains("Status: 200"));
     }
 }
+
+#[test]
+fn test_fpm_finish_request() {
+    let socket = "/tmp/test-fpm-finish.sock";
+    let _server = FpmServer::start(socket);
+
+    let script_path = std::env::temp_dir().join("test_finish.php");
+    std::fs::write(
+        &script_path,
+        b"<?php
+    echo 'First';
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        echo 'Function not found';
+    }
+    echo 'Second'; // Should not be in output if finish_request works
+    ",
+    )
+    .unwrap();
+
+    let response = send_fcgi_request(socket, script_path.to_str().unwrap(), "");
+
+    assert!(response.contains("First"));
+    assert!(!response.contains("Second"));
+    assert!(!response.contains("Function not found"));
+    assert!(response.contains("Status: 200"));
+}
+
+#[test]
+fn test_fpm_get_values() {
+    let socket = "/tmp/test-fpm-values.sock";
+    let _server = FpmServer::start(socket);
+
+    let mut stream = UnixStream::connect(socket).expect("Failed to connect");
+
+    // GET_VALUES (type=9, request_id=0)
+    let mut params = Vec::new();
+    params.extend_from_slice(&encode_name_value(b"FCGI_MAX_CONNS", b""));
+    params.extend_from_slice(&encode_name_value(b"FCGI_MPXS_CONNS", b""));
+    params.extend_from_slice(&encode_name_value(b"UNKNOWN", b""));
+
+    stream.write_all(&make_record(9, 0, &params)).unwrap();
+
+    // Read response (GET_VALUES_RESULT type=10)
+    let mut header = [0u8; 8];
+    stream.read_exact(&mut header).unwrap();
+    assert_eq!(header[1], 10); // Type 10
+    assert_eq!(u16::from_be_bytes([header[2], header[3]]), 0); // Request ID 0
+
+    let content_len = u16::from_be_bytes([header[4], header[5]]) as usize;
+    let padding_len = header[6] as usize;
+
+    let mut content = vec![0u8; content_len];
+    stream.read_exact(&mut content).unwrap();
+
+    // Skip padding
+    if padding_len > 0 {
+        let mut padding = vec![0u8; padding_len];
+        stream.read_exact(&mut padding).unwrap();
+    }
+
+    // Decode results
+    // We can't use our protocol.rs from here easily unless we import it,
+    // but we can just check the raw bytes or simple manual decode.
+    let content_str = String::from_utf8_lossy(&content);
+    assert!(content_str.contains("FCGI_MAX_CONNS"));
+    assert!(content_str.contains("100"));
+    assert!(content_str.contains("FCGI_MPXS_CONNS"));
+    assert!(content_str.contains("0"));
+    assert!(!content_str.contains("UNKNOWN"));
+}
+
+#[test]
+fn test_fpm_status_page() {
+    let socket = "/tmp/test-fpm-status.sock";
+    let _server = FpmServer::start(socket);
+
+    // Send request to /status
+    let mut stream = UnixStream::connect(socket).expect("Failed to connect");
+    let request_id = 1u16;
+
+    let mut begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
+    stream.write_all(&make_record(1, request_id, &begin_body)).unwrap();
+
+    let mut params = Vec::new();
+    params.extend_from_slice(&encode_name_value(b"REQUEST_URI", b"/status"));
+    params.extend_from_slice(&encode_name_value(b"REQUEST_METHOD", b"GET"));
+    params.extend_from_slice(&encode_name_value(b"SCRIPT_FILENAME", b"none.php"));
+    stream.write_all(&make_record(4, request_id, &params)).unwrap();
+    stream.write_all(&make_record(4, request_id, &[])).unwrap();
+    stream.write_all(&make_record(5, request_id, &[])).unwrap();
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+
+    let mut stdout_data = Vec::new();
+    let mut pos = 0;
+    while pos + 8 <= response.len() {
+        let rec_type = response[pos + 1];
+        let content_len = u16::from_be_bytes([response[pos + 4], response[pos + 5]]) as usize;
+        let padding_len = response[pos + 6] as usize;
+        pos += 8;
+        if rec_type == 6 && content_len > 0 {
+            stdout_data.extend_from_slice(&response[pos..pos + content_len]);
+        }
+        pos += content_len + padding_len;
+    }
+
+    let status_out = String::from_utf8_lossy(&stdout_data);
+    if !status_out.contains("pool:                 www") || !status_out.contains("accepted conn:") {
+        println!("Status Output: \n{}", status_out);
+    }
+    assert!(status_out.contains("pool:                 www"));
+    assert!(status_out.contains("accepted conn:"));
+    // Just check if it's there, exact spacing is brittle
+}
+
+#[test]
+fn test_fpm_ping_page() {
+    let socket = "/tmp/test-fpm-ping.sock";
+    let _server = FpmServer::start(socket);
+
+    // Send request to /ping
+    let mut stream = UnixStream::connect(socket).expect("Failed to connect");
+    let request_id = 1u16;
+
+    let mut begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
+    stream.write_all(&make_record(1, request_id, &begin_body)).unwrap();
+
+    let mut params = Vec::new();
+    params.extend_from_slice(&encode_name_value(b"REQUEST_URI", b"/ping"));
+    params.extend_from_slice(&encode_name_value(b"REQUEST_METHOD", b"GET"));
+    params.extend_from_slice(&encode_name_value(b"SCRIPT_FILENAME", b"none.php"));
+    stream.write_all(&make_record(4, request_id, &params)).unwrap();
+    stream.write_all(&make_record(4, request_id, &[])).unwrap();
+    stream.write_all(&make_record(5, request_id, &[])).unwrap();
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+
+    let mut stdout_data = Vec::new();
+    let mut pos = 0;
+    while pos + 8 <= response.len() {
+        let rec_type = response[pos + 1];
+        let content_len = u16::from_be_bytes([response[pos + 4], response[pos + 5]]) as usize;
+        let padding_len = response[pos + 6] as usize;
+        pos += 8;
+        if rec_type == 6 && content_len > 0 {
+            stdout_data.extend_from_slice(&response[pos..pos + content_len]);
+        }
+        pos += content_len + padding_len;
+    }
+
+    let ping_out = String::from_utf8_lossy(&stdout_data);
+    assert!(ping_out.contains("pong"));
+}

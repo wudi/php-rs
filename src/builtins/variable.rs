@@ -104,12 +104,8 @@ fn dump_value(vm: &VM, handle: Handle, depth: usize, output: &mut String) {
                         let _ = writeln!(output, "{}  [{}]=>", indent, i);
                     }
                     crate::core::value::ArrayKey::Str(s) => {
-                        let _ = writeln!(
-                            output,
-                            "{}  [\"{}\"]=>",
-                            indent,
-                            String::from_utf8_lossy(s)
-                        );
+                        let _ =
+                            writeln!(output, "{}  [\"{}\"]=>", indent, String::from_utf8_lossy(s));
                     }
                 }
                 dump_value(vm, *val_handle, depth + 1, output);
@@ -881,11 +877,7 @@ fn serialize_value(vm: &VM, handle: Handle) -> Result<Vec<u8>, String> {
             result.extend_from_slice(b"d:");
             // Format float like PHP does
             let f_str = if f.is_infinite() {
-                if f.is_sign_positive() {
-                    "INF"
-                } else {
-                    "-INF"
-                }
+                if f.is_sign_positive() { "INF" } else { "-INF" }
             } else if f.is_nan() {
                 "NAN"
             } else {
@@ -958,7 +950,7 @@ fn serialize_value(vm: &VM, handle: Handle) -> Result<Vec<u8>, String> {
                     .interner
                     .lookup(obj_data.class)
                     .unwrap_or(b"stdClass");
-                
+
                 result.extend_from_slice(b"O:");
                 result.extend_from_slice(class_name.len().to_string().as_bytes());
                 result.extend_from_slice(b":\"");
@@ -966,7 +958,7 @@ fn serialize_value(vm: &VM, handle: Handle) -> Result<Vec<u8>, String> {
                 result.extend_from_slice(b"\":");
                 result.extend_from_slice(obj_data.properties.len().to_string().as_bytes());
                 result.extend_from_slice(b":{");
-                
+
                 for (prop_name, prop_handle) in obj_data.properties.iter() {
                     let prop_name_bytes = vm.context.interner.lookup(*prop_name).unwrap_or(b"");
                     result.extend_from_slice(b"s:");
@@ -983,7 +975,10 @@ fn serialize_value(vm: &VM, handle: Handle) -> Result<Vec<u8>, String> {
             }
         }
         _ => {
-            return Err(format!("serialize() does not support type: {:?}", val.value));
+            return Err(format!(
+                "serialize() does not support type: {:?}",
+                val.value
+            ));
         }
     }
 
@@ -1013,11 +1008,7 @@ fn serialize_val(vm: &VM, val: &Val) -> Result<Vec<u8>, String> {
         Val::Float(f) => {
             result.extend_from_slice(b"d:");
             let f_str = if f.is_infinite() {
-                if f.is_sign_positive() {
-                    "INF"
-                } else {
-                    "-INF"
-                }
+                if f.is_sign_positive() { "INF" } else { "-INF" }
             } else if f.is_nan() {
                 "NAN"
             } else {
@@ -1145,13 +1136,14 @@ impl<'a> UnserializeParser<'a> {
     fn read_float(&mut self) -> Result<f64, String> {
         let bytes = self.read_until(b';')?;
         let s = String::from_utf8(bytes).map_err(|_| "Invalid UTF-8 in float")?;
-        
+
         // Handle special values
         match s.as_str() {
             "INF" => Ok(f64::INFINITY),
             "-INF" => Ok(f64::NEG_INFINITY),
             "NAN" => Ok(f64::NAN),
-            _ => s.parse::<f64>()
+            _ => s
+                .parse::<f64>()
                 .map_err(|_| format!("Invalid float: {}", s)),
         }
     }
@@ -1181,7 +1173,7 @@ impl<'a> UnserializeParser<'a> {
 
     fn parse(&mut self, vm: &mut VM) -> Result<Handle, String> {
         let type_char = self.consume().ok_or("Empty serialized data")?;
-        
+
         match type_char {
             b'N' => {
                 // NULL doesn't have a colon, just N;
@@ -1213,13 +1205,13 @@ impl<'a> UnserializeParser<'a> {
                     b'a' => {
                         let count = self.read_length()?;
                         self.expect(b'{')?;
-                        
+
                         let mut map = crate::core::value::ArrayData::new();
                         for _ in 0..count {
                             // Parse key
                             let key_type = self.consume().ok_or("Missing array key type")?;
                             self.expect(b':')?;
-                            
+
                             let key = match key_type {
                                 b'i' => {
                                     let i = self.read_int()?;
@@ -1230,14 +1222,19 @@ impl<'a> UnserializeParser<'a> {
                                     let s = self.read_string(len)?;
                                     crate::core::value::ArrayKey::Str(s.into())
                                 }
-                                _ => return Err(format!("Invalid array key type: {}", key_type as char)),
+                                _ => {
+                                    return Err(format!(
+                                        "Invalid array key type: {}",
+                                        key_type as char
+                                    ));
+                                }
                             };
-                            
+
                             // Parse value
                             let value = self.parse(vm)?;
                             map.insert(key, value);
                         }
-                        
+
                         self.expect(b'}')?;
                         Ok(vm.arena.alloc(Val::Array(map.into())))
                     }
@@ -1246,7 +1243,7 @@ impl<'a> UnserializeParser<'a> {
                         let class_name = self.read_string_no_semicolon(class_name_len)?;
                         self.expect(b':')?;
                         let class_sym = vm.context.interner.intern(&class_name);
-                        
+
                         // Look up the class
                         let class_info = vm.context.classes.get(&class_sym);
                         if class_info.is_none() {
@@ -1255,10 +1252,10 @@ impl<'a> UnserializeParser<'a> {
                                 String::from_utf8_lossy(&class_name)
                             ));
                         }
-                        
+
                         let prop_count = self.read_length()?;
                         self.expect(b'{')?;
-                        
+
                         // Create object
                         let obj_payload = crate::core::value::ObjectData {
                             class: class_sym,
@@ -1268,30 +1265,35 @@ impl<'a> UnserializeParser<'a> {
                         };
                         let obj_handle = vm.arena.alloc(Val::ObjPayload(obj_payload));
                         let obj_ref = vm.arena.alloc(Val::Object(obj_handle));
-                        
+
                         // Parse properties
                         for _ in 0..prop_count {
                             // Parse property name (always string)
                             let prop_type = self.consume().ok_or("Missing property name type")?;
                             self.expect(b':')?;
-                            
+
                             if prop_type != b's' {
-                                return Err(format!("Expected string for property name, got {}", prop_type as char));
+                                return Err(format!(
+                                    "Expected string for property name, got {}",
+                                    prop_type as char
+                                ));
                             }
-                            
+
                             let prop_name_len = self.read_length()?;
                             let prop_name = self.read_string(prop_name_len)?;
                             let prop_sym = vm.context.interner.intern(&prop_name);
-                            
+
                             // Parse property value
                             let value = self.parse(vm)?;
-                            
+
                             // Set property
-                            if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(obj_handle).value {
+                            if let Val::ObjPayload(obj_data) =
+                                &mut vm.arena.get_mut(obj_handle).value
+                            {
                                 obj_data.properties.insert(prop_sym, value);
                             }
                         }
-                        
+
                         self.expect(b'}')?;
                         Ok(obj_ref)
                     }

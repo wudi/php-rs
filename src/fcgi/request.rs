@@ -17,6 +17,17 @@ pub struct Request {
     pub stdin_data: Vec<u8>,
 }
 
+/// Result of reading from FastCGI stream.
+pub enum ResultRequest {
+    /// A complete application request.
+    Request(Request),
+    /// A management record (request_id=0).
+    Management {
+        record_type: RecordType,
+        content: Vec<u8>,
+    },
+}
+
 /// Request builder that accumulates records until request is complete.
 #[derive(Debug)]
 pub struct RequestBuilder {
@@ -122,13 +133,20 @@ impl RequestBuilder {
     }
 }
 
-/// Read one complete FastCGI request from a stream.
-/// Returns the Request and whether to keep the connection open.
-pub fn read_request<R: Read>(reader: &mut R) -> io::Result<Request> {
+/// Read one complete FastCGI request or management record from a stream.
+pub fn read_request<R: Read>(reader: &mut R) -> io::Result<ResultRequest> {
     let mut builder = RequestBuilder::new();
 
     loop {
         let (header, content) = super::protocol::read_record(reader)?;
+
+        // Handle management records (request_id == 0)
+        if header.request_id == 0 {
+            return Ok(ResultRequest::Management {
+                record_type: header.record_type,
+                content,
+            });
+        }
 
         match header.record_type {
             RecordType::BeginRequest => {
@@ -149,6 +167,7 @@ pub fn read_request<R: Read>(reader: &mut R) -> io::Result<Request> {
                 if builder.is_complete() {
                     return builder
                         .build()
+                        .map(|req| ResultRequest::Request(req))
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
                 }
             }

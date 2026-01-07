@@ -45,7 +45,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_construct,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -54,7 +55,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_prepare,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -63,7 +65,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_exec,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -72,7 +75,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_begin_transaction,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -81,7 +85,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_commit,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -90,7 +95,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_rollback,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -99,7 +105,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_in_transaction,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -108,7 +115,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_last_insert_id,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -117,7 +125,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_set_attribute,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -126,7 +135,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_get_attribute,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -135,7 +145,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_query,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -144,7 +155,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_error_code,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -153,7 +165,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_error_info,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -233,7 +246,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_execute,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -242,7 +256,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_fetch,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -251,7 +266,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_fetch_all,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -260,7 +276,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_row_count,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -269,7 +286,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_column_count,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -278,7 +296,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_error_code,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -287,7 +306,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_error_info,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -296,7 +316,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_row_count,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -305,7 +326,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_column_count,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -314,7 +336,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_bind_param,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 
@@ -323,7 +346,8 @@ pub fn register_pdo_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_pdo_stmt_bind_value,
             visibility: Visibility::Public,
-            is_static: false, is_final: false,
+            is_static: false,
+            is_final: false,
         },
     );
 

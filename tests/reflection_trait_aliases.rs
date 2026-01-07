@@ -6,7 +6,8 @@ use std::collections::HashMap;
 
 #[test]
 fn test_reflection_class_get_trait_aliases() {
-    let (result, vm) = run_code_with_vm(r#"<?php
+    let (result, vm) = run_code_with_vm(
+        r#"<?php
         trait TA {
             public function foo() {}
         }
@@ -25,14 +26,19 @@ fn test_reflection_class_get_trait_aliases() {
         }
 
         return (new ReflectionClass('AliasUser'))->getTraitAliases();
-    "#)
+    "#,
+    )
     .expect("execution failed");
 
-    let Val::Array(arr) = result else { panic!("expected array"); };
+    let Val::Array(arr) = result else {
+        panic!("expected array");
+    };
     let mut aliases = HashMap::new();
     for (key, handle) in &arr.map {
         let ArrayKey::Str(key) = key else { continue };
-        let Val::String(value) = vm.arena.get(*handle).value.clone() else { continue };
+        let Val::String(value) = vm.arena.get(*handle).value.clone() else {
+            continue;
+        };
         aliases.insert(key.as_ref().to_vec(), value.as_ref().to_vec());
     }
 

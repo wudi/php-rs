@@ -152,11 +152,7 @@ impl<'src> Emitter<'src> {
     }
 
     /// Generate a unique name for an anonymous class
-    fn generate_anonymous_class_name(
-        &mut self,
-        parent_name: Option<&[u8]>,
-        span: &Span,
-    ) -> String {
+    fn generate_anonymous_class_name(&mut self, parent_name: Option<&[u8]>, span: &Span) -> String {
         let base_name = parent_name
             .map(|p| format!("{}@anonymous", String::from_utf8_lossy(p)))
             .unwrap_or_else(|| "class@anonymous".to_string());
@@ -383,9 +379,9 @@ impl<'src> Emitter<'src> {
                     if !attributes.is_empty() {
                         let attr_val = self.build_attribute_list(attributes);
                         let idx = self.add_constant(attr_val);
-                        self.chunk
-                            .code
-                            .push(OpCode::SetMethodAttributes(class_sym, method_sym, idx as u16));
+                        self.chunk.code.push(OpCode::SetMethodAttributes(
+                            class_sym, method_sym, idx as u16,
+                        ));
                     }
                 }
                 ClassMember::Property {
@@ -524,7 +520,11 @@ impl<'src> Emitter<'src> {
                         }
                     }
                 }
-                ClassMember::TraitUse { traits, adaptations, .. } => {
+                ClassMember::TraitUse {
+                    traits,
+                    adaptations,
+                    ..
+                } => {
                     for trait_name in *traits {
                         let trait_str = self.get_text(trait_name.span);
                         let trait_sym = self.interner.intern(trait_str);
@@ -560,11 +560,7 @@ impl<'src> Emitter<'src> {
                             });
 
                             self.chunk.code.push(OpCode::SetTraitAlias(
-                                class_sym,
-                                alias_sym,
-                                trait_sym,
-                                method_sym,
-                                vis,
+                                class_sym, alias_sym, trait_sym, method_sym, vis,
                             ));
                         }
                     }
@@ -1066,7 +1062,10 @@ impl<'src> Emitter<'src> {
                     .code
                     .push(OpCode::DefClass(class_sym, parent_sym));
 
-                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let start_line = name
+                    .span
+                    .line_info(self.source)
+                    .map(|info| info.line as u32);
                 let end_line = close_brace_span
                     .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
                 self.chunk
@@ -1122,7 +1121,10 @@ impl<'src> Emitter<'src> {
 
                 self.chunk.code.push(OpCode::DefInterface(sym));
 
-                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let start_line = name
+                    .span
+                    .line_info(self.source)
+                    .map(|info| info.line as u32);
                 let end_line = close_brace_span
                     .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
                 self.chunk
@@ -1136,7 +1138,6 @@ impl<'src> Emitter<'src> {
                         .code
                         .push(OpCode::SetClassDocComment(sym, idx as u16));
                 }
-
 
                 for interface in *extends {
                     let interface_str = self.get_text(interface.span);
@@ -1163,7 +1164,10 @@ impl<'src> Emitter<'src> {
 
                 self.chunk.code.push(OpCode::DefTrait(sym));
 
-                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let start_line = name
+                    .span
+                    .line_info(self.source)
+                    .map(|info| info.line as u32);
                 let end_line = close_brace_span
                     .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
                 self.chunk
@@ -1177,7 +1181,6 @@ impl<'src> Emitter<'src> {
                         .code
                         .push(OpCode::SetClassDocComment(sym, idx as u16));
                 }
-
 
                 let prev_trait = self.current_trait;
                 self.current_trait = Some(sym);
@@ -3695,7 +3698,9 @@ impl<'src> Emitter<'src> {
                     Val::ConstArray(Rc::new(const_array))
                 }
             }
-            Expr::ClassConstFetch { class, constant, .. } => {
+            Expr::ClassConstFetch {
+                class, constant, ..
+            } => {
                 const TARGET_CLASS: i64 = 1 << 0;
                 const TARGET_FUNCTION: i64 = 1 << 1;
                 const TARGET_METHOD: i64 = 1 << 2;
@@ -3706,8 +3711,14 @@ impl<'src> Emitter<'src> {
                 const TARGET_ALL: i64 = (1 << 7) - 1;
                 const IS_REPEATABLE: i64 = 1 << 7;
 
-                if let (Expr::Variable { span: class_span, .. }, Expr::Variable { span: const_span, .. }) =
-                    (class, constant)
+                if let (
+                    Expr::Variable {
+                        span: class_span, ..
+                    },
+                    Expr::Variable {
+                        span: const_span, ..
+                    },
+                ) = (class, constant)
                 {
                     let class_name = self.get_text(*class_span);
                     let const_name = self.get_text(*const_span);

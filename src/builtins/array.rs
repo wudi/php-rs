@@ -20,12 +20,11 @@ pub fn php_count(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             if let Val::ObjPayload(obj_data) = &payload.value {
                 let obj_class = obj_data.class;
                 let countable_sym = vm.context.interner.intern(b"Countable");
-                
+
                 // Check if class or any parent implements Countable
-                let implements_countable = {
-                    obj_class == countable_sym || vm.is_subclass_of(obj_class, countable_sym)
-                };
-                
+                let implements_countable =
+                    { obj_class == countable_sym || vm.is_subclass_of(obj_class, countable_sym) };
+
                 if implements_countable {
                     let count_sym = vm.context.interner.intern(b"count");
                     // Call the count() method on the object
@@ -1148,7 +1147,9 @@ pub fn php_array_combine(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     };
 
     if keys_arr.map.len() != values_arr.map.len() {
-        return Err("array_combine(): Both parameters should have an equal number of elements".into());
+        return Err(
+            "array_combine(): Both parameters should have an equal number of elements".into(),
+        );
     }
 
     let mut map = IndexMap::new();
@@ -1249,7 +1250,11 @@ pub fn php_array_slice(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         match vm.arena.get(args[2]).value {
             Val::Int(i) => Some(i),
             Val::Null => None,
-            _ => return Err("array_slice(): Argument #3 ($length) must be of type int or null".into()),
+            _ => {
+                return Err(
+                    "array_slice(): Argument #3 ($length) must be of type int or null".into(),
+                );
+            }
         }
     } else {
         None
@@ -1495,7 +1500,9 @@ pub fn php_array_reduce(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
     };
 
     for (_, &val_handle) in &arr.map {
-        carry = vm.call_callable(callback, smallvec![carry, val_handle]).map_err(|e| e.to_string())?;
+        carry = vm
+            .call_callable(callback, smallvec![carry, val_handle])
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(carry)
@@ -1553,7 +1560,8 @@ pub fn php_array_map(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 ))
             }
         } else {
-            vm.call_callable(callback, callback_args.into()).map_err(|e| e.to_string())?
+            vm.call_callable(callback, callback_args.into())
+                .map_err(|e| e.to_string())?
         };
 
         result_map.insert(ArrayKey::Int(next_free), result_val_handle);
@@ -1609,10 +1617,13 @@ pub fn php_array_filter(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
     for (key, &val_handle) in &arr.map {
         let keep = if let Some(cb) = callback {
             let cb_args = match mode {
-                1 => smallvec![val_handle, vm.arena.alloc(match key {
-                    ArrayKey::Int(i) => Val::Int(*i),
-                    ArrayKey::Str(s) => Val::String((*s).clone().into()),
-                })], // ARRAY_FILTER_USE_BOTH
+                1 => smallvec![
+                    val_handle,
+                    vm.arena.alloc(match key {
+                        ArrayKey::Int(i) => Val::Int(*i),
+                        ArrayKey::Str(s) => Val::String((*s).clone().into()),
+                    })
+                ], // ARRAY_FILTER_USE_BOTH
                 2 => smallvec![vm.arena.alloc(match key {
                     ArrayKey::Int(i) => Val::Int(*i),
                     ArrayKey::Str(s) => Val::String((*s).clone().into()),
@@ -1652,11 +1663,7 @@ pub fn php_array_walk(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     let arr_handle = args[0];
     let callback = args[1];
-    let userdata = if args.len() == 3 {
-        Some(args[2])
-    } else {
-        None
-    };
+    let userdata = if args.len() == 3 { Some(args[2]) } else { None };
 
     let arr_rc = {
         let arr_val = vm.arena.get(arr_handle);
@@ -1676,7 +1683,8 @@ pub fn php_array_walk(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         if let Some(ud) = userdata {
             cb_args.push(ud);
         }
-        vm.call_callable(callback, cb_args).map_err(|e| e.to_string())?;
+        vm.call_callable(callback, cb_args)
+            .map_err(|e| e.to_string())?;
     }
     Ok(vm.arena.alloc(Val::Bool(true)))
 }
@@ -1701,7 +1709,9 @@ pub fn php_array_all(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             ArrayKey::Int(i) => Val::Int(*i),
             ArrayKey::Str(s) => Val::String((*s).clone().into()),
         });
-        let res = vm.call_callable(callback, smallvec![val_handle, key_handle]).map_err(|e| e.to_string())?;
+        let res = vm
+            .call_callable(callback, smallvec![val_handle, key_handle])
+            .map_err(|e| e.to_string())?;
         if !vm.arena.get(res).value.to_bool() {
             return Ok(vm.arena.alloc(Val::Bool(false)));
         }
@@ -1730,7 +1740,9 @@ pub fn php_array_any(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             ArrayKey::Int(i) => Val::Int(*i),
             ArrayKey::Str(s) => Val::String((*s).clone().into()),
         });
-        let res = vm.call_callable(callback, smallvec![val_handle, key_handle]).map_err(|e| e.to_string())?;
+        let res = vm
+            .call_callable(callback, smallvec![val_handle, key_handle])
+            .map_err(|e| e.to_string())?;
         if vm.arena.get(res).value.to_bool() {
             return Ok(vm.arena.alloc(Val::Bool(true)));
         }
@@ -1759,7 +1771,9 @@ pub fn php_array_find(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             ArrayKey::Int(i) => Val::Int(*i),
             ArrayKey::Str(s) => Val::String((*s).clone().into()),
         });
-        let res = vm.call_callable(callback, smallvec![val_handle, key_handle]).map_err(|e| e.to_string())?;
+        let res = vm
+            .call_callable(callback, smallvec![val_handle, key_handle])
+            .map_err(|e| e.to_string())?;
         if vm.arena.get(res).value.to_bool() {
             return Ok(val_handle);
         }
@@ -1788,7 +1802,9 @@ pub fn php_array_find_key(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
             ArrayKey::Int(i) => Val::Int(*i),
             ArrayKey::Str(s) => Val::String((*s).clone().into()),
         });
-        let res = vm.call_callable(callback, smallvec![val_handle, key_handle]).map_err(|e| e.to_string())?;
+        let res = vm
+            .call_callable(callback, smallvec![val_handle, key_handle])
+            .map_err(|e| e.to_string())?;
         if vm.arena.get(res).value.to_bool() {
             return Ok(key_handle);
         }
@@ -1826,7 +1842,11 @@ pub fn php_array_change_key_case(vm: &mut VM, args: &[Handle]) -> Result<Handle,
     let val = vm.arena.get(args[0]);
     let arr = match &val.value {
         Val::Array(arr) => arr,
-        _ => return Err("array_change_key_case(): Argument #1 ($array) must be of type array".into()),
+        _ => {
+            return Err(
+                "array_change_key_case(): Argument #1 ($array) must be of type array".into(),
+            );
+        }
     };
 
     let case = if args.len() == 2 {
@@ -2275,19 +2295,25 @@ pub fn php_usort(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     let mut entries: Vec<_> = arr_rc.map.iter().map(|(_, &v)| v).collect();
-    
+
     // We need to handle errors in sort_by, but sort_by doesn't allow it.
     // We'll use a stable sort and collect errors if any.
     let mut error = None;
     entries.sort_by(|&a, &b| {
-        if error.is_some() { return std::cmp::Ordering::Equal; }
+        if error.is_some() {
+            return std::cmp::Ordering::Equal;
+        }
         match vm.call_callable(callback, smallvec![a, b]) {
             Ok(res_handle) => {
                 let res_val = vm.arena.get(res_handle).value.clone();
                 let i = res_val.to_int();
-                if i < 0 { std::cmp::Ordering::Less }
-                else if i > 0 { std::cmp::Ordering::Greater }
-                else { std::cmp::Ordering::Equal }
+                if i < 0 {
+                    std::cmp::Ordering::Less
+                } else if i > 0 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Equal
+                }
             }
             Err(e) => {
                 error = Some(e.to_string());
@@ -2330,7 +2356,11 @@ pub fn php_array_splice(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
         match vm.arena.get(args[2]).value {
             Val::Int(i) => Some(i),
             Val::Null => None,
-            _ => return Err("array_splice(): Argument #3 ($length) must be of type int or null".into()),
+            _ => {
+                return Err(
+                    "array_splice(): Argument #3 ($length) must be of type int or null".into(),
+                );
+            }
         }
     } else {
         None
@@ -2373,7 +2403,7 @@ pub fn php_array_splice(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
 
         let mut removed_map = IndexMap::new();
         let mut removed_next_free = 0;
-        
+
         let mut new_map = IndexMap::new();
         let mut next_int = 0;
 

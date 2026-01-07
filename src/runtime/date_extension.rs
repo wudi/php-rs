@@ -77,7 +77,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetimezone_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetimezone_methods.insert(
@@ -85,7 +86,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetimezone_get_name,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetimezone_methods.insert(
@@ -93,7 +95,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetimezone_get_offset,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetimezone_methods.insert(
@@ -101,7 +104,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetimezone_get_location,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetimezone_methods.insert(
@@ -109,7 +113,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetimezone_list_identifiers,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -132,7 +137,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -140,7 +146,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_format,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -148,7 +155,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_get_timestamp,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -156,7 +164,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_set_timestamp,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -164,7 +173,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_get_timezone,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -172,7 +182,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_set_timezone,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -180,7 +191,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_add,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -188,7 +200,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_sub,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -196,7 +209,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_diff,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -204,7 +218,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_modify,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         datetime_methods.insert(
@@ -212,7 +227,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_datetime_create_from_format,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -249,7 +265,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateinterval_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateinterval_methods.insert(
@@ -257,7 +274,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateinterval_format,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -280,7 +298,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -288,7 +307,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_get_start_date,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -296,7 +316,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_get_end_date,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -304,7 +325,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_get_interval,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -312,7 +334,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_get_recurrences,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -320,7 +343,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_current,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -328,7 +352,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_key,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -336,7 +361,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_next,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -344,7 +370,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_rewind,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         dateperiod_methods.insert(
@@ -352,7 +379,8 @@ impl Extension for DateExtension {
             NativeMethodEntry {
                 handler: datetime::php_dateperiod_valid,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
 

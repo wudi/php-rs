@@ -270,6 +270,30 @@ pub fn decode_params(data: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>, &'static st
     Ok(result)
 }
 
+/// Encode name-value pairs into FCGI_PARAMS stream format.
+pub fn encode_params(params: &[(Vec<u8>, Vec<u8>)]) -> Vec<u8> {
+    let mut result = Vec::new();
+
+    for (name, value) in params {
+        encode_length(&mut result, name.len());
+        encode_length(&mut result, value.len());
+        result.extend_from_slice(name);
+        result.extend_from_slice(value);
+    }
+
+    result
+}
+
+/// Encode a length field (1 or 4 bytes).
+fn encode_length(buf: &mut Vec<u8>, len: usize) {
+    if len < 0x80 {
+        buf.push(len as u8);
+    } else {
+        let len_u32 = (len as u32) | 0x80000000;
+        buf.extend_from_slice(&len_u32.to_be_bytes());
+    }
+}
+
 /// Decode a length field (1 or 4 bytes). Returns (length, bytes_consumed).
 fn decode_length(data: &[u8]) -> Result<(usize, usize), &'static str> {
     if data.is_empty() {
@@ -340,5 +364,16 @@ mod tests {
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].0.len(), 256);
         assert_eq!(params[0].1, b"OK");
+    }
+
+    #[test]
+    fn test_encode_params() {
+        let params = vec![
+            (b"NAME".to_vec(), b"value".to_vec()),
+            (b"LONG".to_vec(), vec![b'X'; 256]),
+        ];
+        let encoded = encode_params(&params);
+        let decoded = decode_params(&encoded).unwrap();
+        assert_eq!(decoded, params);
     }
 }

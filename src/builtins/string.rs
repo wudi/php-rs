@@ -2508,7 +2508,9 @@ pub fn php_strtok(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         let s = vm.value_to_string(args[0])?;
         let tok = vm.value_to_string(args[1])?;
         // Now update extension data
-        let ext_data = vm.context.get_or_init_extension_data(CoreExtensionData::default);
+        let ext_data = vm
+            .context
+            .get_or_init_extension_data(CoreExtensionData::default);
         ext_data.strtok_string = Some(s);
         ext_data.strtok_pos = 0;
         tok
@@ -2517,8 +2519,10 @@ pub fn php_strtok(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Now access extension data for processing
-    let ext_data = vm.context.get_or_init_extension_data(CoreExtensionData::default);
-    
+    let ext_data = vm
+        .context
+        .get_or_init_extension_data(CoreExtensionData::default);
+
     let s_opt = &ext_data.strtok_string;
     if s_opt.is_none() {
         return Ok(vm.arena.alloc(Val::Bool(false)));

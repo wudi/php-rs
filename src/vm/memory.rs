@@ -78,7 +78,10 @@ impl EpochPolicy {
 
 impl HeapPolicy for EpochPolicy {
     fn alloc(&mut self, val: Val) -> Handle {
-        let boxed = Box::new(Zval { value: val, is_ref: false });
+        let boxed = Box::new(Zval {
+            value: val,
+            is_ref: false,
+        });
         let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(boxed)) };
 
         if let Some(idx) = self.free.pop() {

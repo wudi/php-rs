@@ -1791,9 +1791,9 @@ pub fn php_localtime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
 /// date_default_timezone_get(): string
 pub fn php_date_default_timezone_get(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    Ok(vm
-        .arena
-        .alloc(Val::String(vm.context.config.timezone.as_bytes().to_vec().into())))
+    Ok(vm.arena.alloc(Val::String(
+        vm.context.config.timezone.as_bytes().to_vec().into(),
+    )))
 }
 
 /// date_default_timezone_set(string $timezoneId): bool

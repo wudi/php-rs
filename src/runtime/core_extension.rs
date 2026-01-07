@@ -1,15 +1,15 @@
 use crate::builtins::{
-    array, bcmath, class, exception, exec, filesystem, function, http, math, output_control, pcre,
-    spl, string, url, variable,
+    array, bcmath, class, exception, exec, fastcgi, filesystem, function, http, math,
+    output_control, pcre, spl, string, url, variable,
 };
 use crate::core::value::{Val, Visibility};
-use crate::runtime::context::RequestContext;
-use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::attributes::{
     ATTRIBUTE_IS_REPEATABLE, ATTRIBUTE_TARGET_ALL, ATTRIBUTE_TARGET_CLASS,
     ATTRIBUTE_TARGET_CLASS_CONST, ATTRIBUTE_TARGET_CONST, ATTRIBUTE_TARGET_FUNCTION,
     ATTRIBUTE_TARGET_METHOD, ATTRIBUTE_TARGET_PARAMETER, ATTRIBUTE_TARGET_PROPERTY,
 };
+use crate::runtime::context::RequestContext;
+use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::registry::{ExtensionRegistry, NativeClassDef, NativeMethodEntry};
 use std::collections::HashMap;
 
@@ -371,6 +371,9 @@ impl Extension for CoreExtension {
         registry.register_function(b"proc_get_status", exec::php_proc_get_status);
         registry.register_function(b"set_time_limit", exec::php_set_time_limit);
 
+        // FastCGI functions
+        registry.register_function(b"fastcgi_finish_request", fastcgi::fastcgi_finish_request);
+
         // ========================================
         // CORE PHP ATTRIBUTE SUPPORT
         // ========================================
@@ -382,7 +385,10 @@ impl Extension for CoreExtension {
         );
         attribute_constants.insert(
             b"TARGET_FUNCTION".to_vec(),
-            (Val::Int(ATTRIBUTE_TARGET_FUNCTION as i64), Visibility::Public),
+            (
+                Val::Int(ATTRIBUTE_TARGET_FUNCTION as i64),
+                Visibility::Public,
+            ),
         );
         attribute_constants.insert(
             b"TARGET_METHOD".to_vec(),
@@ -390,15 +396,24 @@ impl Extension for CoreExtension {
         );
         attribute_constants.insert(
             b"TARGET_PROPERTY".to_vec(),
-            (Val::Int(ATTRIBUTE_TARGET_PROPERTY as i64), Visibility::Public),
+            (
+                Val::Int(ATTRIBUTE_TARGET_PROPERTY as i64),
+                Visibility::Public,
+            ),
         );
         attribute_constants.insert(
             b"TARGET_CLASS_CONST".to_vec(),
-            (Val::Int(ATTRIBUTE_TARGET_CLASS_CONST as i64), Visibility::Public),
+            (
+                Val::Int(ATTRIBUTE_TARGET_CLASS_CONST as i64),
+                Visibility::Public,
+            ),
         );
         attribute_constants.insert(
             b"TARGET_PARAMETER".to_vec(),
-            (Val::Int(ATTRIBUTE_TARGET_PARAMETER as i64), Visibility::Public),
+            (
+                Val::Int(ATTRIBUTE_TARGET_PARAMETER as i64),
+                Visibility::Public,
+            ),
         );
         attribute_constants.insert(
             b"TARGET_CONST".to_vec(),
@@ -581,7 +596,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::closure_bind,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         closure_methods.insert(
@@ -589,7 +605,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::closure_bind_to,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         closure_methods.insert(
@@ -597,7 +614,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::closure_call,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         closure_methods.insert(
@@ -605,7 +623,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::closure_from_callable,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -642,7 +661,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_current,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -650,7 +670,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_key,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -658,7 +679,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_next,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -666,7 +688,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_rewind,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -674,7 +697,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_valid,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -682,7 +706,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_send,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -690,7 +715,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_throw,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         generator_methods.insert(
@@ -698,7 +724,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::generator_get_return,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -721,7 +748,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -729,7 +757,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_start,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -737,7 +766,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_resume,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -745,7 +775,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_suspend,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -753,7 +784,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_throw,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -761,7 +793,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_is_started,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -769,7 +802,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_is_suspended,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -777,7 +811,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_is_running,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -785,7 +820,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_is_terminated,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -793,7 +829,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_get_return,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         fiber_methods.insert(
@@ -801,7 +838,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::fiber_get_current,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -824,7 +862,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_reference_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakref_methods.insert(
@@ -832,7 +871,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_reference_create,
                 visibility: Visibility::Public,
-                is_static: true, is_final: false,
+                is_static: true,
+                is_final: false,
             },
         );
         weakref_methods.insert(
@@ -840,7 +880,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_reference_get,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -863,7 +904,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_offset_exists,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakmap_methods.insert(
@@ -871,7 +913,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_offset_get,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakmap_methods.insert(
@@ -879,7 +922,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_offset_set,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakmap_methods.insert(
@@ -887,7 +931,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_offset_unset,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakmap_methods.insert(
@@ -895,7 +940,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_count,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         weakmap_methods.insert(
@@ -903,7 +949,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::weak_map_get_iterator,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -930,7 +977,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::sensitive_parameter_value_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         sensitive_methods.insert(
@@ -938,7 +986,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::sensitive_parameter_value_get_value,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         sensitive_methods.insert(
@@ -946,7 +995,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: class::sensitive_parameter_value_debug_info,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {
@@ -987,7 +1037,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_construct,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -995,7 +1046,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_message,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1003,7 +1055,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_code,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1011,7 +1064,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_file,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1019,7 +1073,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_line,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1027,7 +1082,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_trace,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1035,7 +1091,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_trace_as_string,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1043,7 +1100,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_get_previous,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         exception_methods.insert(
@@ -1051,7 +1109,8 @@ impl Extension for CoreExtension {
             NativeMethodEntry {
                 handler: exception::exception_to_string,
                 visibility: Visibility::Public,
-                is_static: false, is_final: false,
+                is_static: false,
+                is_final: false,
             },
         );
         registry.register_class(NativeClassDef {

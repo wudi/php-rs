@@ -36,6 +36,9 @@ return false;
         Val::Bool(true) => {
             // Success
         }
-        v => panic!("Expected true (var_dump should contain SomeClass@anonymous), got {:?}", v),
+        v => panic!(
+            "Expected true (var_dump should contain SomeClass@anonymous), got {:?}",
+            v
+        ),
     }
 }

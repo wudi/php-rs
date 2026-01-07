@@ -29,4 +29,3 @@ fn reflection_reference_basic() {
     assert!(output.contains("NULL"));
     assert!(output.contains("bool(true)"));
 }
-

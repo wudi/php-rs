@@ -11,14 +11,22 @@ use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::Parser as PhpParser;
 use php_rs::runtime::context::EngineContext;
 use php_rs::sapi::fpm::FpmRequest;
-use php_rs::vm::engine::VM;
+use php_rs::vm::engine::{OutputWriter, VM, VmError};
+use std::cell::RefCell;
 use std::io::Write;
 use std::net::TcpListener as StdTcpListener;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Global metrics for the FPM server.
+struct FpmMetrics {
+    start_time: SystemTime,
+    accepted_conn: AtomicU64,
+    active_requests: AtomicU32,
+}
 use std::thread;
 use std::time::SystemTime;
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
@@ -54,11 +62,17 @@ fn main() -> anyhow::Result<()> {
 
     eprintln!("[php-fpm] Starting {} workers", cli.workers);
 
+    let metrics = Arc::new(FpmMetrics {
+        start_time: SystemTime::now(),
+        accepted_conn: AtomicU64::new(0),
+        active_requests: AtomicU32::new(0),
+    });
+
     if let Some(bind_addr) = cli.bind {
         eprintln!("[php-fpm] Listening on TCP {}", bind_addr);
         let listener = StdTcpListener::bind(&bind_addr)?;
         listener.set_nonblocking(true)?;
-        run_workers(cli.workers, ListenerSource::Tcp(listener))?;
+        run_workers(cli.workers, ListenerSource::Tcp(listener), metrics)?;
     } else if let Some(socket_path) = cli.socket {
         eprintln!(
             "[php-fpm] Listening on Unix socket {}",
@@ -68,7 +82,7 @@ fn main() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(&socket_path);
         let listener = StdUnixListener::bind(&socket_path)?;
         listener.set_nonblocking(true)?;
-        run_workers(cli.workers, ListenerSource::Unix(listener))?;
+        run_workers(cli.workers, ListenerSource::Unix(listener), metrics)?;
     } else {
         eprintln!("[php-fpm] Error: must specify --bind or --socket");
         std::process::exit(1);
@@ -82,7 +96,11 @@ enum ListenerSource {
     Unix(StdUnixListener),
 }
 
-fn run_workers(workers: usize, source: ListenerSource) -> anyhow::Result<()> {
+fn run_workers(
+    workers: usize,
+    source: ListenerSource,
+    metrics: Arc<FpmMetrics>,
+) -> anyhow::Result<()> {
     let mut handles = Vec::new();
 
     for id in 0..workers {
@@ -90,6 +108,7 @@ fn run_workers(workers: usize, source: ListenerSource) -> anyhow::Result<()> {
             ListenerSource::Tcp(l) => ListenerSource::Tcp(l.try_clone()?),
             ListenerSource::Unix(l) => ListenerSource::Unix(l.try_clone()?),
         };
+        let metrics = metrics.clone();
 
         let handle = thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -116,8 +135,10 @@ fn run_workers(workers: usize, source: ListenerSource) -> anyhow::Result<()> {
 
                             if let Ok((stream, _)) = listener.accept().await {
                                 let engine = context.clone();
+                                let metrics = metrics.clone();
                                 tokio::task::spawn_local(async move {
-                                    if let Err(e) = handle_fastcgi_connection(stream, engine).await
+                                    if let Err(e) =
+                                        handle_fastcgi_connection(stream, engine, metrics).await
                                     {
                                         eprintln!("[php-fpm] Connection error: {}", e);
                                     }
@@ -133,9 +154,10 @@ fn run_workers(workers: usize, source: ListenerSource) -> anyhow::Result<()> {
                             }
                             if let Ok((stream, _)) = listener.accept().await {
                                 let engine = context.clone();
+                                let metrics = metrics.clone();
                                 tokio::task::spawn_local(async move {
                                     if let Err(e) =
-                                        handle_fastcgi_unix_connection(stream, engine).await
+                                        handle_fastcgi_unix_connection(stream, engine, metrics).await
                                     {
                                         eprintln!("[php-fpm] Connection error: {}", e);
                                     }
@@ -161,42 +183,48 @@ fn run_workers(workers: usize, source: ListenerSource) -> anyhow::Result<()> {
 async fn handle_fastcgi_connection(
     stream: TcpStream,
     engine: Arc<EngineContext>,
+    metrics: Arc<FpmMetrics>,
 ) -> Result<(), anyhow::Error> {
     // Convert to std stream since our fcgi module uses std::io
     let std_stream = stream.into_std()?;
     std_stream.set_nonblocking(false)?; // Ensure blocking mode
 
-    handle_fastcgi_connection_sync(std_stream, engine).await
+    handle_fastcgi_connection_sync(std_stream, engine, metrics).await
 }
 
 /// Handle Unix stream connection.
 async fn handle_fastcgi_unix_connection(
     stream: UnixStream,
     engine: Arc<EngineContext>,
+    metrics: Arc<FpmMetrics>,
 ) -> Result<(), anyhow::Error> {
     let std_stream = stream.into_std()?;
     std_stream.set_nonblocking(false)?;
 
-    handle_fastcgi_connection_sync(std_stream, engine).await
+    handle_fastcgi_connection_sync(std_stream, engine, metrics).await
 }
 
 /// Synchronous FastCGI connection handler.
 async fn handle_fastcgi_connection_sync<S>(
     stream: S,
     engine: Arc<EngineContext>,
+    metrics: Arc<FpmMetrics>,
 ) -> Result<(), anyhow::Error>
 where
-    S: std::io::Read + std::io::Write,
+    S: std::io::Read + std::io::Write + 'static,
 {
+    // Increment accepted connections
+    metrics.accepted_conn.fetch_add(1, Ordering::Relaxed);
+
     // Use RefCell to allow multiple borrows
     let stream = Rc::new(std::cell::RefCell::new(stream));
 
     loop {
-        // Read one complete FastCGI request
-        let request = {
+        // Read one complete FastCGI request or management record
+        let result = {
             let mut stream_ref = stream.borrow_mut();
             match fcgi::request::read_request(&mut *stream_ref) {
-                Ok(req) => req,
+                Ok(res) => res,
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     break;
                 }
@@ -204,6 +232,19 @@ where
                     eprintln!("[php-fpm] FastCGI protocol error: {}", e);
                     return Err(e.into());
                 }
+            }
+        };
+
+        let request = match result {
+            fcgi::request::ResultRequest::Request(req) => req,
+            fcgi::request::ResultRequest::Management {
+                record_type,
+                content,
+            } => {
+                if record_type == fcgi::RecordType::GetValues {
+                    handle_get_values(&mut *stream.borrow_mut(), &content)?;
+                }
+                continue;
             }
         };
 
@@ -218,8 +259,34 @@ where
             Ok(req) => req,
             Err(e) => {
                 eprintln!("[php-fpm] Request parse error: {}", e);
+                // Send error response
                 let mut stream_ref = stream.borrow_mut();
-                send_error_response(&mut *stream_ref, request_id, 500, &e)?;
+                let body = format!("Status: 500 Error\r\n\r\n{}", e);
+                fcgi::protocol::write_record(
+                    &mut *stream_ref,
+                    fcgi::RecordType::Stdout,
+                    request_id,
+                    body.as_bytes(),
+                )?;
+                fcgi::protocol::write_record(
+                    &mut *stream_ref,
+                    fcgi::RecordType::Stdout,
+                    request_id,
+                    &[],
+                )?;
+
+                let end_body = fcgi::protocol::EndRequestBody {
+                    app_status: 500,
+                    protocol_status: fcgi::ProtocolStatus::RequestComplete,
+                };
+                fcgi::protocol::write_record(
+                    &mut *stream_ref,
+                    fcgi::RecordType::EndRequest,
+                    request_id,
+                    &end_body.encode(),
+                )?;
+                stream_ref.flush()?;
+
                 if !keep_conn {
                     break;
                 }
@@ -227,21 +294,8 @@ where
             }
         };
 
-        // Execute PHP script
-        let (body, headers, status, errors) = execute_php(&engine, &fpm_req).await;
-
-        // Send response
-        {
-            let mut stream_ref = stream.borrow_mut();
-            send_response(
-                &mut *stream_ref,
-                request_id,
-                status.unwrap_or(200),
-                &headers,
-                &body,
-                &errors,
-            )?;
-        }
+        // Execute PHP script (handles sending response)
+        execute_php(&engine, &fpm_req, stream.clone(), request_id, metrics.clone()).await;
 
         // Handle keep-alive
         if !keep_conn {
@@ -252,150 +306,199 @@ where
     Ok(())
 }
 
-/// Send error response.
-fn send_error_response<W: Write>(
-    writer: &mut W,
-    request_id: u16,
-    status: u16,
-    message: &str,
-) -> std::io::Result<()> {
-    let body = format!("Status: {} Error\r\n\r\n{}", status, message);
-    fcgi::protocol::write_record(
-        writer,
+/// Handle /status page request.
+fn handle_status_page<W: Write>(stream: Rc<RefCell<W>>, request_id: u16, metrics: Arc<FpmMetrics>) {
+    let mut response = Vec::new();
+    let now = SystemTime::now();
+    let uptime = now
+        .duration_since(metrics.start_time)
+        .unwrap_or_default()
+        .as_secs();
+
+    let accepted = metrics.accepted_conn.load(Ordering::Relaxed);
+    let active = metrics.active_requests.load(Ordering::Relaxed);
+
+    let start_since = metrics
+        .start_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    writeln!(response, "pool:                 www").unwrap();
+    writeln!(response, "process manager:      static").unwrap();
+    writeln!(response, "start time:           {}", start_since).unwrap();
+    writeln!(response, "start since:          {}", uptime).unwrap();
+    writeln!(response, "accepted conn:        {}", accepted).unwrap();
+    writeln!(response, "listen queue:         0").unwrap();
+    writeln!(response, "max listen queue:     0").unwrap();
+    writeln!(response, "listen queue len:     0").unwrap();
+    writeln!(response, "idle processes:       0").unwrap(); // We don't track idle process vs active in this simple model yet
+    writeln!(response, "active processes:     {}", active).unwrap();
+    writeln!(response, "total processes:      0").unwrap();
+    writeln!(response, "max active processes: {}", active).unwrap();
+    writeln!(response, "max children reached: 0").unwrap();
+    writeln!(response, "slow requests:        0").unwrap();
+
+    let mut stream_ref = stream.borrow_mut();
+    let headers = format!(
+        "Status: 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+        response.len()
+    );
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
         fcgi::RecordType::Stdout,
         request_id,
-        body.as_bytes(),
-    )?;
-    fcgi::protocol::write_record(writer, fcgi::RecordType::Stdout, request_id, &[])?;
-
-    let end_body = fcgi::protocol::EndRequestBody {
-        app_status: status as u32,
-        protocol_status: fcgi::ProtocolStatus::RequestComplete,
-    };
-    fcgi::protocol::write_record(
-        writer,
-        fcgi::RecordType::EndRequest,
+        headers.as_bytes(),
+    );
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
+        fcgi::RecordType::Stdout,
         request_id,
-        &end_body.encode(),
-    )?;
-    writer.flush()?;
-    Ok(())
-}
+        &response,
+    );
+    let _ = fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
 
-/// Send successful response.
-fn send_response<W: Write>(
-    writer: &mut W,
-    request_id: u16,
-    status: u16,
-    headers: &[php_rs::runtime::context::HeaderEntry],
-    body: &[u8],
-    errors: &[u8],
-) -> std::io::Result<()> {
-    let mut response = Vec::new();
-
-    // Status line
-    let reason = http_reason_phrase(status);
-    write!(response, "Status: {} {}\r\n", status, reason)?;
-
-    // Headers
-    let mut has_content_type = false;
-    for header in headers {
-        response.extend_from_slice(&header.line);
-        response.extend_from_slice(b"\r\n");
-        if let Some(ref key) = header.key {
-            if key.eq_ignore_ascii_case(b"content-type") {
-                has_content_type = true;
-            }
-        }
-    }
-
-    // Default Content-Type if not set
-    if !has_content_type {
-        write!(response, "Content-Type: text/html; charset=UTF-8\r\n")?;
-    }
-
-    // End of headers
-    write!(response, "\r\n")?;
-
-    // Write headers to STDOUT stream
-    fcgi::protocol::write_record(writer, fcgi::RecordType::Stdout, request_id, &response)?;
-
-    // Write body to STDOUT stream (chunked if large)
-    const MAX_CHUNK: usize = 65535;
-    for chunk in body.chunks(MAX_CHUNK) {
-        fcgi::protocol::write_record(writer, fcgi::RecordType::Stdout, request_id, chunk)?;
-    }
-
-    // Empty STDOUT to signal end
-    fcgi::protocol::write_record(writer, fcgi::RecordType::Stdout, request_id, &[])?;
-
-    // Send PHP errors/warnings to STDERR stream
-    if !errors.is_empty() {
-        for chunk in errors.chunks(MAX_CHUNK) {
-            fcgi::protocol::write_record(writer, fcgi::RecordType::Stderr, request_id, chunk)?;
-        }
-        // Empty STDERR to signal end
-        fcgi::protocol::write_record(writer, fcgi::RecordType::Stderr, request_id, &[])?;
-    }
-
-    // END_REQUEST
     let end_body = fcgi::protocol::EndRequestBody {
         app_status: 0,
         protocol_status: fcgi::ProtocolStatus::RequestComplete,
     };
-    fcgi::protocol::write_record(
-        writer,
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
         fcgi::RecordType::EndRequest,
         request_id,
         &end_body.encode(),
-    )?;
+    );
+    let _ = stream_ref.flush();
+}
 
+/// Handle /ping page request.
+fn handle_ping_page<W: Write>(stream: Rc<RefCell<W>>, request_id: u16) {
+    let response = b"pong";
+    let mut stream_ref = stream.borrow_mut();
+    let headers = format!(
+        "Status: 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n",
+        response.len()
+    );
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
+        fcgi::RecordType::Stdout,
+        request_id,
+        headers.as_bytes(),
+    );
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
+        fcgi::RecordType::Stdout,
+        request_id,
+        response,
+    );
+    let _ = fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
+
+    let end_body = fcgi::protocol::EndRequestBody {
+        app_status: 0,
+        protocol_status: fcgi::ProtocolStatus::RequestComplete,
+    };
+    let _ = fcgi::protocol::write_record(
+        &mut *stream_ref,
+        fcgi::RecordType::EndRequest,
+        request_id,
+        &end_body.encode(),
+    );
+    let _ = stream_ref.flush();
+}
+
+/// Handle FCGI_GET_VALUES management record.
+fn handle_get_values<W: Write>(writer: &mut W, content: &[u8]) -> std::io::Result<()> {
+    let requested = match fcgi::protocol::decode_params(content) {
+        Ok(params) => params,
+        Err(e) => {
+            eprintln!("[php-fpm] GetValues decode error: {}", e);
+            return Ok(());
+        }
+    };
+
+    let mut response = Vec::new();
+    for (name, _) in requested {
+        match name.as_slice() {
+            b"FCGI_MAX_CONNS" => {
+                response.push((b"FCGI_MAX_CONNS".to_vec(), b"100".to_vec()));
+            }
+            b"FCGI_MAX_REQS" => {
+                response.push((b"FCGI_MAX_REQS".to_vec(), b"1000".to_vec()));
+            }
+            b"FCGI_MPXS_CONNS" => {
+                // We currently don't support multiplexing on a single connection.
+                response.push((b"FCGI_MPXS_CONNS".to_vec(), b"0".to_vec()));
+            }
+            _ => {
+                // Ignore unknown values
+            }
+        }
+    }
+
+    let encoded = fcgi::protocol::encode_params(&response);
+    fcgi::protocol::write_record(writer, fcgi::RecordType::GetValuesResult, 0, &encoded)?;
     writer.flush()?;
+
     Ok(())
 }
 
-/// Get HTTP reason phrase for status code.
-fn http_reason_phrase(status: u16) -> &'static str {
-    match status {
-        200 => "OK",
-        201 => "Created",
-        204 => "No Content",
-        301 => "Moved Permanently",
-        302 => "Found",
-        304 => "Not Modified",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        501 => "Not Implemented",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        _ => "Unknown",
-    }
-}
-
-/// Execute PHP script and return (body, headers, status, errors).
-async fn execute_php(
+/// Execute PHP script. Handles sending response and finishing request.
+async fn execute_php<W: Write + 'static>(
     engine: &Arc<EngineContext>,
     fpm_req: &FpmRequest,
-) -> (
-    Vec<u8>,
-    Vec<php_rs::runtime::context::HeaderEntry>,
-    Option<u16>,
-    Vec<u8>, // stderr/errors
+    stream: Rc<RefCell<W>>,
+    request_id: u16,
+    metrics: Arc<FpmMetrics>,
 ) {
+    let request_uri = fpm_req
+        .server_vars
+        .get(b"REQUEST_URI".as_slice())
+        .map(|v| String::from_utf8_lossy(v));
+
+    if let Some(uri) = request_uri {
+        if uri == "/status" {
+            handle_status_page(stream, request_id, metrics);
+            return;
+        } else if uri == "/ping" {
+            handle_ping_page(stream, request_id);
+            return;
+        }
+    }
+
     let source = match tokio::fs::read(&fpm_req.script_filename).await {
         Ok(s) => s,
         Err(e) => {
+            // Internal error (script not found/readable)
             let error = format!("Error reading script: {}", e);
-            return (
-                error.clone().into_bytes(),
-                vec![],
-                Some(500),
-                error.into_bytes(),
+            let mut stream_ref = stream.borrow_mut();
+            let body = format!(
+                "Status: 500 Internal Server Error\r\nContent-Type: text/plain\r\n\r\n{}",
+                error
             );
+            let _ = fcgi::protocol::write_record(
+                &mut *stream_ref,
+                fcgi::RecordType::Stdout,
+                request_id,
+                body.as_bytes(),
+            );
+            let _ = fcgi::protocol::write_record(
+                &mut *stream_ref,
+                fcgi::RecordType::Stdout,
+                request_id,
+                &[],
+            );
+            let end_body = fcgi::protocol::EndRequestBody {
+                app_status: 500,
+                protocol_status: fcgi::ProtocolStatus::RequestComplete,
+            };
+            let _ = fcgi::protocol::write_record(
+                &mut *stream_ref,
+                fcgi::RecordType::EndRequest,
+                request_id,
+                &end_body.encode(),
+            );
+            let _ = stream_ref.flush();
+            return;
         }
     };
 
@@ -404,7 +507,6 @@ async fn execute_php(
     let mut parser = PhpParser::new(lexer, &arena);
     let program = parser.parse_program();
 
-    let output_buffer = Arc::new(Mutex::new(Vec::new()));
     let error_buffer = Arc::new(Mutex::new(Vec::new()));
     let mut vm = VM::new_with_sapi(Arc::clone(engine), php_rs::sapi::SapiMode::FpmFcgi);
 
@@ -423,37 +525,228 @@ async fn execute_php(
     let emitter = Emitter::new(&source, &mut vm.context.interner);
     let (bytecode, _) = emitter.compile(&program.statements);
 
-    vm.set_output_writer(Box::new(BufferedOutputWriter::new(output_buffer.clone())));
+    // Setup FPM Output Writer
+    let writer = FpmOutputWriter::new(stream.clone(), request_id);
+    let writer_rc = Rc::new(RefCell::new(writer));
+    let wrapper = FpmOutputWriterWrapper {
+        inner: writer_rc.clone(),
+    };
+
+    vm.set_output_writer(Box::new(wrapper));
     vm.set_error_handler(Box::new(BufferedErrorHandler::new(error_buffer.clone())));
 
+    // Run VM
     let _ = vm.run(Rc::new(bytecode));
 
-    let headers = vm.context.headers.clone();
-    let status = vm.context.http_status.map(|s| s as u16);
-    let body = output_buffer.lock().unwrap().clone();
+    // Finish request if not already done
     let errors = error_buffer.lock().unwrap().clone();
+    let mut w = writer_rc.borrow_mut();
 
-    (body, headers, status, errors)
-}
+    if !w.finished {
+        // Normal completion (script didn't call fastcgi_finish_request)
+        // Send headers
+        let _ = w.send_headers(
+            &vm.context.headers,
+            vm.context.http_status.unwrap_or(200) as u16,
+        );
 
-/// Output writer that captures stdout to a buffer.
-struct BufferedOutputWriter {
-    buffer: Arc<Mutex<Vec<u8>>>,
-}
+        // Flush buffer (body)
+        let _ = w.flush_buffer();
 
-impl BufferedOutputWriter {
-    fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-        Self { buffer }
+        // Send errors to client via STDERR
+        if !errors.is_empty() {
+            let mut stream_ref = w.stream.borrow_mut();
+            const MAX_CHUNK: usize = 65535;
+            for chunk in errors.chunks(MAX_CHUNK) {
+                let _ = fcgi::protocol::write_record(
+                    &mut *stream_ref,
+                    fcgi::RecordType::Stderr,
+                    request_id,
+                    chunk,
+                );
+            }
+            let _ = fcgi::protocol::write_record(
+                &mut *stream_ref,
+                fcgi::RecordType::Stderr,
+                request_id,
+                &[],
+            );
+        }
+
+        // Finish
+        let _ = w.finish();
+    } else {
+        // Script called fastcgi_finish_request, connection closed.
+        // Log errors to stderr console instead of trying to send to client.
+        if !errors.is_empty() {
+            eprintln!(
+                "[php-fpm] [Script Errors after finish]: {}",
+                String::from_utf8_lossy(&errors)
+            );
+        }
     }
 }
 
-impl php_rs::vm::engine::OutputWriter for BufferedOutputWriter {
-    fn write(&mut self, bytes: &[u8]) -> Result<(), php_rs::vm::engine::VmError> {
-        self.buffer.lock().unwrap().extend_from_slice(bytes);
+/// Output writer that writes to FastCGI stream.
+struct FpmOutputWriter<W: Write> {
+    stream: Rc<RefCell<W>>,
+    request_id: u16,
+    buffer: Vec<u8>,
+    headers_sent: bool,
+    finished: bool,
+}
+
+impl<W: Write> FpmOutputWriter<W> {
+    fn new(stream: Rc<RefCell<W>>, request_id: u16) -> Self {
+        Self {
+            stream,
+            request_id,
+            buffer: Vec::new(),
+            headers_sent: false,
+            finished: false,
+        }
+    }
+
+    fn write_to_buffer(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    fn flush_buffer(&mut self) -> Result<(), std::io::Error> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        let mut stream = self.stream.borrow_mut();
+        const MAX_CHUNK: usize = 65535;
+        for chunk in self.buffer.chunks(MAX_CHUNK) {
+            fcgi::protocol::write_record(
+                &mut *stream,
+                fcgi::RecordType::Stdout,
+                self.request_id,
+                chunk,
+            )?;
+        }
+        self.buffer.clear();
         Ok(())
     }
-    fn flush(&mut self) -> Result<(), php_rs::vm::engine::VmError> {
+
+    fn send_headers(
+        &mut self,
+        headers: &[php_rs::runtime::context::HeaderEntry],
+        status: u16,
+    ) -> Result<(), std::io::Error> {
+        if self.headers_sent {
+            return Ok(());
+        }
+
+        let mut response = Vec::new();
+        // Status line
+        let reason = http_reason_phrase(status);
+        write!(response, "Status: {} {}\r\n", status, reason)?;
+
+        // Headers
+        let mut has_content_type = false;
+        for header in headers {
+            response.extend_from_slice(&header.line);
+            response.extend_from_slice(b"\r\n");
+            if let Some(ref key) = header.key {
+                if key.eq_ignore_ascii_case(b"content-type") {
+                    has_content_type = true;
+                }
+            }
+        }
+
+        // Default Content-Type if not set
+        if !has_content_type {
+            write!(response, "Content-Type: text/html; charset=UTF-8\r\n")?;
+        }
+
+        // End of headers
+        write!(response, "\r\n")?;
+
+        let mut stream = self.stream.borrow_mut();
+        fcgi::protocol::write_record(
+            &mut *stream,
+            fcgi::RecordType::Stdout,
+            self.request_id,
+            &response,
+        )?;
+
+        self.headers_sent = true;
         Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), std::io::Error> {
+        if self.finished {
+            return Ok(());
+        }
+
+        // Flush any remaining buffer
+        self.flush_buffer()?;
+
+        let mut stream = self.stream.borrow_mut();
+
+        // Empty STDOUT to signal end
+        fcgi::protocol::write_record(&mut *stream, fcgi::RecordType::Stdout, self.request_id, &[])?;
+
+        // END_REQUEST
+        let end_body = fcgi::protocol::EndRequestBody {
+            app_status: 0,
+            protocol_status: fcgi::ProtocolStatus::RequestComplete,
+        };
+        fcgi::protocol::write_record(
+            &mut *stream,
+            fcgi::RecordType::EndRequest,
+            self.request_id,
+            &end_body.encode(),
+        )?;
+
+        stream.flush()?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+struct FpmOutputWriterWrapper<W: Write> {
+    inner: Rc<RefCell<FpmOutputWriter<W>>>,
+}
+
+impl<W: Write> OutputWriter for FpmOutputWriterWrapper<W> {
+    fn write(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        let mut inner = self.inner.borrow_mut();
+        if !inner.finished {
+            inner.write_to_buffer(bytes);
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<(), VmError> {
+        let mut inner = self.inner.borrow_mut();
+        // Only flush if headers are sent AND not finished.
+        if inner.headers_sent && !inner.finished {
+            inner
+                .flush_buffer()
+                .map_err(|e: std::io::Error| VmError::RuntimeError(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn send_headers(
+        &mut self,
+        headers: &[php_rs::runtime::context::HeaderEntry],
+        status: u16,
+    ) -> Result<(), VmError> {
+        let mut inner = self.inner.borrow_mut();
+        inner
+            .send_headers(headers, status)
+            .map_err(|e: std::io::Error| VmError::RuntimeError(e.to_string()))
+    }
+
+    fn finish(&mut self) -> Result<(), VmError> {
+        let mut inner = self.inner.borrow_mut();
+        inner
+            .finish()
+            .map_err(|e: std::io::Error| VmError::RuntimeError(e.to_string()))
     }
 }
 
@@ -481,10 +774,36 @@ impl php_rs::vm::engine::ErrorHandler for BufferedErrorHandler {
             ErrorLevel::UserError => "User error",
             ErrorLevel::Deprecated => "Deprecated",
         };
-        let formatted = format!("PHP {}: {}\n", level_str, message);
+        let formatted = format!(
+            "PHP {}: {}
+",
+            level_str, message
+        );
         self.buffer
             .lock()
             .unwrap()
             .extend_from_slice(formatted.as_bytes());
+    }
+}
+
+/// Get HTTP reason phrase for status code.
+fn http_reason_phrase(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "Unknown",
     }
 }

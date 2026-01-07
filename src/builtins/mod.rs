@@ -4,6 +4,7 @@ pub mod class;
 pub mod datetime;
 pub mod exception;
 pub mod exec;
+pub mod fastcgi;
 pub mod filesystem;
 pub mod function;
 pub mod hash;

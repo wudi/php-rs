@@ -119,7 +119,7 @@ pub enum OpCode {
     DefTrait(Symbol),                 // Define trait (name)
     SetClassDocComment(Symbol, u16),  // (class_name, const_idx)
     SetClassLines(Symbol, Option<u32>, Option<u32>), // (class_name, start_line, end_line)
-    SetClassAttributes(Symbol, u16), // (class_name, const_idx)
+    SetClassAttributes(Symbol, u16),  // (class_name, const_idx)
     SetFunctionAttributes(Symbol, u16), // (function_name, const_idx)
     SetMethodAttributes(Symbol, Symbol, u16), // (class_name, method_name, const_idx)
     SetPropertyAttributes(Symbol, Symbol, u16), // (class_name, property_name, const_idx)
@@ -127,8 +127,8 @@ pub enum OpCode {
     SetClassConstAttributes(Symbol, Symbol, u16), // (class_name, const_name, const_idx)
     SetClassConstDocComment(Symbol, Symbol, u16), // (class_name, const_name, const_idx)
     SetTraitAlias(Symbol, Symbol, Option<Symbol>, Symbol, Option<Visibility>), // (class_name, alias, trait_name, method_name, visibility)
-    AddInterface(Symbol, Symbol),     // (class_name, interface_name)
-    UseTrait(Symbol, Symbol),         // (class_name, trait_name)
+    AddInterface(Symbol, Symbol),   // (class_name, interface_name)
+    UseTrait(Symbol, Symbol),       // (class_name, trait_name)
     AllowDynamicProperties(Symbol), // Mark class as allowing dynamic properties (for #[AllowDynamicProperties])
     MarkAbstract(Symbol),           // Mark class as abstract
     MarkFinal(Symbol),              // Mark class as final

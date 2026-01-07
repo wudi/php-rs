@@ -17,7 +17,10 @@ fn test_reflection_property_construct_and_get_name() {
         return $prop->getName();
         "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"publicProp".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"publicProp".to_vec()))
+    );
 }
 
 #[test]
@@ -247,7 +250,10 @@ fn test_reflection_property_get_value() {
         return $prop->getValue($obj);
         "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"test value".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"test value".to_vec()))
+    );
 }
 
 #[test]
@@ -322,15 +328,17 @@ fn test_reflection_property_multiple_modifiers() {
 
 #[test]
 fn test_reflection_property_get_attributes() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->getAttributes();
-    "#);
-    
+    "#,
+    );
+
     // Should return empty array
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 0);
@@ -341,21 +349,24 @@ fn test_reflection_property_get_attributes() {
 
 #[test]
 fn test_reflection_property_has_type() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->hasType();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(false));
 }
 
 #[test]
 fn test_reflection_property_is_initialized() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop = 42;
         }
@@ -363,14 +374,16 @@ fn test_reflection_property_is_initialized() {
         $obj = new MyClass();
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->isInitialized($obj);
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }
 
 #[test]
 fn test_reflection_property_set_accessible() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             private $prop = 42;
         }
@@ -379,42 +392,48 @@ fn test_reflection_property_set_accessible() {
         $rp = new ReflectionProperty('MyClass', 'prop');
         $rp->setAccessible(true);
         return $rp->getValue($obj);
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Int(42));
 }
 
 #[test]
 fn test_reflection_property_get_raw_default_value() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public static $staticProp = 123;
         }
         
         $rp = new ReflectionProperty('MyClass', 'staticProp');
         return $rp->getRawDefaultValue();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Int(123));
 }
 
 #[test]
 fn test_reflection_property_has_hooks() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->hasHooks();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(false));
 }
 
 #[test]
 fn test_reflection_property_get_hooks() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
@@ -422,64 +441,72 @@ fn test_reflection_property_get_hooks() {
         $rp = new ReflectionProperty('MyClass', 'prop');
         $hooks = $rp->getHooks();
         return count($hooks);
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Int(0));
 }
 
 #[test]
 fn test_reflection_property_get_settable_type() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->getSettableType();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Null);
 }
 
 #[test]
 fn test_reflection_property_is_final() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->isFinal();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(false));
 }
 
 #[test]
 fn test_reflection_property_is_lazy() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->isLazy();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(false));
 }
 
 #[test]
 fn test_reflection_property_is_virtual() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop;
         }
         
         $rp = new ReflectionProperty('MyClass', 'prop');
         return $rp->isVirtual();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(false));
 }
-

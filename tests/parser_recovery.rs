@@ -11,7 +11,10 @@ fn test_short_array_unexpected_semicolon() {
     let program = parser.parse_program();
 
     assert!(
-        program.errors.iter().any(|error| error.message.contains("Unexpected ';'")),
+        program
+            .errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected ';'")),
         "expected an unexpected-semicolon parse error, got: {:?}",
         program.errors
     );

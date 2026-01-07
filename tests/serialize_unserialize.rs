@@ -107,7 +107,8 @@ fn test_serialize_associative_array() {
 
 #[test]
 fn test_serialize_mixed_array() {
-    let result = run_php(r#"<?php return serialize([0 => "zero", "key" => "value", 5 => "five"]);"#);
+    let result =
+        run_php(r#"<?php return serialize([0 => "zero", "key" => "value", 5 => "five"]);"#);
     match result {
         Val::String(s) => {
             let serialized = String::from_utf8_lossy(&s);
@@ -144,7 +145,7 @@ fn test_serialize_object() {
         return serialize($obj);
     "#,
     );
-    
+
     match result {
         Val::String(s) => {
             let serialized = String::from_utf8_lossy(&s);
@@ -166,19 +167,13 @@ fn test_unserialize_null() {
 #[test]
 fn test_unserialize_bool_true() {
     let result = run_php(r#"<?php $x = unserialize("b:1;"); return $x ? "true" : "false";"#);
-    assert_eq!(
-        result,
-        Val::String(std::rc::Rc::new(b"true".to_vec()))
-    );
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"true".to_vec())));
 }
 
 #[test]
 fn test_unserialize_bool_false() {
     let result = run_php(r#"<?php $x = unserialize("b:0;"); return $x ? "true" : "false";"#);
-    assert_eq!(
-        result,
-        Val::String(std::rc::Rc::new(b"false".to_vec()))
-    );
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"false".to_vec())));
 }
 
 #[test]
@@ -202,10 +197,7 @@ fn test_unserialize_float() {
 #[test]
 fn test_unserialize_string() {
     let result = run_php(r#"<?php return unserialize('s:5:"hello";');"#);
-    assert_eq!(
-        result,
-        Val::String(std::rc::Rc::new(b"hello".to_vec()))
-    );
+    assert_eq!(result, Val::String(std::rc::Rc::new(b"hello".to_vec())));
 }
 
 #[test]
@@ -227,7 +219,9 @@ fn test_unserialize_empty_array() {
 
 #[test]
 fn test_unserialize_indexed_array() {
-    let result = run_php(r#"<?php $arr = unserialize("a:3:{i:0;i:1;i:1;i:2;i:2;i:3;}"); return $arr[0] . "," . $arr[1] . "," . $arr[2];"#);
+    let result = run_php(
+        r#"<?php $arr = unserialize("a:3:{i:0;i:1;i:1;i:2;i:2;i:3;}"); return $arr[0] . "," . $arr[1] . "," . $arr[2];"#,
+    );
     assert_eq!(result, Val::String(std::rc::Rc::new(b"1,2,3".to_vec())));
 }
 
@@ -337,7 +331,10 @@ fn test_serialize_unserialize_roundtrip_assoc_array() {
         return $result["name"] . "," . $result["age"] . "," . $result["city"];
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"John,30,NYC".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"John,30,NYC".to_vec()))
+    );
 }
 
 #[test]
@@ -418,7 +415,10 @@ fn test_serialize_complex_nested_structure() {
         return $restored["users"][0]["name"] . "," . $restored["users"][1]["score"] . "," . $restored["total"];
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"Alice,85,2".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"Alice,85,2".to_vec()))
+    );
 }
 
 #[test]
@@ -454,21 +454,30 @@ fn test_serialize_array_with_gaps() {
 fn test_serialize_missing_argument() {
     let code = r#"<?php serialize();"#;
     let result = std::panic::catch_unwind(|| run_php(code));
-    assert!(result.is_err(), "Expected error when calling serialize() without arguments");
+    assert!(
+        result.is_err(),
+        "Expected error when calling serialize() without arguments"
+    );
 }
 
 #[test]
 fn test_unserialize_missing_argument() {
     let code = r#"<?php unserialize();"#;
     let result = std::panic::catch_unwind(|| run_php(code));
-    assert!(result.is_err(), "Expected error when calling unserialize() without arguments");
+    assert!(
+        result.is_err(),
+        "Expected error when calling unserialize() without arguments"
+    );
 }
 
 #[test]
 fn test_unserialize_non_string() {
     let code = r#"<?php unserialize(123);"#;
     let result = std::panic::catch_unwind(|| run_php(code));
-    assert!(result.is_err(), "Expected error when calling unserialize() with non-string");
+    assert!(
+        result.is_err(),
+        "Expected error when calling unserialize() with non-string"
+    );
 }
 
 // ========== Additional Edge Case Tests ==========
@@ -486,7 +495,10 @@ fn test_serialize_deeply_nested_array() {
             let serialized = String::from_utf8_lossy(&s);
             assert!(serialized.contains("deep"));
             // Verify it can be unserialized back
-            let code = format!(r#"<?php return unserialize('{}')["a"]["b"]["c"]["d"];"#, serialized);
+            let code = format!(
+                r#"<?php return unserialize('{}')["a"]["b"]["c"]["d"];"#,
+                serialized
+            );
             let restored = run_php(&code);
             assert_eq!(restored, Val::String(std::rc::Rc::new(b"deep".to_vec())));
         }
@@ -504,7 +516,10 @@ fn test_serialize_array_with_mixed_keys() {
         return $restored[0] . "," . $restored["1"] . "," . $restored[2] . "," . $restored["key"];
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"zero,one,two,value".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"zero,one,two,value".to_vec()))
+    );
 }
 
 #[test]
@@ -548,7 +563,10 @@ fn test_serialize_string_with_newlines() {
         return $restored;
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"line1\nline2\nline3".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"line1\nline2\nline3".to_vec()))
+    );
 }
 
 #[test]
@@ -656,7 +674,10 @@ fn test_serialize_object_with_string_properties() {
         return $restored->first . " " . $restored->second;
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"Hello World".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"Hello World".to_vec()))
+    );
 }
 
 #[test]
@@ -719,7 +740,10 @@ fn test_serialize_array_keys_preserved() {
         return $restored[10] . "," . $restored[20] . "," . $restored[30];
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"ten,twenty,thirty".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"ten,twenty,thirty".to_vec()))
+    );
 }
 
 #[test]
@@ -790,7 +814,10 @@ fn test_serialize_associative_with_integer_keys() {
         return $restored[100] . " and " . $restored[200];
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"hundred and two hundred".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"hundred and two hundred".to_vec()))
+    );
 }
 
 #[test]
@@ -847,5 +874,8 @@ fn test_serialize_zero_and_empty_string_distinct() {
         return implode(",", $checks);
     "#,
     );
-    assert_eq!(result, Val::String(std::rc::Rc::new(b"int,str,bool,null".to_vec())));
+    assert_eq!(
+        result,
+        Val::String(std::rc::Rc::new(b"int,str,bool,null".to_vec()))
+    );
 }

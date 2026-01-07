@@ -51,15 +51,15 @@
 use crate::compiler::chunk::{ClosureData, CodeChunk, ReturnType, UserFunc};
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{
-    ClassDef, EngineContext, MethodEntry, MethodSignature, ParameterInfo, PropertyEntry,
-    RequestContext, StaticPropertyEntry, TraitAliasInfo, TypeHint,
+    ClassDef, EngineContext, HeaderEntry, MethodEntry, MethodSignature, ParameterInfo,
+    PropertyEntry, RequestContext, StaticPropertyEntry, TraitAliasInfo, TypeHint,
 };
 use crate::sapi::SapiMode;
 use crate::vm::frame::{
     ArgList, CallFrame, GeneratorData, GeneratorState, SubGenState, SubIterator,
 };
-use crate::vm::opcode::OpCode;
 use crate::vm::memory::VmHeap;
+use crate::vm::opcode::OpCode;
 use crate::vm::stack::Stack;
 use indexmap::IndexMap;
 use std::cell::RefCell;
@@ -220,6 +220,12 @@ impl<F: FnMut(ErrorLevel, &str)> ErrorHandler for CapturingErrorHandler<F> {
 pub trait OutputWriter {
     fn write(&mut self, bytes: &[u8]) -> Result<(), VmError>;
     fn flush(&mut self) -> Result<(), VmError> {
+        Ok(())
+    }
+    fn send_headers(&mut self, _headers: &[HeaderEntry], _status: u16) -> Result<(), VmError> {
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<(), VmError> {
         Ok(())
     }
 }
@@ -460,7 +466,10 @@ impl VM {
         Ok(self.context.interner.intern(&lower))
     }
 
-    fn decode_attribute_args(&mut self, val: Option<&Val>) -> Vec<crate::runtime::attributes::AttributeArg> {
+    fn decode_attribute_args(
+        &mut self,
+        val: Option<&Val>,
+    ) -> Vec<crate::runtime::attributes::AttributeArg> {
         use crate::core::value::ConstArrayKey;
         use crate::runtime::attributes::AttributeArg;
 
@@ -1020,6 +1029,24 @@ impl VM {
         self.output_writer.flush()
     }
 
+    pub fn finish_request(&mut self) -> Result<(), VmError> {
+        // Send headers and flush content
+        // This is typically called by fastcgi_finish_request()
+        let status = self.context.http_status.unwrap_or(200) as u16;
+        // Clone headers if necessary or pass reference. OutputWriter takes slice.
+        // We need to be careful about borrowing self.
+        // self.output_writer and self.context are distinct fields, but self is borrowed as mutable.
+        // However, we can't borrow self.context while borrowing self.output_writer mutably if we pass reference to context.
+        // So we might need to clone headers or restructure.
+        // Headers are usually small enough to clone for this event.
+        let headers = self.context.headers.clone();
+
+        self.output_writer.send_headers(&headers, status)?;
+        self.output_writer.flush()?;
+        self.output_writer.finish()?;
+        Ok(())
+    }
+
     /// Trigger an error/warning/notice
     pub fn trigger_error(&mut self, level: ErrorLevel, message: &str) {
         self.report_error(level, message);
@@ -1322,10 +1349,12 @@ impl VM {
         };
 
         // Try user-defined method first
-        if let Some((user_func, _visibility, _is_static, declaring_class)) = self.find_method(class_name, method_name) {
+        if let Some((user_func, _visibility, _is_static, declaring_class)) =
+            self.find_method(class_name, method_name)
+        {
             // Save the current return value to avoid corruption
             let saved_return_value = self.last_return_value.take();
-            
+
             // Call user method through normal call mechanism
             let chunk = &user_func.chunk;
             let mut frame = CallFrame::new(chunk.clone());
@@ -1339,9 +1368,9 @@ impl VM {
             self.push_frame(frame);
             self.run_loop(depth)?;
 
-            let result = self.last_return_value.ok_or(VmError::RuntimeError(
-                "Method must return a value".into(),
-            ))?;
+            let result = self
+                .last_return_value
+                .ok_or(VmError::RuntimeError("Method must return a value".into()))?;
 
             // Restore the saved return value
             self.last_return_value = saved_return_value;
@@ -5805,8 +5834,8 @@ impl VM {
                                 let iterator_sym = self.context.interner.intern(b"Iterator");
                                 if self.is_instance_of(iterable_handle, iterator_sym) {
                                     let current_sym = self.context.interner.intern(b"current");
-                                    let val_handle = self
-                                        .call_method_simple(iterable_handle, current_sym)?;
+                                    let val_handle =
+                                        self.call_method_simple(iterable_handle, current_sym)?;
                                     let frame = self.frames.last_mut().unwrap();
                                     frame.locals.insert(sym, val_handle);
                                     handled = true;
@@ -6246,7 +6275,9 @@ impl VM {
                     &val,
                     crate::runtime::attributes::ATTRIBUTE_TARGET_FUNCTION,
                 )?;
-                self.context.function_attributes.insert(function_name, attrs);
+                self.context
+                    .function_attributes
+                    .insert(function_name, attrs);
             }
             OpCode::SetMethodAttributes(class_name, method_name, const_idx) => {
                 let frame = self.frames.last().unwrap();
@@ -6280,7 +6311,9 @@ impl VM {
                     let frame = self.frames.last().unwrap();
                     let val = frame.chunk.constants[const_idx as usize].clone();
                     if let Val::String(comment) = val {
-                        if let Some(static_prop) = class_def.static_properties.get_mut(&property_name) {
+                        if let Some(static_prop) =
+                            class_def.static_properties.get_mut(&property_name)
+                        {
                             static_prop.doc_comment = Some(comment);
                         } else if let Some(prop) = class_def.properties.get_mut(&property_name) {
                             prop.doc_comment = Some(comment);
@@ -7368,7 +7401,7 @@ impl VM {
                         self.push_frame(frame);
                         return Ok(());
                     }
-                    
+
                     // No __set method - fall through to direct assignment
                     if let Err(e) = visibility_check {
                         return Err(e);
@@ -7384,7 +7417,7 @@ impl VM {
                     val_handle,
                     prop_exists,
                 )?;
-                
+
                 self.operand_stack.push(val_handle);
             }
             OpCode::CallMethod(method_name, arg_count) => {
@@ -10414,11 +10447,9 @@ impl VM {
             .map(|f| f.chunk.strict_types)
             .unwrap_or(false);
 
-        let emitter = crate::compiler::emitter::Emitter::new(
-            &wrapped_source,
-            &mut self.context.interner,
-        )
-        .with_inherited_strict_types(caller_strict);
+        let emitter =
+            crate::compiler::emitter::Emitter::new(&wrapped_source, &mut self.context.interner)
+                .with_inherited_strict_types(caller_strict);
         let (chunk, _) = emitter.compile(program.statements);
 
         let caller_frame_idx = self.frames.len() - 1;
@@ -10454,7 +10485,11 @@ impl VM {
 
     /// Handle include/require execution.
     /// include_type: 2=include, 3=include_once, 4=require, 5=require_once
-    fn handle_include_or_require(&mut self, path_str: &str, include_type: i64) -> Result<(), VmError> {
+    fn handle_include_or_require(
+        &mut self,
+        path_str: &str,
+        include_type: i64,
+    ) -> Result<(), VmError> {
         let is_once = include_type == 3 || include_type == 5; // include_once/require_once
         let is_require = include_type == 4 || include_type == 5; // require/require_once
 
@@ -10490,12 +10525,7 @@ impl VM {
         let source_res = std::fs::read(&resolved_path);
         match source_res {
             Ok(source) => {
-                self.execute_include_file(
-                    &source,
-                    path_str,
-                    &canonical_path,
-                    inserted_once_guard,
-                )
+                self.execute_include_file(&source, path_str, &canonical_path, inserted_once_guard)
             }
             Err(e) => {
                 if inserted_once_guard {

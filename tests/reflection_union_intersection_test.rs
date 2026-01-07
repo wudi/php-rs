@@ -9,7 +9,8 @@ use php_rs::core::value::Val;
 
 #[test]
 fn test_reflection_union_type_basic() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         // Create mock ReflectionNamedType objects for testing
         $intType = new ReflectionNamedType("int", false, true);
         $stringType = new ReflectionNamedType("string", false, true);
@@ -19,8 +20,9 @@ fn test_reflection_union_type_basic() {
         
         $types = $unionType->getTypes();
         return count($types);
-    "#);
-    
+    "#,
+    );
+
     if let Val::Int(count) = result {
         assert_eq!(count, 2);
     } else {
@@ -30,7 +32,8 @@ fn test_reflection_union_type_basic() {
 
 #[test]
 fn test_reflection_union_type_get_types() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $intType = new ReflectionNamedType("int", false, true);
         $stringType = new ReflectionNamedType("string", false, true);
         $unionType = new ReflectionUnionType([$intType, $stringType]);
@@ -41,8 +44,9 @@ fn test_reflection_union_type_get_types() {
             $types[0]->getName(),
             $types[1]->getName()
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 2);
     } else {
@@ -52,15 +56,17 @@ fn test_reflection_union_type_get_types() {
 
 #[test]
 fn test_reflection_union_type_allows_null() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $intType = new ReflectionNamedType("int", false, true);
         $stringType = new ReflectionNamedType("string", false, true);
         $unionType = new ReflectionUnionType([$intType, $stringType]);
         
         // Union types themselves don't allow null unless explicitly included
         return $unionType->allowsNull();
-    "#);
-    
+    "#,
+    );
+
     // The union type checks its stored types for null allowance
     // Since we didn't store allowsNull in the union, it may return false
     assert!(matches!(result, Val::Bool(_)));
@@ -68,15 +74,17 @@ fn test_reflection_union_type_allows_null() {
 
 #[test]
 fn test_reflection_union_type_with_null() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $intType = new ReflectionNamedType("int", false, true);
         $nullType = new ReflectionNamedType("null", true, true);
         $unionType = new ReflectionUnionType([$intType, $nullType]);
         
         $types = $unionType->getTypes();
         return count($types);
-    "#);
-    
+    "#,
+    );
+
     if let Val::Int(count) = result {
         assert_eq!(count, 2);
     } else {
@@ -86,21 +94,24 @@ fn test_reflection_union_type_with_null() {
 
 #[test]
 fn test_reflection_union_type_inheritance() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $intType = new ReflectionNamedType("int", false, true);
         $stringType = new ReflectionNamedType("string", false, true);
         $unionType = new ReflectionUnionType([$intType, $stringType]);
         
         // Check that ReflectionUnionType extends ReflectionType
         return $unionType instanceof ReflectionType;
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }
 
 #[test]
 fn test_reflection_intersection_type_basic() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         // Create mock class type names for testing
         $typeA = new ReflectionNamedType("A", false, false);
         $typeB = new ReflectionNamedType("B", false, false);
@@ -110,8 +121,9 @@ fn test_reflection_intersection_type_basic() {
         
         $types = $intersectionType->getTypes();
         return count($types);
-    "#);
-    
+    "#,
+    );
+
     if let Val::Int(count) = result {
         assert_eq!(count, 2);
     } else {
@@ -121,7 +133,8 @@ fn test_reflection_intersection_type_basic() {
 
 #[test]
 fn test_reflection_intersection_type_get_types() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $typeA = new ReflectionNamedType("InterfaceA", false, false);
         $typeB = new ReflectionNamedType("InterfaceB", false, false);
         $intersectionType = new ReflectionIntersectionType([$typeA, $typeB]);
@@ -134,8 +147,9 @@ fn test_reflection_intersection_type_get_types() {
             $types[0]->isBuiltin(),
             $types[1]->isBuiltin()
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 4);
     } else {
@@ -145,35 +159,40 @@ fn test_reflection_intersection_type_get_types() {
 
 #[test]
 fn test_reflection_intersection_type_inheritance() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $typeA = new ReflectionNamedType("A", false, false);
         $typeB = new ReflectionNamedType("B", false, false);
         $intersectionType = new ReflectionIntersectionType([$typeA, $typeB]);
         
         // Check that ReflectionIntersectionType extends ReflectionType
         return $intersectionType instanceof ReflectionType;
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }
 
 #[test]
 fn test_reflection_intersection_type_allows_null() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $typeA = new ReflectionNamedType("A", false, false);
         $typeB = new ReflectionNamedType("B", false, false);
         $intersectionType = new ReflectionIntersectionType([$typeA, $typeB]);
         
         // Intersection types typically don't allow null
         return $intersectionType->allowsNull();
-    "#);
-    
+    "#,
+    );
+
     assert!(matches!(result, Val::Bool(_)));
 }
 
 #[test]
 fn test_union_vs_intersection_types() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         $intType = new ReflectionNamedType("int", false, true);
         $stringType = new ReflectionNamedType("string", false, true);
         
@@ -186,8 +205,9 @@ fn test_union_vs_intersection_types() {
             $unionType instanceof ReflectionUnionType,
             $intersectionType instanceof ReflectionIntersectionType
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 4);
     } else {

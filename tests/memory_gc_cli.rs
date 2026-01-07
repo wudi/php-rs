@@ -5,10 +5,7 @@ use php_rs::vm::engine::VM;
 
 #[test]
 fn cli_epoch_reclamation_does_not_leak() {
-    let engine = EngineBuilder::new()
-        .with_core_extensions()
-        .build()
-        .unwrap();
+    let engine = EngineBuilder::new().with_core_extensions().build().unwrap();
     let mut vm = VM::new_with_sapi(engine, SapiMode::Cli);
 
     for _ in 0..1000 {
@@ -22,10 +19,7 @@ fn cli_epoch_reclamation_does_not_leak() {
 
 #[test]
 fn cli_alloc_bytes_reclaims_after_drop() {
-    let engine = EngineBuilder::new()
-        .with_core_extensions()
-        .build()
-        .unwrap();
+    let engine = EngineBuilder::new().with_core_extensions().build().unwrap();
     let mut vm = VM::new_with_sapi(engine, SapiMode::Cli);
     let baseline = vm.arena.len();
 

@@ -108,8 +108,7 @@ fn append_repl_trailing_newline_if_needed(
     output_state: &Rc<RefCell<ReplOutputState>>,
 ) -> Result<(), VmError> {
     if output_state.borrow().needs_trailing_newline() {
-        vm.print_bytes(b"\n")
-            .map_err(VmError::RuntimeError)?;
+        vm.print_bytes(b"\n").map_err(VmError::RuntimeError)?;
         vm.flush_output()?;
     }
     Ok(())

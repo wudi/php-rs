@@ -16,3 +16,5 @@
 - 2026-01-07: Readonly class support (PHP 8.5) (`docs/plans/2026-01-07-readonly-class-support.md`)
 - 2026-01-07: ReflectionClass extension tracking (PHP 8.5) (`docs/plans/2026-01-07-reflection-class-extension.md`)
 - 2026-01-07: ReflectionExtension version/validation (PHP 8.5) (`docs/plans/2026-01-07-reflection-extension-version.md`)
+- 2026-01-07: fastcgi_finish_request implementation (`docs/plans/2026-01-07-fastcgi-finish-request.md`)
+- 2026-01-07: PHP-FPM observability and protocol enhancements (`docs/plans/2026-01-07-fpm-enhancements.md`)

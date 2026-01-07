@@ -18,9 +18,13 @@ fn test_countable_interface_basic() {
     $counter = new MyCounter();
     return count($counter);
     "#;
-    
+
     let result = run_php(code);
-    assert_eq!(result, Val::Int(7), "count() should return 7 from Countable::count()");
+    assert_eq!(
+        result,
+        Val::Int(7),
+        "count() should return 7 from Countable::count()"
+    );
 }
 
 #[test]
@@ -38,7 +42,7 @@ fn test_countable_interface_with_logic() {
     $collection = new ItemCollection();
     return count($collection);
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(4), "count() should return 4");
 }
@@ -65,7 +69,7 @@ fn test_countable_multiple_instances() {
     
     return count($c1) + count($c2) + count($c3);
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(30), "sum of counts should be 30");
 }
@@ -105,7 +109,7 @@ fn test_iterator_interface_basic() {
     }
     return $sum;
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(60), "sum should be 60");
 }
@@ -151,7 +155,7 @@ fn test_iterator_with_keys() {
     }
     return $result;
     "#;
-    
+
     let result = run_php(code);
     if let Val::String(s) = result {
         assert_eq!(&s[..], b"a1b2c3", "should concatenate keys and values");
@@ -178,7 +182,7 @@ fn test_iterator_empty_collection() {
     }
     return $count;
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(0), "empty iterator should not iterate");
 }
@@ -205,7 +209,7 @@ fn test_iterator_break_in_loop() {
     }
     return $sum;
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(10), "sum should be 0+1+2+3+4 = 10");
 }
@@ -237,7 +241,7 @@ fn test_nested_iterator_loops() {
     }
     return $result;
     "#;
-    
+
     let result = run_php(code);
     // (1*10 + 1*20) + (2*10 + 2*20) = 30 + 60 = 90
     assert_eq!(result, Val::Int(90), "nested loops should work correctly");
@@ -272,10 +276,14 @@ fn test_countable_and_iterator_together() {
     
     return $itemCount * 1000 + $sum;
     "#;
-    
+
     let result = run_php(code);
     // count = 3, sum = 30, result = 3*1000 + 30 = 3030
-    assert_eq!(result, Val::Int(3030), "both interfaces should work on same object");
+    assert_eq!(
+        result,
+        Val::Int(3030),
+        "both interfaces should work on same object"
+    );
 }
 
 #[test]
@@ -321,7 +329,7 @@ fn test_iterator_method_call_order() {
     // rewind should be called first
     return $iter->calls[0];
     "#;
-    
+
     let result = run_php(code);
     if let Val::String(s) = result {
         assert_eq!(&s[..], b"rewind", "rewind should be first method called");
@@ -341,9 +349,13 @@ fn test_non_countable_object_returns_one() {
     $obj = new RegularClass();
     return count($obj);
     "#;
-    
+
     let result = run_php(code);
-    assert_eq!(result, Val::Int(1), "count() on non-Countable object should return 1");
+    assert_eq!(
+        result,
+        Val::Int(1),
+        "count() on non-Countable object should return 1"
+    );
 }
 
 #[test]
@@ -374,7 +386,7 @@ fn test_arrayaccess_still_works() {
     $arr['test'] = 42;
     return $arr['test'];
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(42), "ArrayAccess should still work");
 }
@@ -400,7 +412,7 @@ fn test_countable_inheritance() {
     $child = new ChildCounter();
     return count($child);
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(10), "inherited Countable should work");
 }
@@ -434,7 +446,7 @@ fn test_iterator_with_modification() {
     
     return $sum + $sum2;
     "#;
-    
+
     let result = run_php(code);
     assert_eq!(result, Val::Int(12), "iterator should be reusable");
 }

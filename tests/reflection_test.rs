@@ -2346,7 +2346,10 @@ return $rf->getFileName();
         None => php_rs::core::value::Val::Null,
     };
 
-    assert_eq!(value, php_rs::core::value::Val::String(Rc::new(file_path_str.into_bytes())));
+    assert_eq!(
+        value,
+        php_rs::core::value::Val::String(Rc::new(file_path_str.into_bytes()))
+    );
 }
 
 #[test]
@@ -2386,12 +2389,16 @@ return $rf->getStartLine() . ',' . $rf->getEndLine();
         None => php_rs::core::value::Val::Null,
     };
 
-    assert_eq!(value, php_rs::core::value::Val::String(Rc::new(b"2,4".to_vec())));
+    assert_eq!(
+        value,
+        php_rs::core::value::Val::String(Rc::new(b"2,4".to_vec()))
+    );
 }
 
 #[test]
 fn test_reflection_method_get_lines() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
 class TestLines {
     public function foo() {
         echo 1;
@@ -2399,7 +2406,8 @@ class TestLines {
 }
 $rm = new ReflectionMethod('TestLines', 'foo');
 return $rm->getStartLine() . ',' . $rm->getEndLine();
-"#);
+"#,
+    );
 
     assert_eq!(result, Val::String(Rc::new(b"3,5".to_vec())));
 }

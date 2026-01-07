@@ -9,7 +9,8 @@ use php_rs::core::value::Val;
 
 #[test]
 fn test_reflection_object_basic() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyClass {
             public $prop = "value";
         }
@@ -18,28 +19,32 @@ fn test_reflection_object_basic() {
         $ro = new ReflectionObject($obj);
         
         return $ro->getName();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::String(std::rc::Rc::new(b"MyClass".to_vec())));
 }
 
 #[test]
 fn test_reflection_object_inherits_from_reflection_class() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class TestClass {}
         
         $obj = new TestClass();
         $ro = new ReflectionObject($obj);
         
         return $ro instanceof ReflectionClass;
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }
 
 #[test]
 fn test_reflection_object_get_name() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class SomeClass {
             public $x = 10;
         }
@@ -48,14 +53,16 @@ fn test_reflection_object_get_name() {
         $ro = new ReflectionObject($obj);
         
         return $ro->getName();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::String(std::rc::Rc::new(b"SomeClass".to_vec())));
 }
 
 #[test]
 fn test_reflection_object_has_method() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class ClassWithMethods {
             public function foo() {}
             private function bar() {}
@@ -69,8 +76,9 @@ fn test_reflection_object_has_method() {
             $ro->hasMethod('bar'),
             $ro->hasMethod('baz')
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 3);
     } else {
@@ -80,7 +88,8 @@ fn test_reflection_object_has_method() {
 
 #[test]
 fn test_reflection_object_has_property() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class ClassWithProps {
             public $publicProp;
             private $privateProp;
@@ -94,8 +103,9 @@ fn test_reflection_object_has_property() {
             $ro->hasProperty('privateProp'),
             $ro->hasProperty('nonexistent')
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 3);
     } else {
@@ -105,7 +115,8 @@ fn test_reflection_object_has_property() {
 
 #[test]
 fn test_reflection_object_get_methods() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class MyTestClass {
             public function method1() {}
             public function method2() {}
@@ -116,8 +127,9 @@ fn test_reflection_object_get_methods() {
         $methods = $ro->getMethods();
         
         return count($methods);
-    "#);
-    
+    "#,
+    );
+
     if let Val::Int(count) = result {
         assert_eq!(count, 2);
     } else {
@@ -127,7 +139,8 @@ fn test_reflection_object_get_methods() {
 
 #[test]
 fn test_reflection_object_get_properties() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class PropClass {
             public $prop1;
             public $prop2;
@@ -139,8 +152,9 @@ fn test_reflection_object_get_properties() {
         $props = $ro->getProperties();
         
         return count($props);
-    "#);
-    
+    "#,
+    );
+
     if let Val::Int(count) = result {
         assert_eq!(count, 3);
     } else {
@@ -150,21 +164,24 @@ fn test_reflection_object_get_properties() {
 
 #[test]
 fn test_reflection_object_is_instantiable() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class ConcreteClass {}
         
         $obj = new ConcreteClass();
         $ro = new ReflectionObject($obj);
         
         return $ro->isInstantiable();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }
 
 #[test]
 fn test_reflection_object_get_namespace_name() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class SimpleClass {}
         
         $obj = new SimpleClass();
@@ -172,37 +189,43 @@ fn test_reflection_object_get_namespace_name() {
         
         // Class without namespace should return empty string
         return $ro->getNamespaceName();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::String(std::rc::Rc::new(b"".to_vec())));
 }
 
 #[test]
 fn test_reflection_object_get_short_name() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class User {}
         
         $obj = new User();
         $ro = new ReflectionObject($obj);
         
         return $ro->getShortName();
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::String(std::rc::Rc::new(b"User".to_vec())));
 }
 
 #[test]
 #[should_panic(expected = "ReflectionObject::__construct() expects parameter 1 to be object")]
 fn test_reflection_object_requires_object() {
-    run_php(r#"<?php
+    run_php(
+        r#"<?php
         // This should throw an error - not an object
         $ro = new ReflectionObject("NotAnObject");
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn test_reflection_object_vs_reflection_class() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class TestClass {
             public $prop = "value";
         }
@@ -221,8 +244,9 @@ fn test_reflection_object_vs_reflection_class() {
             $rc->getName(),
             $ro->getName() === $rc->getName()
         ];
-    "#);
-    
+    "#,
+    );
+
     if let Val::Array(arr) = result {
         assert_eq!(arr.map.len(), 3);
     } else {
@@ -232,7 +256,8 @@ fn test_reflection_object_vs_reflection_class() {
 
 #[test]
 fn test_reflection_object_to_string() {
-    let result = run_php(r#"<?php
+    let result = run_php(
+        r#"<?php
         class StringTestClass {}
         
         $obj = new StringTestClass();
@@ -241,7 +266,8 @@ fn test_reflection_object_to_string() {
         // Should inherit __toString from ReflectionClass
         $str = $ro->__toString();
         return strlen($str) > 0;
-    "#);
-    
+    "#,
+    );
+
     assert_eq!(result, Val::Bool(true));
 }

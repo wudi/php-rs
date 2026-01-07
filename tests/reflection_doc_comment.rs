@@ -6,7 +6,8 @@ use std::rc::Rc;
 
 #[test]
 fn test_reflection_class_get_doc_comment() {
-    let (result, vm) = run_code_with_vm(r#"<?php
+    let (result, vm) = run_code_with_vm(
+        r#"<?php
         /** Class doc */
         class DocClass {}
 
@@ -24,10 +25,13 @@ fn test_reflection_class_get_doc_comment() {
             (new ReflectionClass('DocTrait'))->getDocComment(),
             (new ReflectionClass('NoDoc'))->getDocComment(),
         ];
-    "#)
+    "#,
+    )
     .expect("execution failed");
 
-    let Val::Array(arr) = result else { panic!("expected array"); };
+    let Val::Array(arr) = result else {
+        panic!("expected array");
+    };
 
     let values: Vec<Val> = arr
         .map
@@ -35,15 +39,25 @@ fn test_reflection_class_get_doc_comment() {
         .map(|handle| vm.arena.get(*handle).value.clone())
         .collect();
 
-    assert_eq!(values[0], Val::String(Rc::new(b"/** Class doc */".to_vec())));
-    assert_eq!(values[1], Val::String(Rc::new(b"/** Interface doc */".to_vec())));
-    assert_eq!(values[2], Val::String(Rc::new(b"/** Trait doc */".to_vec())));
+    assert_eq!(
+        values[0],
+        Val::String(Rc::new(b"/** Class doc */".to_vec()))
+    );
+    assert_eq!(
+        values[1],
+        Val::String(Rc::new(b"/** Interface doc */".to_vec()))
+    );
+    assert_eq!(
+        values[2],
+        Val::String(Rc::new(b"/** Trait doc */".to_vec()))
+    );
     assert_eq!(values[3], Val::Bool(false));
 }
 
 #[test]
 fn test_reflection_property_and_constant_doc_comment() {
-    let (result, vm) = run_code_with_vm(r#"<?php
+    let (result, vm) = run_code_with_vm(
+        r#"<?php
         class DocHolder {
             /** prop doc */
             public $a;
@@ -69,10 +83,13 @@ fn test_reflection_property_and_constant_doc_comment() {
             (new ReflectionClassConstant('DocHolder', 'FOO'))->getDocComment(),
             (new ReflectionClassConstant('DocHolder', 'BAR'))->getDocComment(),
         ];
-    "#)
+    "#,
+    )
     .expect("execution failed");
 
-    let Val::Array(arr) = result else { panic!("expected array"); };
+    let Val::Array(arr) = result else {
+        panic!("expected array");
+    };
 
     let values: Vec<Val> = arr
         .map
@@ -82,9 +99,21 @@ fn test_reflection_property_and_constant_doc_comment() {
 
     assert_eq!(values[0], Val::String(Rc::new(b"/** prop doc */".to_vec())));
     assert_eq!(values[1], Val::Bool(false));
-    assert_eq!(values[2], Val::String(Rc::new(b"/** static doc */".to_vec())));
-    assert_eq!(values[3], Val::String(Rc::new(b"/** shared doc */".to_vec())));
-    assert_eq!(values[4], Val::String(Rc::new(b"/** shared doc */".to_vec())));
-    assert_eq!(values[5], Val::String(Rc::new(b"/** const doc */".to_vec())));
+    assert_eq!(
+        values[2],
+        Val::String(Rc::new(b"/** static doc */".to_vec()))
+    );
+    assert_eq!(
+        values[3],
+        Val::String(Rc::new(b"/** shared doc */".to_vec()))
+    );
+    assert_eq!(
+        values[4],
+        Val::String(Rc::new(b"/** shared doc */".to_vec()))
+    );
+    assert_eq!(
+        values[5],
+        Val::String(Rc::new(b"/** const doc */".to_vec()))
+    );
     assert_eq!(values[6], Val::Bool(false));
 }
