@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::{run_code_with_vm, run_php};
+use common::{run_code_capture_output, run_code_with_vm, run_php};
 use php_rs::core::value::{ArrayKey, Val};
 use php_rs::vm::engine::{VM, VmError};
 use std::rc::Rc;
@@ -226,6 +226,72 @@ fn test_reflection_class_new_instance_args_zero_args_uses_empty_list() {
 
     assert_eq!(get_array_idx(&vm, &result, 0), Val::Bool(true));
     assert_eq!(get_array_idx(&vm, &result, 1), Val::Int(11));
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_does_not_call_ctor() {
+    let (_result, output) = run_code_capture_output(r#"<?php
+        class Foo {
+            public int $x = 0;
+            public function __construct() { $this->x = 42; }
+        }
+        $rc = new ReflectionClass(Foo::class);
+        $obj = $rc->newInstanceWithoutConstructor();
+        var_dump($obj instanceof Foo);
+        var_dump($obj->x);
+    "#).unwrap();
+    assert_eq!(output, "bool(true)\nint(0)\n");
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_enum_error() {
+    let (_result, output) = run_code_capture_output(r#"<?php
+        enum Foo {}
+        $rc = new ReflectionClass(Foo::class);
+        try {
+            $rc->newInstanceWithoutConstructor();
+        } catch (Error $e) {
+            echo $e->getMessage(), "\n";
+        }
+    "#).unwrap();
+    assert_eq!(output, "Cannot instantiate enum Foo\n");
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_abstract_interface_trait_errors() {
+    let (_result, output) = run_code_capture_output(r#"<?php
+        abstract class A {}
+        interface I {}
+        trait T {}
+        foreach ([A::class, I::class, T::class] as $name) {
+            $rc = new ReflectionClass($name);
+            try {
+                $rc->newInstanceWithoutConstructor();
+            } catch (Error $e) {
+                echo $e->getMessage(), "\n";
+            }
+        }
+    "#).unwrap();
+    assert_eq!(
+        output,
+        "Cannot instantiate abstract class A\nCannot instantiate interface I\nCannot instantiate trait T\n"
+    );
+}
+
+#[test]
+fn test_reflection_class_new_instance_without_constructor_internal_final_guard() {
+    let (_result, output) = run_code_capture_output(r#"<?php
+        $rc = new ReflectionClass(Generator::class);
+        try {
+            $rc->newInstanceWithoutConstructor();
+        } catch (ReflectionException $e) {
+            echo $e->getMessage(), "\n";
+        }
+    "#).unwrap();
+    assert_eq!(
+        output,
+        "Class Generator is an internal class marked as final that cannot be instantiated without invoking its constructor\n"
+    );
 }
 
 #[test]
