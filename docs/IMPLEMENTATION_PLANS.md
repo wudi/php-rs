@@ -15,3 +15,4 @@
 - 2026-01-07: Reflection trait aliases (PHP 8.5) (`docs/plans/2026-01-07-reflection-trait-aliases.md`)
 - 2026-01-07: Readonly class support (PHP 8.5) (`docs/plans/2026-01-07-readonly-class-support.md`)
 - 2026-01-07: ReflectionClass extension tracking (PHP 8.5) (`docs/plans/2026-01-07-reflection-class-extension.md`)
+- 2026-01-07: ReflectionExtension version/validation (PHP 8.5) (`docs/plans/2026-01-07-reflection-extension-version.md`)
