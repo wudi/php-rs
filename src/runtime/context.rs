@@ -127,6 +127,7 @@ pub struct ClassDef {
     pub abstract_methods: HashSet<Symbol>,
     pub allows_dynamic_properties: bool, // Set by #[AllowDynamicProperties] attribute
     pub doc_comment: Option<Rc<Vec<u8>>>,
+    pub file_name: Option<Rc<Vec<u8>>>,
     pub is_internal: bool,
 }
 
@@ -343,6 +344,7 @@ impl RequestContext {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: true,
                     doc_comment: None,
+                    file_name: None,
                     is_internal: true,
                 },
             );

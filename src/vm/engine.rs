@@ -3836,6 +3836,12 @@ impl VM {
                     }
                 }
 
+                let file_name = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.chunk.file_path.as_ref())
+                    .map(|path| Rc::new(path.as_bytes().to_vec()));
+
                 let class_def = ClassDef {
                     name: name_sym,
                     parent: parent_sym,
@@ -3854,6 +3860,7 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    file_name,
                     is_internal: false,
                 };
                 self.context.classes.insert(name_sym, class_def);
@@ -5958,6 +5965,12 @@ impl VM {
                     }
                 }
 
+                let file_name = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.chunk.file_path.as_ref())
+                    .map(|path| Rc::new(path.as_bytes().to_vec()));
+
                 let class_def = ClassDef {
                     name,
                     parent,
@@ -5976,11 +5989,18 @@ impl VM {
                     abstract_methods,
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    file_name,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
             }
             OpCode::DefInterface(name) => {
+                let file_name = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.chunk.file_path.as_ref())
+                    .map(|path| Rc::new(path.as_bytes().to_vec()));
+
                 let class_def = ClassDef {
                     name,
                     parent: None,
@@ -5999,11 +6019,18 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    file_name,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
             }
             OpCode::DefTrait(name) => {
+                let file_name = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.chunk.file_path.as_ref())
+                    .map(|path| Rc::new(path.as_bytes().to_vec()));
+
                 let class_def = ClassDef {
                     name,
                     parent: None,
@@ -6022,6 +6049,7 @@ impl VM {
                     abstract_methods: HashSet::new(),
                     allows_dynamic_properties: false,
                     doc_comment: None,
+                    file_name,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);

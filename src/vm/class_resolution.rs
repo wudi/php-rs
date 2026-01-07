@@ -195,6 +195,7 @@ mod tests {
             abstract_methods: std::collections::HashSet::new(),
             allows_dynamic_properties: false,
             doc_comment: None,
+            file_name: None,
             is_internal: false,
         };
         vm.context.classes.insert(grandparent_sym, grandparent_def);
@@ -217,6 +218,7 @@ mod tests {
             abstract_methods: std::collections::HashSet::new(),
             allows_dynamic_properties: false,
             doc_comment: None,
+            file_name: None,
             is_internal: false,
         };
         vm.context.classes.insert(parent_sym, parent_def);
@@ -239,6 +241,7 @@ mod tests {
             abstract_methods: std::collections::HashSet::new(),
             allows_dynamic_properties: false,
             doc_comment: None,
+            file_name: None,
             is_internal: false,
         };
         vm.context.classes.insert(child_sym, child_def);
@@ -273,6 +276,7 @@ mod tests {
             abstract_methods: std::collections::HashSet::new(),
             allows_dynamic_properties: false,
             doc_comment: None,
+            file_name: None,
             is_internal: false,
         };
         vm.context.classes.insert(parent_sym, parent_def);
@@ -295,6 +299,7 @@ mod tests {
             abstract_methods: std::collections::HashSet::new(),
             allows_dynamic_properties: false,
             doc_comment: None,
+            file_name: None,
             is_internal: false,
         };
         vm.context.classes.insert(child_sym, child_def);

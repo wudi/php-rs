@@ -1096,11 +1096,17 @@ pub fn reflection_class_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result
 
 /// ReflectionClass::getFileName(): string|false
 pub fn reflection_class_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: File name tracking requires:
-    // 1. Add file_name: Option<PathBuf> field to ClassDef
-    // 2. Pass source file path through parser/compiler pipeline
-    // 3. Store in ClassDef during class registration
-    // 4. Return absolute path or false for internal classes
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if class_def.is_internal {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    if let Some(file_name) = &class_def.file_name {
+        return Ok(vm.arena.alloc(Val::String(file_name.clone())));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
