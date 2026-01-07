@@ -81,6 +81,7 @@ pub struct MethodEntry {
     pub func: Rc<UserFunc>,
     pub visibility: Visibility,
     pub is_static: bool,
+    pub is_final: bool,
     pub declaring_class: Symbol,
     pub is_abstract: bool,
     pub signature: MethodSignature,
@@ -93,6 +94,7 @@ pub struct NativeMethodEntry {
     pub handler: NativeHandler,
     pub visibility: Visibility,
     pub is_static: bool,
+    pub is_final: bool,
     pub declaring_class: Symbol,
 }
 
@@ -320,9 +322,9 @@ impl RequestContext {
     /// Performance: O(n) where n = number of engine constants
     fn copy_engine_constants(&mut self) {
         // Phase 1: Copy all extension constants (O(n) bulk operation)
-        for (name, val) in self.engine.registry.constants() {
+        for (name, entry) in self.engine.registry.constants() {
             let sym = self.interner.intern(name);
-            self.constants.insert(sym, val.clone());
+            self.constants.insert(sym, entry.value.clone());
         }
 
         // Phase 2: Register fundamental PHP constants
@@ -386,7 +388,8 @@ impl RequestContext {
             );
 
             for (name, native_method) in &native_class.methods {
-                let method_sym = self.interner.intern(name);
+                let method_lc = name.to_ascii_lowercase();
+                let method_sym = self.interner.intern(&method_lc);
                 self.native_methods.insert(
                     (class_sym, method_sym),
                     NativeMethodEntry {
@@ -394,6 +397,7 @@ impl RequestContext {
                         handler: native_method.handler,
                         visibility: native_method.visibility,
                         is_static: native_method.is_static,
+                        is_final: native_method.is_final,
                         declaring_class: class_sym,
                     },
                 );

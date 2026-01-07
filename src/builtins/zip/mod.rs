@@ -73,7 +73,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_open,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -82,7 +82,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_close,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -91,7 +91,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_add_empty_dir,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -100,7 +100,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_add_file,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -109,7 +109,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_add_from_string,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -118,7 +118,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_count,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -127,7 +127,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_delete_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -136,7 +136,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_delete_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -145,7 +145,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_extract_to,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -154,7 +154,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_rename_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -163,7 +163,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_rename_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -172,7 +172,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_get_from_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -181,7 +181,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_get_from_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -190,7 +190,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_get_name_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -199,7 +199,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_get_status_string,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -208,7 +208,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_locate_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -217,7 +217,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_stat_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -226,7 +226,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_stat_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -235,7 +235,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_unchange_all,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -244,7 +244,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_set_password,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -253,7 +253,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_get_name_index,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -262,7 +262,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_locate_name,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 
@@ -271,7 +271,7 @@ pub fn register_zip_extension_to_registry(registry: &mut ExtensionRegistry) {
         NativeMethodEntry {
             handler: php_zip_archive_extract_to,
             visibility: Visibility::Public,
-            is_static: false,
+            is_static: false, is_final: false,
         },
     );
 

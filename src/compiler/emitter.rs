@@ -272,6 +272,7 @@ impl<'src> Emitter<'src> {
                     let visibility = self.get_visibility(modifiers);
                     let is_static = modifiers.iter().any(|t| t.kind == TokenKind::Static);
                     let is_abstract = modifiers.iter().any(|t| t.kind == TokenKind::Abstract);
+                    let is_final = modifiers.iter().any(|t| t.kind == TokenKind::Final);
 
                     // 1. Collect param info
                     struct ParamInfo<'a> {
@@ -368,6 +369,7 @@ impl<'src> Emitter<'src> {
                         visibility,
                         is_static,
                         is_abstract,
+                        is_final,
                     ));
 
                     if !attributes.is_empty() {

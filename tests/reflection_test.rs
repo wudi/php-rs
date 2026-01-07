@@ -2558,12 +2558,12 @@ fn test_reflection_extension_get_version() {
 
 #[test]
 fn test_reflection_extension_get_functions() {
-    // Test ReflectionExtension getFunctions() returns empty array
+    // Test ReflectionExtension getFunctions() returns non-empty array for Core
     let result = run_php(
         r#"<?php
         $ext = new ReflectionExtension('Core');
         $funcs = $ext->getFunctions();
-        return is_array($funcs) && count($funcs) === 0;
+        return is_array($funcs) && count($funcs) > 0 && isset($funcs['strlen']);
     "#,
     );
 

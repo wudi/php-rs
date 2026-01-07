@@ -1525,7 +1525,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 if self.current_token.kind == TokenKind::OpenParen {
                     self.bump();
                 }
-                let mut items = self.parse_array_items(TokenKind::CloseParen, false, false);
+                let items = self.parse_array_items(TokenKind::CloseParen, false, false);
                 if self.current_token.kind == TokenKind::CloseParen {
                     self.bump();
                 }
@@ -1541,7 +1541,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 if self.current_token.kind == TokenKind::OpenParen {
                     self.bump();
                 }
-                let mut items = self.parse_array_items(TokenKind::CloseParen, true, true);
+                let items = self.parse_array_items(TokenKind::CloseParen, true, true);
                 if self.current_token.kind == TokenKind::CloseParen {
                     self.bump();
                 }
@@ -1555,7 +1555,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 // Short array syntax [1, 2, 3]
                 let start = token.span.start;
                 self.bump();
-                let mut items = self.parse_array_items(TokenKind::CloseBracket, true, false);
+                let items = self.parse_array_items(TokenKind::CloseBracket, true, false);
                 if self.current_token.kind == TokenKind::CloseBracket {
                     self.bump();
                 }

@@ -24,6 +24,22 @@ pub struct NativeMethodEntry {
     pub handler: NativeHandler,
     pub visibility: Visibility,
     pub is_static: bool,
+    pub is_final: bool,
+}
+
+/// Native function entry for extension-provided functions
+#[derive(Debug, Clone)]
+pub struct NativeFunctionEntry {
+    pub handler: NativeHandler,
+    pub by_ref: Vec<usize>,
+    pub extension_name: Option<Vec<u8>>,
+}
+
+/// Native constant entry for extension-provided constants
+#[derive(Debug, Clone)]
+pub struct NativeConstantEntry {
+    pub value: Val,
+    pub extension_name: Option<Vec<u8>>,
 }
 
 /// Extension registry - manages all loaded extensions and their registered components
@@ -31,19 +47,17 @@ pub struct NativeMethodEntry {
 /// This is stored in `EngineContext` and persists for the lifetime of the process
 /// (or worker in FPM). It holds all extension-registered functions, classes, and constants.
 pub struct ExtensionRegistry {
-    /// Native function handlers (name -> handler)
-    functions: HashMap<Vec<u8>, NativeHandler>,
-    /// Native function by-ref argument indexes (name -> zero-based indexes)
-    functions_by_ref: HashMap<Vec<u8>, Vec<usize>>,
+    /// Native function entries (name -> entry)
+    functions: HashMap<Vec<u8>, NativeFunctionEntry>,
     /// Native class definitions (name -> class def)
     classes: HashMap<Vec<u8>, NativeClassDef>,
     /// Registered extensions
     extensions: Vec<Box<dyn Extension>>,
     /// Extension name -> index mapping for fast lookup
     extension_map: HashMap<String, usize>,
-    /// Engine-level constants (name -> value)
-    constants: HashMap<Vec<u8>, Val>,
-    /// Currently registering extension name for tagging native classes
+    /// Engine-level constants (name -> entry)
+    constants: HashMap<Vec<u8>, NativeConstantEntry>,
+    /// Currently registering extension name for tagging native components
     current_extension_name: Option<Vec<u8>>,
 }
 
@@ -52,7 +66,6 @@ impl ExtensionRegistry {
     pub fn new() -> Self {
         Self {
             functions: HashMap::new(),
-            functions_by_ref: HashMap::new(),
             classes: HashMap::new(),
             extensions: Vec::new(),
             extension_map: HashMap::new(),
@@ -65,7 +78,14 @@ impl ExtensionRegistry {
     ///
     /// Function names are stored as-is (case-sensitive in storage, but PHP lookups are case-insensitive)
     pub fn register_function(&mut self, name: &[u8], handler: NativeHandler) {
-        self.functions.insert(name.to_vec(), handler);
+        self.functions.insert(
+            name.to_vec(),
+            NativeFunctionEntry {
+                handler,
+                by_ref: Vec::new(),
+                extension_name: self.current_extension_name.clone(),
+            },
+        );
     }
 
     /// Register a native function handler with by-ref argument positions.
@@ -75,10 +95,14 @@ impl ExtensionRegistry {
         handler: NativeHandler,
         by_ref: Vec<usize>,
     ) {
-        self.functions.insert(name.to_vec(), handler);
-        if !by_ref.is_empty() {
-            self.functions_by_ref.insert(name.to_vec(), by_ref);
-        }
+        self.functions.insert(
+            name.to_vec(),
+            NativeFunctionEntry {
+                handler,
+                by_ref,
+                extension_name: self.current_extension_name.clone(),
+            },
+        );
     }
 
     /// Register a native class definition
@@ -94,22 +118,28 @@ impl ExtensionRegistry {
     ///
     /// Constant names are stored as byte slices and later interned when needed.
     pub fn register_constant(&mut self, name: &[u8], value: Val) {
-        self.constants.insert(name.to_vec(), value);
+        self.constants.insert(
+            name.to_vec(),
+            NativeConstantEntry {
+                value,
+                extension_name: self.current_extension_name.clone(),
+            },
+        );
     }
 
     /// Get a function handler by name (case-insensitive lookup)
     pub fn get_function(&self, name: &[u8]) -> Option<NativeHandler> {
         // Try exact match first
-        if let Some(&handler) = self.functions.get(name) {
-            return Some(handler);
+        if let Some(entry) = self.functions.get(name) {
+            return Some(entry.handler);
         }
 
         // Fallback to case-insensitive search
         let lower_name: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
-        for (key, &handler) in &self.functions {
+        for (key, entry) in &self.functions {
             let lower_key: Vec<u8> = key.iter().map(|b| b.to_ascii_lowercase()).collect();
             if lower_key == lower_name {
-                return Some(handler);
+                return Some(entry.handler);
             }
         }
         None
@@ -117,15 +147,15 @@ impl ExtensionRegistry {
 
     /// Get by-ref argument indexes for a function (case-insensitive lookup)
     pub fn get_function_by_ref(&self, name: &[u8]) -> Option<&[usize]> {
-        if let Some(by_ref) = self.functions_by_ref.get(name) {
-            return Some(by_ref.as_slice());
+        if let Some(entry) = self.functions.get(name) {
+            return Some(entry.by_ref.as_slice());
         }
 
         let lower_name: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
-        for (key, by_ref) in &self.functions_by_ref {
+        for (key, entry) in &self.functions {
             let lower_key: Vec<u8> = key.iter().map(|b| b.to_ascii_lowercase()).collect();
             if lower_key == lower_name {
-                return Some(by_ref.as_slice());
+                return Some(entry.by_ref.as_slice());
             }
         }
         None
@@ -138,7 +168,7 @@ impl ExtensionRegistry {
 
     /// Get an engine-level constant by name (case-sensitive)
     pub fn get_constant(&self, name: &[u8]) -> Option<&Val> {
-        self.constants.get(name)
+        self.constants.get(name).map(|e| &e.value)
     }
 
     /// Check if an extension is loaded
@@ -300,19 +330,55 @@ impl ExtensionRegistry {
         Ok(())
     }
 
-    /// Get all registered functions (for backward compatibility)
-    pub fn functions(&self) -> &HashMap<Vec<u8>, NativeHandler> {
+    /// Get all registered functions
+    pub fn functions(&self) -> &HashMap<Vec<u8>, NativeFunctionEntry> {
         &self.functions
     }
 
     /// Get all registered constants
-    pub fn constants(&self) -> &HashMap<Vec<u8>, Val> {
+    pub fn constants(&self) -> &HashMap<Vec<u8>, NativeConstantEntry> {
         &self.constants
     }
 
     /// Get all registered classes
     pub fn classes(&self) -> &HashMap<Vec<u8>, NativeClassDef> {
         &self.classes
+    }
+
+    /// Get functions belonging to a specific extension
+    pub fn get_functions_by_extension(
+        &self,
+        extension_name: &[u8],
+    ) -> Vec<(&[u8], &NativeFunctionEntry)> {
+        self.functions
+            .iter()
+            .filter(|(_, entry)| {
+                entry
+                    .extension_name
+                    .as_ref()
+                    .map(|n| n.as_slice() == extension_name)
+                    .unwrap_or(false)
+            })
+            .map(|(name, entry)| (name.as_slice(), entry))
+            .collect()
+    }
+
+    /// Get constants belonging to a specific extension
+    pub fn get_constants_by_extension(
+        &self,
+        extension_name: &[u8],
+    ) -> Vec<(&[u8], &NativeConstantEntry)> {
+        self.constants
+            .iter()
+            .filter(|(_, entry)| {
+                entry
+                    .extension_name
+                    .as_ref()
+                    .map(|n| n.as_slice() == extension_name)
+                    .unwrap_or(false)
+            })
+            .map(|(name, entry)| (name.as_slice(), entry))
+            .collect()
     }
 }
 

@@ -84,38 +84,11 @@ fn convert_return_type_to_type_hint(rt: &crate::compiler::chunk::ReturnType) -> 
     }
 }
 
-/// Internal data stored in ReflectionClass objects
-#[derive(Debug, Clone)]
-struct ReflectionClassData {
-    class_name: Symbol,
-}
-
-/// Internal data stored in ReflectionFunction objects
-#[derive(Debug, Clone)]
-struct ReflectionFunctionData {
-    function_name: Symbol,
-}
-
 /// Internal data stored in ReflectionMethod objects
 #[derive(Debug, Clone)]
 struct ReflectionMethodData {
     class_name: Symbol,
     method_name: Symbol,
-}
-
-/// Internal data stored in ReflectionParameter objects
-#[derive(Debug, Clone)]
-struct ReflectionParameterData {
-    function_name: Symbol,
-    param_name: Symbol,
-    param_index: usize,
-}
-
-/// Internal data stored in ReflectionProperty objects
-#[derive(Debug, Clone)]
-struct ReflectionPropertyData {
-    class_name: Symbol,
-    property_name: Symbol,
 }
 
 //=============================================================================
@@ -144,8 +117,47 @@ fn get_method(class_def: &ClassDef, method_name: Symbol) -> Result<&MethodEntry,
     class_def
         .methods
         .get(&method_name)
-        .ok_or_else(|| format!("Method does not exist"))
+        .ok_or_else(|| format!("Method {:?} does not exist", method_name))
 }
+
+struct MethodMetadata {
+    visibility: Visibility,
+    is_static: bool,
+    is_final: bool,
+    is_abstract: bool,
+    is_internal: bool,
+}
+
+fn get_any_method_metadata(vm: &VM, class_name: Symbol, method_name: Symbol) -> Result<MethodMetadata, String> {
+    if let Some(class_def) = vm.context.classes.get(&class_name) {
+        if let Some(method_entry) = class_def.methods.get(&method_name) {
+            return Ok(MethodMetadata {
+                visibility: method_entry.visibility,
+                is_static: method_entry.is_static,
+                is_final: method_entry.is_final,
+                is_abstract: method_entry.is_abstract,
+                is_internal: false,
+            });
+        }
+    }
+
+    if let Some(native_method) = vm.context.native_methods.get(&(class_name, method_name)) {
+        return Ok(MethodMetadata {
+            visibility: native_method.visibility,
+            is_static: native_method.is_static,
+            is_final: native_method.is_final,
+            is_abstract: false,
+            is_internal: true,
+        });
+    }
+
+    Err(format!(
+        "Method {}::{} does not exist",
+        String::from_utf8_lossy(lookup_symbol(vm, class_name)),
+        String::from_utf8_lossy(lookup_symbol(vm, method_name))
+    ))
+}
+
 
 fn build_reflection_attribute(
     vm: &mut VM,
@@ -208,79 +220,6 @@ fn build_reflection_attribute_array(
         result.push(attr_obj);
     }
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
-}
-
-fn parse_attribute_filters(vm: &VM, args: &[Handle]) -> Result<(Option<Vec<u8>>, i64), String> {
-    const REFLECTION_ATTRIBUTE_IS_INSTANCEOF: i64 = 2;
-
-    if args.len() > 2 {
-        return Err("getAttributes() expects at most 2 arguments".to_string());
-    }
-
-    let name = if let Some(arg0) = args.get(0) {
-        match &vm.arena.get(*arg0).value {
-            Val::Null => None,
-            Val::String(s) => Some(s.to_vec()),
-            _ => return Err("Attribute name must be a string or null".to_string()),
-        }
-    } else {
-        None
-    };
-
-    let flags = if let Some(arg1) = args.get(1) {
-        match vm.arena.get(*arg1).value {
-            Val::Int(i) => i,
-            _ => return Err("Attribute filter flags must be an integer".to_string()),
-        }
-    } else {
-        0
-    };
-
-    if flags & !REFLECTION_ATTRIBUTE_IS_INSTANCEOF != 0 {
-        return Err("Attribute filter flags must be a valid attribute filter flag".to_string());
-    }
-
-    Ok((name, flags))
-}
-
-fn apply_attribute_filters(
-    vm: &mut VM,
-    attrs: &[AttributeInstance],
-    name: Option<Vec<u8>>,
-    flags: i64,
-) -> Result<Vec<AttributeInstance>, String> {
-    const REFLECTION_ATTRIBUTE_IS_INSTANCEOF: i64 = 2;
-
-    let Some(name) = name else {
-        return Ok(attrs.to_vec());
-    };
-
-    if (flags & REFLECTION_ATTRIBUTE_IS_INSTANCEOF) != 0 {
-        let name_sym = vm.context.interner.intern(&name);
-        if !vm.context.classes.contains_key(&name_sym) {
-            vm.trigger_autoload(name_sym)
-                .map_err(|e| format!("{:?}", e))?;
-        }
-        let base_sym = vm
-            .context
-            .classes
-            .get_key_value(&name_sym)
-            .map(|(k, _)| *k)
-            .ok_or_else(|| format!("Class \"{}\" not found", String::from_utf8_lossy(&name)))?;
-
-        return Ok(attrs
-            .iter()
-            .filter(|attr| vm.is_subclass_of(attr.name, base_sym))
-            .cloned()
-            .collect());
-    }
-
-    let name_lower: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
-    Ok(attrs
-        .iter()
-        .filter(|attr| lookup_symbol(vm, attr.lc_name).eq(name_lower.as_slice()))
-        .cloned()
-        .collect())
 }
 
 /// Convert visibility to modifier flags
@@ -346,39 +285,7 @@ fn lookup_symbol(vm: &VM, sym: Symbol) -> &[u8] {
     vm.context.interner.lookup(sym).unwrap_or(b"")
 }
 
-/// Convert type hint to string
-fn type_hint_to_string(vm: &VM, type_hint: &Option<TypeHint>) -> String {
-    match type_hint {
-        None => String::new(),
-        Some(TypeHint::Int) => "int".to_string(),
-        Some(TypeHint::Float) => "float".to_string(),
-        Some(TypeHint::String) => "string".to_string(),
-        Some(TypeHint::Bool) => "bool".to_string(),
-        Some(TypeHint::Array) => "array".to_string(),
-        Some(TypeHint::Object) => "object".to_string(),
-        Some(TypeHint::Callable) => "callable".to_string(),
-        Some(TypeHint::Iterable) => "iterable".to_string(),
-        Some(TypeHint::Mixed) => "mixed".to_string(),
-        Some(TypeHint::Void) => "void".to_string(),
-        Some(TypeHint::Never) => "never".to_string(),
-        Some(TypeHint::Null) => "null".to_string(),
-        Some(TypeHint::Class(sym)) => String::from_utf8_lossy(lookup_symbol(vm, *sym)).to_string(),
-        Some(TypeHint::Union(types)) => {
-            let parts: Vec<String> = types
-                .iter()
-                .map(|t| type_hint_to_string(vm, &Some(t.clone())))
-                .collect();
-            parts.join("|")
-        }
-        Some(TypeHint::Intersection(types)) => {
-            let parts: Vec<String> = types
-                .iter()
-                .map(|t| type_hint_to_string(vm, &Some(t.clone())))
-                .collect();
-            parts.join("&")
-        }
-    }
-}
+
 
 //=============================================================================
 // ReflectionClass Implementation
@@ -853,8 +760,21 @@ pub fn reflection_class_get_method(vm: &mut VM, args: &[Handle]) -> Result<Handl
         .collect();
     let method_sym = vm.context.interner.intern(&method_name_lower);
 
-    // Check if method exists
-    if !class_def.methods.contains_key(&method_sym) {
+    // Check if method exists (user-defined or native)
+    let mut exists = class_def.methods.contains_key(&method_sym);
+    if !exists {
+        // Walk the inheritance chain to find native methods
+        let mut current_class = Some(class_name);
+        while let Some(cls) = current_class {
+            if vm.context.native_methods.contains_key(&(cls, method_sym)) {
+                exists = true;
+                break;
+            }
+            current_class = vm.context.classes.get(&cls).and_then(|c| c.parent);
+        }
+    }
+
+    if !exists {
         let method_name_str = String::from_utf8_lossy(method_name_bytes);
         return Err(format!("Method {}() does not exist", method_name_str));
     }
@@ -1689,7 +1609,7 @@ pub fn reflection_class_get_lazy_initializer(
 
 /// ReflectionClass::initializeLazyObject(object $object): object
 pub fn reflection_class_initialize_lazy_object(
-    vm: &mut VM,
+    _vm: &mut VM,
     args: &[Handle],
 ) -> Result<Handle, String> {
     if args.is_empty() {
@@ -2212,13 +2132,14 @@ pub fn reflection_enum_backed_case_get_backing_value(
 // ReflectionExtension Implementation
 //=============================================================================
 
-/// Helper struct to hold extension data
-#[derive(Debug)]
 struct ReflectionExtensionData {
     name: Symbol,
 }
 
-/// Extract extension name from ReflectionExtension object
+struct ReflectionReferenceData {
+    handle: Handle,
+}
+
 fn get_reflection_extension_data(vm: &mut VM) -> Result<ReflectionExtensionData, String> {
     let this_handle = vm
         .frames
@@ -2243,7 +2164,31 @@ fn get_reflection_extension_data(vm: &mut VM) -> Result<ReflectionExtensionData,
         }
     }
 
-    Err("ReflectionExtension object missing extension name".to_string())
+    Err("ReflectionExtension object not initialized".to_string())
+}
+
+fn get_reflection_reference_data(vm: &mut VM) -> Result<ReflectionReferenceData, String> {
+    let this_handle = vm
+        .frames
+        .last()
+        .and_then(|f| f.this)
+        .ok_or("ReflectionReference method called outside object context")?;
+
+    let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
+        h
+    } else {
+        return Err("Invalid ReflectionReference object".to_string());
+    };
+
+    if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
+        if let Some(internal) = &obj_data.internal {
+            if let Some(data) = internal.downcast_ref::<ReflectionReferenceData>() {
+                return Ok(ReflectionReferenceData { handle: data.handle });
+            }
+        }
+    }
+
+    Err("ReflectionReference object not initialized".to_string())
 }
 
 /// ReflectionExtension::__construct(string $name)
@@ -2333,25 +2278,56 @@ pub fn reflection_extension_get_version(vm: &mut VM, _args: &[Handle]) -> Result
 /// ReflectionExtension::getFunctions(): array
 /// Gets functions provided by the extension
 pub fn reflection_extension_get_functions(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Function-to-extension mapping requires:
-    // 1. Add extension_name: Option<Symbol> to function metadata
-    // 2. Tag functions during extension registration
-    // 3. Add VM method: get_functions_by_extension(name) -> Vec<Symbol>
-    // 4. Return array of ReflectionFunction objects
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_extension_data(vm)?;
+    let ext_name_bytes = lookup_symbol(vm, data.name).to_vec();
+
+    let functions = vm
+        .context
+        .engine
+        .registry
+        .get_functions_by_extension(&ext_name_bytes);
+
+    // Collect names first to avoid borrow checker issues when creating objects
+    let function_names: Vec<Vec<u8>> = functions
+        .iter()
+        .map(|(name, _)| name.to_vec())
+        .collect();
+
+    let mut result = ArrayData::new();
+    for name_bytes in function_names {
+        // Create ReflectionFunction object
+        let rf_obj = create_object_with_properties(
+            vm,
+            b"ReflectionFunction",
+            &[(b"name", Val::String(Rc::new(name_bytes.clone())))],
+        )?;
+
+        let key = ArrayKey::Str(Rc::new(name_bytes));
+        result.insert(key, rf_obj);
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionExtension::getConstants(): array
 /// Gets constants provided by the extension
 pub fn reflection_extension_get_constants(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Constant-to-extension mapping requires:
-    // 1. Add extension_name field to constant metadata
-    // 2. Track during constant registration
-    // 3. Add VM method: get_constants_by_extension(name) -> HashMap<Symbol, Val>
-    // 4. Return assoc array ['NAME' => value]
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_extension_data(vm)?;
+    let ext_name_bytes = lookup_symbol(vm, data.name);
+
+    let constants = vm
+        .context
+        .engine
+        .registry
+        .get_constants_by_extension(ext_name_bytes);
+
+    let mut result = ArrayData::new();
+    for (name_bytes, entry) in constants {
+        let key = ArrayKey::Str(Rc::new(name_bytes.to_vec()));
+        result.insert(key, vm.arena.alloc(entry.value.clone()));
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionExtension::getINIEntries(): array
@@ -2372,12 +2348,35 @@ pub fn reflection_extension_get_ini_entries(
 /// ReflectionExtension::getClasses(): array
 /// Gets classes provided by the extension
 pub fn reflection_extension_get_classes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Class-to-extension mapping for getClasses() requires:
-    // 1. extension_name field in ClassDef (see getExtension above)
-    // 2. Filter classes by extension name
-    // 3. Return assoc array ['ClassName' => ReflectionClass]
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_extension_data(vm)?;
+    let target_ext_sym = data.name;
+
+    // Collect class symbols first to avoid borrow checker issues
+    let class_symbols: Vec<Symbol> = vm
+        .context
+        .classes
+        .iter()
+        .filter(|(_, class_def)| class_def.extension_name == Some(target_ext_sym))
+        .map(|(&sym, _)| sym)
+        .collect();
+
+    let mut result = ArrayData::new();
+
+    for class_sym in class_symbols {
+        let class_name_bytes = lookup_symbol(vm, class_sym).to_vec();
+
+        // Create ReflectionClass object
+        let rc_obj = create_object_with_properties(
+            vm,
+            b"ReflectionClass",
+            &[(b"name", Val::String(Rc::new(class_name_bytes.clone())))],
+        )?;
+
+        let key = ArrayKey::Str(Rc::new(class_name_bytes));
+        result.insert(key, rc_obj);
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionExtension::getClassNames(): array
@@ -2386,10 +2385,25 @@ pub fn reflection_extension_get_class_names(
     vm: &mut VM,
     _args: &[Handle],
 ) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Similar to getClasses() but returns array of class name strings
-    // Requires same extension_name field in ClassDef
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let data = get_reflection_extension_data(vm)?;
+    let target_ext_sym = data.name;
+
+    // Collect class names first
+    let class_names: Vec<Vec<u8>> = vm
+        .context
+        .classes
+        .iter()
+        .filter(|(_, class_def)| class_def.extension_name == Some(target_ext_sym))
+        .map(|(&sym, _)| lookup_symbol(vm, sym).to_vec())
+        .collect();
+
+    let mut result = ArrayData::new();
+
+    for name_bytes in class_names {
+        result.push(vm.arena.alloc(Val::String(Rc::new(name_bytes))));
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionExtension::getDependencies(): array
@@ -2398,11 +2412,39 @@ pub fn reflection_extension_get_dependencies(
     vm: &mut VM,
     _args: &[Handle],
 ) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Extension dependency tracking requires:
-    // 1. Add dependencies: Vec<String> to ExtensionInfo
-    // 2. Declare during extension registration (e.g., mysqli depends on mysqlnd)
-    // 3. Return assoc array ['required' => [...], 'optional' => [...]]
+    let data = get_reflection_extension_data(vm)?;
+    let name_bytes = lookup_symbol(vm, data.name);
+    let name_str = std::str::from_utf8(name_bytes)
+        .map_err(|_| "ReflectionExtension::getDependencies() extension name is invalid".to_string())?;
+
+    if let Some(info) = vm
+        .context
+        .engine
+        .registry
+        .get_extension_info_by_name_ci(name_str)
+    {
+        let mut required = ArrayData::new();
+        for &dep in info.dependencies {
+            required.push(vm.arena.alloc(Val::String(Rc::new(dep.as_bytes().to_vec()))));
+        }
+
+        let mut result = ArrayData::new();
+        result.insert(
+            ArrayKey::Str(Rc::new(b"required".to_vec())),
+            vm.arena.alloc(Val::Array(Rc::new(required))),
+        );
+        result.insert(
+            ArrayKey::Str(Rc::new(b"optional".to_vec())),
+            vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))),
+        );
+        result.insert(
+            ArrayKey::Str(Rc::new(b"conflicts".to_vec())),
+            vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))),
+        );
+
+        return Ok(vm.arena.alloc(Val::Array(Rc::new(result))));
+    }
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
@@ -2414,11 +2456,17 @@ pub fn reflection_extension_info(vm: &mut VM, _args: &[Handle]) -> Result<Handle
 
     // Print basic extension info
     println!("Extension [ {} ] {{", String::from_utf8_lossy(name_bytes));
-    println!("  Classes [0] {{");
+    
+    let ext_name = lookup_symbol(vm, data.name);
+    let functions = vm.context.engine.registry.get_functions_by_extension(ext_name);
+    let classes = vm.context.classes.values().filter(|c| c.extension_name == Some(data.name)).count();
+    let constants = vm.context.engine.registry.get_constants_by_extension(ext_name);
+
+    println!("  Classes [{}] {{", classes);
     println!("  }}");
-    println!("  Functions [0] {{");
+    println!("  Functions [{}] {{", functions.len());
     println!("  }}");
-    println!("  Constants [0] {{");
+    println!("  Constants [{}] {{", constants.len());
     println!("  }}");
     println!("  INI entries [0] {{");
     println!("  }}");
@@ -2433,11 +2481,7 @@ pub fn reflection_extension_info(vm: &mut VM, _args: &[Handle]) -> Result<Handle
 /// Checks if the extension is persistent
 pub fn reflection_extension_is_persistent(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Persistent vs temporary extension tracking:
-    // 1. Add is_persistent: bool to ExtensionInfo
-    // 2. Built-in extensions are persistent (always loaded)
-    // 3. Dynamically loaded (dl()) are temporary
-    // For now, assume all extensions are persistent
+    // Built-in extensions are always persistent in this implementation
     Ok(vm.arena.alloc(Val::Bool(true)))
 }
 
@@ -2445,7 +2489,6 @@ pub fn reflection_extension_is_persistent(vm: &mut VM, _args: &[Handle]) -> Resu
 /// Checks if the extension is temporary
 pub fn reflection_extension_is_temporary(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Inverse of isPersistent() - true for dl() loaded extensions
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -2541,24 +2584,60 @@ pub fn reflection_reference_from_array_element(
         );
     }
 
-    // NOTE: Reference tracking infrastructure requires:
-    // 1. Add reference ID/counter to Val enum or separate reference table
-    // 2. Track which values are references vs copies
-    // 3. Assign unique IDs to reference groups
-    // 4. Check if array[key] is a reference and return ReflectionReference or null
-    // See PHP's ZEND_ISREF() macro and zval reference counting
+    let array_handle = args[0];
+    let key_handle = args[1];
+
+    let array_val = vm.arena.get(array_handle).value.clone();
+    let array_data = match array_val {
+        Val::Array(ref arr) => arr,
+        _ => {
+            return Err(
+                "ReflectionReference::fromArrayElement() expects parameter 1 to be array"
+                    .to_string(),
+            )
+        }
+    };
+
+    let key = match &vm.arena.get(key_handle).value {
+        Val::Int(i) => ArrayKey::Int(*i),
+        Val::String(s) => ArrayKey::Str(s.clone()),
+        _ => {
+            return Err(
+                "ReflectionReference::fromArrayElement() expects parameter 2 to be int or string"
+                    .to_string(),
+            )
+        }
+    };
+
+    if let Some(&val_handle) = array_data.map.get(&key) {
+        if vm.arena.get(val_handle).is_ref {
+            // It is a reference!
+            // Create ReflectionReference object
+            let ref_obj = create_object_with_properties(vm, b"ReflectionReference", &[])?;
+
+            // Store the handle in internal data
+            let obj_handle = if let Val::Object(h) = vm.arena.get(ref_obj).value {
+                h
+            } else {
+                unreachable!()
+            };
+            if let Val::ObjPayload(ref mut obj_data) = vm.arena.get_mut(obj_handle).value {
+                obj_data.internal = Some(Rc::new(ReflectionReferenceData { handle: val_handle }));
+            }
+
+            return Ok(ref_obj);
+        }
+    }
+
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionReference::getId(): string
 /// Gets a unique identifier for the reference
 pub fn reflection_reference_get_id(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Returns unique string ID for reference group (e.g., "0x7f8b8c0")
-    // All variables that reference the same value share the same ID
-    // Requires reference tracking infrastructure (see fromArrayElement)
-    Ok(vm
-        .arena
-        .alloc(Val::String(Rc::new(b"ref_placeholder".to_vec()))))
+    let data = get_reflection_reference_data(vm)?;
+    let id = format!("{}", data.handle.0);
+    Ok(vm.arena.alloc(Val::String(Rc::new(id.into_bytes()))))
 }
 
 //=============================================================================
@@ -3661,15 +3740,16 @@ pub fn reflection_method_get_declaring_class(
 /// ReflectionMethod::getModifiers(): int
 pub fn reflection_method_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_method_data(vm)?;
-    let class_def = get_class_def(vm, data.class_name)?;
-    let method_entry = get_method(&class_def, data.method_name)?;
+    let metadata = get_any_method_metadata(vm, data.class_name, data.method_name)?;
 
-    let mut modifiers = visibility_to_modifiers(method_entry.visibility);
-    if method_entry.is_abstract {
+    let mut modifiers = visibility_to_modifiers(metadata.visibility);
+    if metadata.is_abstract {
         modifiers |= 64; // IS_ABSTRACT
     }
-    // Note: is_final not available in MethodEntry
-    if method_entry.is_static {
+    if metadata.is_final {
+        modifiers |= 4; // IS_FINAL
+    }
+    if metadata.is_static {
         modifiers |= 16; // IS_STATIC
     }
 
@@ -3736,17 +3816,16 @@ pub fn reflection_method_is_abstract(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 
 /// ReflectionMethod::isFinal(): bool
 pub fn reflection_method_is_final(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let _data = get_reflection_method_data(vm)?;
-    // Note: is_final not available in MethodEntry, always return false
-    Ok(vm.arena.alloc(Val::Bool(false)))
+    let data = get_reflection_method_data(vm)?;
+    let metadata = get_any_method_metadata(vm, data.class_name, data.method_name)?;
+    Ok(vm.arena.alloc(Val::Bool(metadata.is_final)))
 }
 
 /// ReflectionMethod::isStatic(): bool
 pub fn reflection_method_is_static(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_method_data(vm)?;
-    let class_def = get_class_def(vm, data.class_name)?;
-    let method_entry = get_method(&class_def, data.method_name)?;
-    Ok(vm.arena.alloc(Val::Bool(method_entry.is_static)))
+    let metadata = get_any_method_metadata(vm, data.class_name, data.method_name)?;
+    Ok(vm.arena.alloc(Val::Bool(metadata.is_static)))
 }
 
 /// ReflectionMethod::isConstructor(): bool
@@ -3768,29 +3847,37 @@ pub fn reflection_method_is_destructor(vm: &mut VM, _args: &[Handle]) -> Result<
 /// ReflectionMethod::__toString(): string
 pub fn reflection_method_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_method_data(vm)?;
-    let class_def = get_class_def(vm, data.class_name)?;
-    let method_entry = get_method(&class_def, data.method_name)?;
+    let metadata = get_any_method_metadata(vm, data.class_name, data.method_name)?;
 
     let class_name = String::from_utf8_lossy(lookup_symbol(vm, data.class_name));
     let method_name = String::from_utf8_lossy(lookup_symbol(vm, data.method_name));
 
-    let visibility = match method_entry.visibility {
+    let visibility = match metadata.visibility {
         Visibility::Public => "public",
         Visibility::Protected => "protected",
         Visibility::Private => "private",
     };
 
     let mut modifiers = vec![visibility.to_string()];
-    if method_entry.is_static {
+    if metadata.is_static {
         modifiers.insert(0, "static".to_string());
     }
-    if method_entry.is_abstract {
+    if metadata.is_abstract {
         modifiers.insert(0, "abstract".to_string());
     }
-    // Note: is_final not available in MethodEntry
+    if metadata.is_final {
+        modifiers.insert(0, "final".to_string());
+    }
+
+    let origin = if metadata.is_internal {
+        "internal"
+    } else {
+        "user"
+    };
 
     let result = format!(
-        "Method [ <user> {} method {}::{} ] {{\n  @@ (unknown) 0 - 0\n}}",
+        "Method [ <{}> {} method {}::{} ] {{\n  @@ (unknown) 0 - 0\n}}",
+        origin,
         modifiers.join(" "),
         class_name,
         method_name
@@ -4680,7 +4767,7 @@ pub fn reflection_parameter_get_default_value_constant_name(
 
 /// ReflectionParameter::isPromoted(): bool
 pub fn reflection_parameter_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let (param, _, _) = get_reflection_parameter_info(vm)?;
+    let (_param, _, _) = get_reflection_parameter_info(vm)?;
 
     // Check if this is a promoted constructor parameter (PHP 8.0+)
     // A promoted parameter becomes a class property automatically
@@ -6417,7 +6504,7 @@ pub fn reflection_union_type_construct(vm: &mut VM, args: &[Handle]) -> Result<H
         .and_then(|f| f.this)
         .ok_or("ReflectionUnionType::__construct() called outside object context")?;
 
-    let types_array = match vm.arena.get(args[0]).value.clone() {
+    let _types_array = match vm.arena.get(args[0]).value.clone() {
         Val::Array(arr) => arr,
         _ => return Err("Types must be an array".to_string()),
     };
@@ -6482,7 +6569,7 @@ pub fn reflection_union_type_allows_null(vm: &mut VM, _args: &[Handle]) -> Resul
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&types_handle) = obj_data.properties.get(&types_sym) {
             // Check if any type in the union allows null
-            if let Val::Array(arr) = &vm.arena.get(types_handle).value {
+            if let Val::Array(_arr) = &vm.arena.get(types_handle).value {
                 // For simplicity, return false for union types
                 // In real PHP, this would check each type
                 return Ok(vm.arena.alloc(Val::Bool(false)));
@@ -6521,7 +6608,7 @@ pub fn reflection_intersection_type_construct(
         .and_then(|f| f.this)
         .ok_or("ReflectionIntersectionType::__construct() called outside object context")?;
 
-    let types_array = match vm.arena.get(args[0]).value.clone() {
+    let _types_array = match vm.arena.get(args[0]).value.clone() {
         Val::Array(arr) => arr,
         _ => return Err("Types must be an array".to_string()),
     };
@@ -6649,7 +6736,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6658,7 +6745,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6667,7 +6754,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_abstract,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6676,7 +6763,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_final,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6685,7 +6772,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_interface,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6694,7 +6781,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_trait,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6703,7 +6790,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_enum,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6712,7 +6799,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_instantiable,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6721,7 +6808,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_has_method,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6730,7 +6817,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_has_property,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6739,7 +6826,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_has_constant,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6748,7 +6835,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_methods,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6757,7 +6844,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_properties,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6766,7 +6853,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_constants,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6775,7 +6862,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_constant,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6784,7 +6871,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_parent_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6793,7 +6880,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_interface_names,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6802,7 +6889,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_implements_interface,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6811,7 +6898,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_namespace_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6820,7 +6907,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_short_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6829,7 +6916,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_in_namespace,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6838,7 +6925,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6847,7 +6934,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_constructor,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6856,7 +6943,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_method,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6865,7 +6952,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_property,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6874,7 +6961,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_modifiers,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6883,7 +6970,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_instance,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6892,7 +6979,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_subclass_of,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6901,7 +6988,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_new_instance,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6910,7 +6997,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_new_instance_args,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6919,7 +7006,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_new_instance_without_constructor,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6928,7 +7015,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_anonymous,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6937,7 +7024,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_cloneable,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6946,7 +7033,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_internal,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6955,7 +7042,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_user_defined,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6964,7 +7051,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_iterable,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6973,7 +7060,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6982,7 +7069,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_default_properties,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -6991,7 +7078,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_doc_comment,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7000,7 +7087,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_file_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7009,7 +7096,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_start_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7018,7 +7105,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_end_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7027,7 +7114,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_interfaces,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7036,7 +7123,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_static_properties,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7045,7 +7132,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_static_property_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7054,7 +7141,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_set_static_property_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7063,7 +7150,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_trait_names,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7072,7 +7159,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_traits,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7081,7 +7168,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_trait_aliases,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7090,7 +7177,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_readonly,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7099,7 +7186,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_reflection_constant,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7108,7 +7195,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_reflection_constants,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7117,7 +7204,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_extension,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7126,7 +7213,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_extension_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7135,7 +7222,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_iterateable,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7144,7 +7231,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_get_lazy_initializer,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7153,7 +7240,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_initialize_lazy_object,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7162,7 +7249,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_is_uninitialized_lazy_object,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7171,7 +7258,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_mark_lazy_object_as_initialized,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7180,7 +7267,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_new_lazy_ghost,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7189,7 +7276,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_new_lazy_proxy,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7198,7 +7285,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_reset_as_lazy_ghost,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7207,7 +7294,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_reset_as_lazy_proxy,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7233,7 +7320,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_object_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7258,7 +7345,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7267,7 +7354,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_is_backed,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7276,7 +7363,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_get_backing_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7285,7 +7372,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_has_case,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7294,7 +7381,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_get_case,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7303,7 +7390,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_get_cases,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7328,7 +7415,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_unit_case_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7337,7 +7424,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_unit_case_get_enum,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7346,7 +7433,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_unit_case_get_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7371,7 +7458,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_enum_backed_case_get_backing_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7396,7 +7483,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7405,7 +7492,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7414,7 +7501,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_version,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7423,7 +7510,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_functions,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7432,7 +7519,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_constants,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7441,7 +7528,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_ini_entries,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7450,7 +7537,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_classes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7459,7 +7546,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_class_names,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7468,7 +7555,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_get_dependencies,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7477,7 +7564,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_info,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7486,7 +7573,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_is_persistent,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7495,7 +7582,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_extension_is_temporary,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7520,7 +7607,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7529,7 +7616,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7538,7 +7625,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_get_version,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7547,7 +7634,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_get_author,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7556,7 +7643,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_get_url,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7565,7 +7652,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_zend_extension_get_copyright,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7590,7 +7677,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7599,7 +7686,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_executing_file,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7608,7 +7695,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_executing_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7617,7 +7704,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_executing_generator,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7626,7 +7713,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_function,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7635,7 +7722,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_this,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7644,7 +7731,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_get_trace,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7653,7 +7740,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_generator_is_closed,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7678,7 +7765,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7687,7 +7774,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_get_fiber,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7696,7 +7783,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_get_callable,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7705,7 +7792,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_get_executing_file,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7714,7 +7801,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_get_executing_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7723,7 +7810,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_fiber_get_trace,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7748,7 +7835,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_closure_scope_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7757,7 +7844,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_closure_this,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7766,7 +7853,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_closure_used_variables,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7775,7 +7862,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_doc_comment,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7784,7 +7871,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_end_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7793,7 +7880,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_extension,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7802,7 +7889,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_extension_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7811,7 +7898,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_return_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7820,7 +7907,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_start_line,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7829,7 +7916,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_static_variables,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7838,7 +7925,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_has_return_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7847,7 +7934,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_is_deprecated,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7856,7 +7943,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_has_tentative_return_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7865,7 +7952,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_abstract_get_tentative_return_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7890,7 +7977,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_export,
                 visibility: Visibility::Public,
-                is_static: true,
+                is_static: true, is_final: false,
             },
         );
 
@@ -7899,7 +7986,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_get_modifier_names,
                 visibility: Visibility::Public,
-                is_static: true,
+                is_static: true, is_final: false,
             },
         );
 
@@ -7952,7 +8039,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_reference_from_array_element,
                 visibility: Visibility::Public,
-                is_static: true, // Static method
+                is_static: true, is_final: false, // Static method
             },
         );
 
@@ -7961,7 +8048,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_reference_get_id,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7986,7 +8073,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -7995,7 +8082,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8004,7 +8091,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_get_declaring_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8013,7 +8100,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_get_modifiers,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8022,7 +8109,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8031,7 +8118,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_public,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8040,7 +8127,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_private,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8049,7 +8136,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_protected,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8058,7 +8145,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_abstract,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8067,7 +8154,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_final,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8076,7 +8163,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_static,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8085,7 +8172,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_constructor,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8094,7 +8181,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_is_destructor,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8103,7 +8190,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8112,7 +8199,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_invoke,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8121,7 +8208,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_method_invoke_args,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8146,7 +8233,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8155,7 +8242,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8164,7 +8251,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_optional,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8173,7 +8260,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_variadic,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8182,7 +8269,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_passed_by_reference,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8191,7 +8278,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_has_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8200,7 +8287,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_allows_null,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8209,7 +8296,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_default_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8218,7 +8305,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_default_value_available,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8227,7 +8314,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_position,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8236,7 +8323,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_declaring_function,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8245,7 +8332,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_declaring_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8254,7 +8341,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8263,7 +8350,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_can_be_passed_by_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8272,7 +8359,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_default_value_constant,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8281,7 +8368,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_default_value_constant_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8290,7 +8377,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_is_promoted,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8299,7 +8386,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8308,7 +8395,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_parameter_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8333,7 +8420,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8342,7 +8429,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8351,7 +8438,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_number_of_parameters,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8360,7 +8447,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_number_of_required_parameters,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8369,7 +8456,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_parameters,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8378,7 +8465,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8387,7 +8474,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_user_defined,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8396,7 +8483,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_internal,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8405,7 +8492,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_variadic,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8414,7 +8501,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_returns_reference,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8423,7 +8510,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_namespace_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8432,7 +8519,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_short_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8441,7 +8528,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_in_namespace,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8450,7 +8537,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_closure,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8459,7 +8546,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_generator,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8468,7 +8555,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_invoke,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8477,7 +8564,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_invoke_args,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8486,7 +8573,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_anonymous,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8495,7 +8582,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_is_disabled,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8504,7 +8591,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8513,7 +8600,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_closure,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8522,7 +8609,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_function_get_file_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8547,7 +8634,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8556,7 +8643,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8565,7 +8652,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8574,7 +8661,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_set_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8583,7 +8670,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_public,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8592,7 +8679,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_private,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8601,7 +8688,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_protected,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8610,7 +8697,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_static,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8619,7 +8706,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_default,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8628,7 +8715,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_modifiers,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8637,7 +8724,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_declaring_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8646,7 +8733,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8655,7 +8742,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8664,7 +8751,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_default_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8673,7 +8760,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_doc_comment,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8682,7 +8769,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8691,7 +8778,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_has_default_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8700,7 +8787,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_has_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8709,7 +8796,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_promoted,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8718,7 +8805,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_readonly,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8727,7 +8814,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_initialized,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8736,7 +8823,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_set_accessible,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8745,7 +8832,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_raw_default_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8754,7 +8841,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_has_hooks,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8763,7 +8850,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_hooks,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8772,7 +8859,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_get_settable_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8781,7 +8868,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_final,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8790,7 +8877,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_lazy,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8799,7 +8886,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_property_is_virtual,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8824,7 +8911,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8833,7 +8920,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8842,7 +8929,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8851,7 +8938,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_public,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8860,7 +8947,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_private,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8869,7 +8956,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_protected,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8878,7 +8965,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_modifiers,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8887,7 +8974,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_declaring_class,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8896,7 +8983,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8905,7 +8992,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_attributes,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8914,7 +9001,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_doc_comment,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8923,7 +9010,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_has_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8932,7 +9019,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_get_type,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8941,7 +9028,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_enum_case,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8950,7 +9037,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_final,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8959,7 +9046,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_class_constant_is_deprecated,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8984,7 +9071,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -8993,7 +9080,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9002,7 +9089,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_value,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9011,7 +9098,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_namespace_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9020,7 +9107,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_short_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9029,7 +9116,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_is_deprecated,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9038,7 +9125,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_extension,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9047,7 +9134,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_extension_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9056,7 +9143,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_get_file_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9065,7 +9152,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_constant_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9090,7 +9177,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9099,7 +9186,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9108,7 +9195,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_get_arguments,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9117,7 +9204,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_get_target,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9126,7 +9213,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_is_repeated,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9135,7 +9222,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_attribute_new_instance,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9164,7 +9251,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_type_allows_null,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9173,7 +9260,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_type_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9182,7 +9269,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_type_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9207,7 +9294,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_named_type_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9216,7 +9303,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_named_type_get_name,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9225,7 +9312,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_named_type_is_builtin,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9234,7 +9321,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_type_allows_null,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9243,7 +9330,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_type_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9268,7 +9355,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_union_type_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9277,7 +9364,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_union_type_get_types,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9286,7 +9373,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_union_type_allows_null,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9295,7 +9382,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_union_type_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9320,7 +9407,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_intersection_type_construct,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9329,7 +9416,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_intersection_type_get_types,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9338,7 +9425,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_intersection_type_allows_null,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 
@@ -9347,7 +9434,7 @@ impl Extension for ReflectionExtension {
             NativeMethodEntry {
                 handler: reflection_intersection_type_to_string,
                 visibility: Visibility::Public,
-                is_static: false,
+                is_static: false, is_final: false,
             },
         );
 

@@ -1295,12 +1295,13 @@ impl VM {
         class_name: Symbol,
         method_name: Symbol,
     ) -> Option<crate::runtime::context::NativeMethodEntry> {
+        let method_bytes = self.context.interner.lookup(method_name)?;
+        let method_lc = method_bytes.to_ascii_lowercase();
+        let method_sym = self.context.interner.find(&method_lc)?;
+
         // Walk the inheritance chain to find native methods
         self.walk_inheritance_chain(class_name, |_def, cls| {
-            self.context
-                .native_methods
-                .get(&(cls, method_name))
-                .cloned()
+            self.context.native_methods.get(&(cls, method_sym)).cloned()
         })
     }
 
@@ -6539,6 +6540,7 @@ impl VM {
                 visibility,
                 is_static,
                 is_abstract,
+                is_final,
             ) => {
                 let val = {
                     let frame = self.frames.last().unwrap();
@@ -6597,6 +6599,7 @@ impl VM {
                                 func,
                                 visibility,
                                 is_static,
+                                is_final,
                                 declaring_class: class_name,
                                 is_abstract,
                                 signature,

@@ -134,7 +134,7 @@ pub enum OpCode {
     MarkFinal(Symbol),              // Mark class as final
     MarkReadonly(Symbol),           // Mark class as readonly
     FinalizeClass(Symbol), // Validate class after all methods are defined (interfaces, abstract methods)
-    DefMethod(Symbol, Symbol, u32, Visibility, bool, bool), // (class_name, method_name, func_idx, visibility, is_static, is_abstract)
+    DefMethod(Symbol, Symbol, u32, Visibility, bool, bool, bool), // (class_name, method_name, func_idx, visibility, is_static, is_abstract, is_final)
     DefProp(Symbol, Symbol, u16, Visibility, u32, bool), // (class_name, prop_name, default_val_idx, visibility, type_hint_idx, is_readonly)
     DefClassConst(Symbol, Symbol, u16, Visibility), // (class_name, const_name, val_idx, visibility)
     DefStaticProp(Symbol, Symbol, u16, Visibility, u32), // (class_name, prop_name, default_val_idx, visibility, type_hint_idx)
