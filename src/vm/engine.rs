@@ -52,7 +52,7 @@ use crate::compiler::chunk::{ClosureData, CodeChunk, ReturnType, UserFunc};
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{
     ClassDef, EngineContext, MethodEntry, MethodSignature, ParameterInfo, PropertyEntry,
-    RequestContext, StaticPropertyEntry, TypeHint,
+    RequestContext, StaticPropertyEntry, TraitAliasInfo, TypeHint,
 };
 use crate::sapi::SapiMode;
 use crate::vm::frame::{
@@ -3926,6 +3926,7 @@ impl VM {
                     enum_backed_type: None,
                     interfaces: Vec::new(),
                     traits: Vec::new(),
+                    trait_aliases: HashMap::new(),
                     methods,
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
@@ -6060,6 +6061,7 @@ impl VM {
                     enum_backed_type: None,
                     interfaces: Vec::new(),
                     traits: Vec::new(),
+                    trait_aliases: HashMap::new(),
                     methods,
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
@@ -6095,6 +6097,7 @@ impl VM {
                     enum_backed_type: None,
                     interfaces: Vec::new(),
                     traits: Vec::new(),
+                    trait_aliases: HashMap::new(),
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
@@ -6130,6 +6133,7 @@ impl VM {
                     enum_backed_type: None,
                     interfaces: Vec::new(),
                     traits: Vec::new(),
+                    trait_aliases: HashMap::new(),
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants: HashMap::new(),
@@ -6231,6 +6235,18 @@ impl VM {
                     if let Val::String(comment) = val {
                         class_def.constant_doc_comments.insert(const_name, comment);
                     }
+                }
+            }
+            OpCode::SetTraitAlias(class_name, alias, trait_name, method_name, visibility) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.trait_aliases.insert(
+                        alias,
+                        TraitAliasInfo {
+                            trait_name,
+                            method_name,
+                            visibility,
+                        },
+                    );
                 }
             }
             OpCode::SetClassDocComment(class_name, const_idx) => {

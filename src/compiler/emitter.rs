@@ -3,7 +3,7 @@ use crate::core::interner::Interner;
 use crate::core::value::{Symbol, Val, Visibility};
 use crate::parser::ast::{
     AssignOp, AttributeGroup, BinaryOp, CastKind, ClassMember, Expr, IncludeKind, MagicConstKind,
-    Stmt, StmtId, Type, UnaryOp,
+    Stmt, StmtId, TraitAdaptation, Type, UnaryOp,
 };
 use crate::parser::lexer::token::{Token, TokenKind};
 use crate::vm::opcode::OpCode;
@@ -450,11 +450,49 @@ impl<'src> Emitter<'src> {
                         }
                     }
                 }
-                ClassMember::TraitUse { traits, .. } => {
+                ClassMember::TraitUse { traits, adaptations, .. } => {
                     for trait_name in *traits {
                         let trait_str = self.get_text(trait_name.span);
                         let trait_sym = self.interner.intern(trait_str);
                         self.chunk.code.push(OpCode::UseTrait(class_sym, trait_sym));
+                    }
+                    for adaptation in *adaptations {
+                        if let TraitAdaptation::Alias {
+                            method,
+                            alias,
+                            visibility,
+                            ..
+                        } = adaptation
+                        {
+                            let Some(alias) = alias else {
+                                continue;
+                            };
+                            let alias_name = self.get_text(alias.span);
+                            let alias_sym = self.interner.intern(alias_name);
+
+                            let method_name = self.get_text(method.method.span);
+                            let method_sym = self.interner.intern(method_name);
+
+                            let trait_sym = method.trait_name.map(|name| {
+                                let trait_name = self.get_text(name.span);
+                                self.interner.intern(trait_name)
+                            });
+
+                            let vis = visibility.and_then(|token| match token.kind {
+                                TokenKind::Public => Some(Visibility::Public),
+                                TokenKind::Protected => Some(Visibility::Protected),
+                                TokenKind::Private => Some(Visibility::Private),
+                                _ => None,
+                            });
+
+                            self.chunk.code.push(OpCode::SetTraitAlias(
+                                class_sym,
+                                alias_sym,
+                                trait_sym,
+                                method_sym,
+                                vis,
+                            ));
+                        }
                     }
                 }
                 _ => {}

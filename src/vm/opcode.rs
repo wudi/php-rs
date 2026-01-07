@@ -126,6 +126,7 @@ pub enum OpCode {
     SetPropertyDocComment(Symbol, Symbol, u16), // (class_name, property_name, const_idx)
     SetClassConstAttributes(Symbol, Symbol, u16), // (class_name, const_name, const_idx)
     SetClassConstDocComment(Symbol, Symbol, u16), // (class_name, const_name, const_idx)
+    SetTraitAlias(Symbol, Symbol, Option<Symbol>, Symbol, Option<Visibility>), // (class_name, alias, trait_name, method_name, visibility)
     AddInterface(Symbol, Symbol),     // (class_name, interface_name)
     UseTrait(Symbol, Symbol),         // (class_name, trait_name)
     AllowDynamicProperties(Symbol), // Mark class as allowing dynamic properties (for #[AllowDynamicProperties])

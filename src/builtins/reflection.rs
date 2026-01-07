@@ -1418,12 +1418,48 @@ pub fn reflection_class_get_traits(vm: &mut VM, _args: &[Handle]) -> Result<Hand
 
 /// ReflectionClass::getTraitAliases(): array
 pub fn reflection_class_get_trait_aliases(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Trait alias tracking requires:
-    // 1. Add trait_aliases: HashMap<Symbol, TraitAliasInfo> to ClassDef
-    // 2. Parse 'use TraitName { method as alias; }' syntax
-    // 3. Store original method name, alias, and visibility changes
-    // 4. Return assoc array: ['alias' => 'Trait::method']
-    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    let mut result = ArrayData::new();
+    if class_def.trait_aliases.is_empty() {
+        return Ok(vm.arena.alloc(Val::Array(Rc::new(result))));
+    }
+
+    for (alias_sym, info) in &class_def.trait_aliases {
+        let alias_name = lookup_symbol(vm, *alias_sym).to_vec();
+        let method_name_bytes = lookup_symbol(vm, info.method_name).to_vec();
+
+        let trait_sym = if let Some(trait_sym) = info.trait_name {
+            Some(trait_sym)
+        } else {
+            let method_lc = vm.context.interner.intern(&method_name_bytes.to_ascii_lowercase());
+            class_def.traits.iter().find_map(|trait_sym| {
+                let trait_def = vm.context.classes.get(trait_sym)?;
+                if trait_def.methods.contains_key(&method_lc) {
+                    Some(*trait_sym)
+                } else {
+                    None
+                }
+            })
+        };
+
+        let Some(trait_sym) = trait_sym else {
+            continue;
+        };
+
+        let trait_name_bytes = lookup_symbol(vm, trait_sym).to_vec();
+        let mut full_name = Vec::with_capacity(trait_name_bytes.len() + method_name_bytes.len() + 2);
+        full_name.extend_from_slice(&trait_name_bytes);
+        full_name.extend_from_slice(b"::");
+        full_name.extend_from_slice(&method_name_bytes);
+
+        let key = ArrayKey::Str(Rc::new(alias_name));
+        let value = vm.arena.alloc(Val::String(Rc::new(full_name)));
+        result.insert(key, value);
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionClass::isReadOnly(): bool

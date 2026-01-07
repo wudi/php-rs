@@ -97,6 +97,13 @@ pub struct NativeMethodEntry {
 }
 
 #[derive(Debug, Clone)]
+pub struct TraitAliasInfo {
+    pub trait_name: Option<Symbol>,
+    pub method_name: Symbol,
+    pub visibility: Option<Visibility>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PropertyEntry {
     pub default_value: Val,
     pub visibility: Visibility,
@@ -126,6 +133,7 @@ pub struct ClassDef {
     pub enum_backed_type: Option<EnumBackedType>,
     pub interfaces: Vec<Symbol>,
     pub traits: Vec<Symbol>,
+    pub trait_aliases: HashMap<Symbol, TraitAliasInfo>,
     pub methods: HashMap<Symbol, MethodEntry>,
     pub properties: IndexMap<Symbol, PropertyEntry>, // Instance properties with type hints
     pub constants: HashMap<Symbol, (Val, Visibility)>,
@@ -350,6 +358,7 @@ impl RequestContext {
                     enum_backed_type: None,
                     interfaces,
                     traits: Vec::new(),
+                    trait_aliases: HashMap::new(),
                     methods: HashMap::new(),
                     properties: IndexMap::new(),
                     constants,
