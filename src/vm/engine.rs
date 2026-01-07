@@ -3861,6 +3861,8 @@ impl VM {
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
+                    start_line: None,
+                    end_line: None,
                     is_internal: false,
                 };
                 self.context.classes.insert(name_sym, class_def);
@@ -5990,6 +5992,8 @@ impl VM {
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
+                    start_line: None,
+                    end_line: None,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
@@ -6020,6 +6024,8 @@ impl VM {
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
+                    start_line: None,
+                    end_line: None,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
@@ -6050,9 +6056,17 @@ impl VM {
                     allows_dynamic_properties: false,
                     doc_comment: None,
                     file_name,
+                    start_line: None,
+                    end_line: None,
                     is_internal: false,
                 };
                 self.context.classes.insert(name, class_def);
+            }
+            OpCode::SetClassLines(class_name, start_line, end_line) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.start_line = start_line;
+                    class_def.end_line = end_line;
+                }
             }
             OpCode::SetClassDocComment(class_name, const_idx) => {
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {

@@ -118,6 +118,7 @@ pub enum OpCode {
     DefInterface(Symbol),             // Define interface (name)
     DefTrait(Symbol),                 // Define trait (name)
     SetClassDocComment(Symbol, u16),  // (class_name, const_idx)
+    SetClassLines(Symbol, Option<u32>, Option<u32>), // (class_name, start_line, end_line)
     AddInterface(Symbol, Symbol),     // (class_name, interface_name)
     UseTrait(Symbol, Symbol),         // (class_name, trait_name)
     AllowDynamicProperties(Symbol), // Mark class as allowing dynamic properties (for #[AllowDynamicProperties])

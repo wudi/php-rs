@@ -128,6 +128,8 @@ pub struct ClassDef {
     pub allows_dynamic_properties: bool, // Set by #[AllowDynamicProperties] attribute
     pub doc_comment: Option<Rc<Vec<u8>>>,
     pub file_name: Option<Rc<Vec<u8>>>,
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
     pub is_internal: bool,
 }
 
@@ -345,6 +347,8 @@ impl RequestContext {
                     allows_dynamic_properties: true,
                     doc_comment: None,
                     file_name: None,
+                    start_line: None,
+                    end_line: None,
                     is_internal: true,
                 },
             );

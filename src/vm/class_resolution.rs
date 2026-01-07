@@ -196,6 +196,8 @@ mod tests {
             allows_dynamic_properties: false,
             doc_comment: None,
             file_name: None,
+            start_line: None,
+            end_line: None,
             is_internal: false,
         };
         vm.context.classes.insert(grandparent_sym, grandparent_def);
@@ -219,6 +221,8 @@ mod tests {
             allows_dynamic_properties: false,
             doc_comment: None,
             file_name: None,
+            start_line: None,
+            end_line: None,
             is_internal: false,
         };
         vm.context.classes.insert(parent_sym, parent_def);
@@ -242,6 +246,8 @@ mod tests {
             allows_dynamic_properties: false,
             doc_comment: None,
             file_name: None,
+            start_line: None,
+            end_line: None,
             is_internal: false,
         };
         vm.context.classes.insert(child_sym, child_def);
@@ -277,6 +283,8 @@ mod tests {
             allows_dynamic_properties: false,
             doc_comment: None,
             file_name: None,
+            start_line: None,
+            end_line: None,
             is_internal: false,
         };
         vm.context.classes.insert(parent_sym, parent_def);
@@ -300,6 +308,8 @@ mod tests {
             allows_dynamic_properties: false,
             doc_comment: None,
             file_name: None,
+            start_line: None,
+            end_line: None,
             is_internal: false,
         };
         vm.context.classes.insert(child_sym, child_def);

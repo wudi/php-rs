@@ -853,6 +853,7 @@ impl<'src> Emitter<'src> {
                 attributes,
                 modifiers,
                 doc_comment,
+                close_brace_span,
                 ..
             } => {
                 let class_name_str = self.get_text(name.span);
@@ -868,6 +869,13 @@ impl<'src> Emitter<'src> {
                 self.chunk
                     .code
                     .push(OpCode::DefClass(class_sym, parent_sym));
+
+                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let end_line = close_brace_span
+                    .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
+                self.chunk
+                    .code
+                    .push(OpCode::SetClassLines(class_sym, start_line, end_line));
 
                 if let Some(doc_comment) = doc_comment {
                     let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
@@ -928,12 +936,20 @@ impl<'src> Emitter<'src> {
                 members,
                 extends,
                 doc_comment,
+                close_brace_span,
                 ..
             } => {
                 let name_str = self.get_text(name.span);
                 let sym = self.interner.intern(name_str);
 
                 self.chunk.code.push(OpCode::DefInterface(sym));
+
+                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let end_line = close_brace_span
+                    .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
+                self.chunk
+                    .code
+                    .push(OpCode::SetClassLines(sym, start_line, end_line));
 
                 if let Some(doc_comment) = doc_comment {
                     let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
@@ -961,12 +977,20 @@ impl<'src> Emitter<'src> {
                 name,
                 members,
                 doc_comment,
+                close_brace_span,
                 ..
             } => {
                 let name_str = self.get_text(name.span);
                 let sym = self.interner.intern(name_str);
 
                 self.chunk.code.push(OpCode::DefTrait(sym));
+
+                let start_line = name.span.line_info(self.source).map(|info| info.line as u32);
+                let end_line = close_brace_span
+                    .and_then(|span| span.line_info(self.source).map(|info| info.line as u32));
+                self.chunk
+                    .code
+                    .push(OpCode::SetClassLines(sym, start_line, end_line));
 
                 if let Some(doc_comment) = doc_comment {
                     let comment = self.source[doc_comment.start..doc_comment.end].to_vec();
