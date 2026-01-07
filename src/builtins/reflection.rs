@@ -1464,11 +1464,9 @@ pub fn reflection_class_get_trait_aliases(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionClass::isReadOnly(): bool
 pub fn reflection_class_is_readonly(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Readonly class support (PHP 8.2+) requires:
-    // 1. Add is_readonly: bool field to ClassDef
-    // 2. Parse 'readonly class Foo' syntax in parser
-    // 3. Enforce readonly semantics: all properties must be readonly
-    Ok(vm.arena.alloc(Val::Bool(false)))
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    Ok(vm.arena.alloc(Val::Bool(class_def.is_readonly)))
 }
 
 /// ReflectionClass::getReflectionConstant(string $name): ReflectionClassConstant|false

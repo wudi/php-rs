@@ -1018,6 +1018,12 @@ impl<'src> Emitter<'src> {
                     self.chunk.code.push(OpCode::MarkFinal(class_sym));
                 }
 
+                // Check if class is readonly
+                let is_readonly = modifiers.iter().any(|m| m.kind == TokenKind::Readonly);
+                if is_readonly {
+                    self.chunk.code.push(OpCode::MarkReadonly(class_sym));
+                }
+
                 for interface in *implements {
                     let interface_str = self.get_text(interface.span);
                     let interface_sym = self.interner.intern(interface_str);

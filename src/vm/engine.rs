@@ -3922,6 +3922,7 @@ impl VM {
                     is_trait: false,
                     is_abstract: false,
                     is_final: false,
+                    is_readonly: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6057,6 +6058,7 @@ impl VM {
                     is_trait: false,
                     is_abstract: false,
                     is_final: false,
+                    is_readonly: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6093,6 +6095,7 @@ impl VM {
                     is_trait: false,
                     is_abstract: true,
                     is_final: false,
+                    is_readonly: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6129,6 +6132,7 @@ impl VM {
                     is_trait: true,
                     is_abstract: false,
                     is_final: false,
+                    is_readonly: false,
                     is_enum: false,
                     enum_backed_type: None,
                     interfaces: Vec::new(),
@@ -6287,6 +6291,33 @@ impl VM {
                                     class_name_str, parent_name_str
                                 )));
                             }
+
+                            if class_def.is_readonly != parent_def.is_readonly {
+                                let class_name_str = self
+                                    .context
+                                    .interner
+                                    .lookup(class_name)
+                                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                                    .unwrap_or_else(|| format!("{:?}", class_name));
+                                let parent_name_str = self
+                                    .context
+                                    .interner
+                                    .lookup(parent_sym)
+                                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+                                    .unwrap_or_else(|| format!("{:?}", parent_sym));
+                                let message = if class_def.is_readonly {
+                                    format!(
+                                        "Readonly class {} cannot extend non-readonly class {}",
+                                        class_name_str, parent_name_str
+                                    )
+                                } else {
+                                    format!(
+                                        "Non-readonly class {} cannot extend readonly class {}",
+                                        class_name_str, parent_name_str
+                                    )
+                                };
+                                return Err(VmError::RuntimeError(message));
+                            }
                         }
                     }
 
@@ -6302,6 +6333,18 @@ impl VM {
             }
             OpCode::AllowDynamicProperties(class_name) => {
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    if class_def.is_readonly {
+                        let class_name_str = self
+                            .context
+                            .interner
+                            .lookup(class_name)
+                            .map(|b| String::from_utf8_lossy(b).to_string())
+                            .unwrap_or_else(|| format!("{:?}", class_name));
+                        return Err(VmError::RuntimeError(format!(
+                            "Cannot apply #[\\AllowDynamicProperties] to readonly class {}",
+                            class_name_str
+                        )));
+                    }
                     class_def.allows_dynamic_properties = true;
                 }
             }
@@ -6313,6 +6356,11 @@ impl VM {
             OpCode::MarkFinal(class_name) => {
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
                     class_def.is_final = true;
+                }
+            }
+            OpCode::MarkReadonly(class_name) => {
+                if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    class_def.is_readonly = true;
                 }
             }
             OpCode::UseTrait(class_name, trait_name) => {
@@ -6524,13 +6572,14 @@ impl VM {
                     }
                 };
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    let class_is_readonly = class_def.is_readonly;
                     class_def.properties.insert(
                         prop_name,
                         PropertyEntry {
                             default_value: val,
                             visibility,
                             type_hint,
-                            is_readonly,
+                            is_readonly: is_readonly || class_is_readonly,
                             attributes: Vec::new(),
                             doc_comment: None,
                         },
@@ -6589,6 +6638,18 @@ impl VM {
                     }
                 };
                 if let Some(class_def) = self.context.classes.get_mut(&class_name) {
+                    if class_def.is_readonly {
+                        let class_str = String::from_utf8_lossy(
+                            self.context.interner.lookup(class_name).unwrap_or(b"???"),
+                        );
+                        let prop_str = String::from_utf8_lossy(
+                            self.context.interner.lookup(prop_name).unwrap_or(b"???"),
+                        );
+                        return Err(VmError::RuntimeError(format!(
+                            "Static property {}::${} cannot be readonly",
+                            class_str, prop_str
+                        )));
+                    }
                     class_def.static_properties.insert(
                         prop_name,
                         StaticPropertyEntry {
@@ -7305,6 +7366,42 @@ impl VM {
                     // Check for dynamic property deprecation (PHP 8.2+)
                     if !prop_exists {
                         self.check_dynamic_property_write(obj_handle, prop_name);
+                    }
+
+                    // Check readonly constraint
+                    let prop_info = self.walk_inheritance_chain(class_name, |def, cls| {
+                        def.properties
+                            .get(&prop_name)
+                            .map(|entry| (entry.is_readonly, cls))
+                    });
+
+                    if let Some((is_readonly, defining_class)) = prop_info {
+                        if is_readonly {
+                            let payload_zval = self.arena.get(payload_handle);
+                            if let Val::ObjPayload(obj_data) = &payload_zval.value {
+                                if let Some(current_handle) = obj_data.properties.get(&prop_name) {
+                                    let current_val = &self.arena.get(*current_handle).value;
+                                    if !matches!(current_val, Val::Uninitialized) {
+                                        let class_str = String::from_utf8_lossy(
+                                            self.context
+                                                .interner
+                                                .lookup(defining_class)
+                                                .unwrap_or(b"???"),
+                                        );
+                                        let prop_str = String::from_utf8_lossy(
+                                            self.context
+                                                .interner
+                                                .lookup(prop_name)
+                                                .unwrap_or(b"???"),
+                                        );
+                                        return Err(VmError::RuntimeError(format!(
+                                            "Cannot modify readonly property {}::${}",
+                                            class_str, prop_str
+                                        )));
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Validate property type (check class definition for type hint)
