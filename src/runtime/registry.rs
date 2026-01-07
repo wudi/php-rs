@@ -43,6 +43,8 @@ pub struct ExtensionRegistry {
     extension_map: HashMap<String, usize>,
     /// Engine-level constants (name -> value)
     constants: HashMap<Vec<u8>, Val>,
+    /// Currently registering extension name for tagging native classes
+    current_extension_name: Option<Vec<u8>>,
 }
 
 impl ExtensionRegistry {
@@ -55,6 +57,7 @@ impl ExtensionRegistry {
             extensions: Vec::new(),
             extension_map: HashMap::new(),
             constants: HashMap::new(),
+            current_extension_name: None,
         }
     }
 
@@ -80,6 +83,10 @@ impl ExtensionRegistry {
 
     /// Register a native class definition
     pub fn register_class(&mut self, class: NativeClassDef) {
+        let mut class = class;
+        if class.extension_name.is_none() {
+            class.extension_name = self.current_extension_name.clone();
+        }
         self.classes.insert(class.name.clone(), class);
     }
 
@@ -168,8 +175,15 @@ impl ExtensionRegistry {
             }
         }
 
+        let previous_extension_name = self.current_extension_name.take();
+        self.current_extension_name = Some(info.name.as_bytes().to_vec());
+
         // Call MINIT
-        match extension.module_init(self) {
+        let init_result = extension.module_init(self);
+
+        self.current_extension_name = previous_extension_name;
+
+        match init_result {
             ExtensionResult::Success => {
                 let index = self.extensions.len();
                 self.extension_map.insert(info.name.to_string(), index);

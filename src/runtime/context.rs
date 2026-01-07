@@ -347,6 +347,11 @@ impl RequestContext {
                 constants.insert(self.interner.intern(name), (val.clone(), *visibility));
             }
 
+            let extension_name = native_class
+                .extension_name
+                .as_ref()
+                .map(|name| self.interner.intern(name));
+
             self.classes.insert(
                 class_sym,
                 ClassDef {
@@ -376,7 +381,7 @@ impl RequestContext {
                     start_line: None,
                     end_line: None,
                     is_internal: true,
-                    extension_name: None,
+                    extension_name,
                 },
             );
 
