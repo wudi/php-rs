@@ -1112,17 +1112,33 @@ pub fn reflection_class_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<H
 
 /// ReflectionClass::getStartLine(): int|false
 pub fn reflection_class_get_start_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: Line tracking requires:
-    // 1. Add start_line: Option<usize> field to ClassDef
-    // 2. Store line number from lexer when parsing class declarations
-    // 3. Return line number or false for internal classes
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if class_def.is_internal {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    if let Some(start_line) = class_def.start_line {
+        return Ok(vm.arena.alloc(Val::Int(start_line as i64)));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::getEndLine(): int|false
 pub fn reflection_class_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    // NOTE: End line tracking requires end_line: Option<usize> in ClassDef
-    // Store from lexer when class closing brace is parsed
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+
+    if class_def.is_internal {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    if let Some(end_line) = class_def.end_line {
+        return Ok(vm.arena.alloc(Val::Int(end_line as i64)));
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
