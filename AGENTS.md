@@ -66,6 +66,7 @@
 
 ## Workflow
 - Fully understand the PHP feature to be implemented by studying the PHP source code.
+- All related modules and data structures should be planned in advance. e.g., lexer, parser, AST, SExpr, VM instructions, runtime structures, etc.
 - Planning the implementation approach, considering how to map PHP concepts to Rust constructs.
 - Write plans in to docs/IMPLEMENTATION_PLANS.md for tracking and discussion.
 - Discuss the plan with the team to gather feedback and suggestions.
