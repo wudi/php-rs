@@ -2042,6 +2042,20 @@ fn test_reflection_class_get_file_name() {
 }
 
 #[test]
+fn test_reflection_class_get_start_end_line() {
+    let result = run_php(r#"<?php
+class TestClass
+{
+    public function foo() {}
+}
+$rc = new ReflectionClass('TestClass');
+return $rc->getStartLine() . ',' . $rc->getEndLine();
+"#);
+
+    assert_eq!(result, Val::String(Rc::new(b"2,5".to_vec())));
+}
+
+#[test]
 fn test_reflection_class_get_interfaces() {
     let result = run_php(r#"<?php
         class TestClass {}
