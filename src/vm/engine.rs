@@ -12822,6 +12822,8 @@ mod tests {
             is_generator: false,
             statics: Rc::new(RefCell::new(HashMap::new())),
             return_type: None,
+            start_line: None,
+            end_line: None,
         })
     }
 

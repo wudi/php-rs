@@ -199,13 +199,21 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         let uses = self.parse_use_list();
         let return_type = self.parse_return_type();
 
-        let body_stmt = self.parse_block();
-        let body: &'ast [StmtId<'ast>] = match body_stmt {
-            Stmt::Block { statements, .. } => statements,
-            _ => self.arena.alloc_slice_copy(&[body_stmt]) as &'ast [StmtId<'ast>],
+        let body_stmt_id = self.parse_block();
+        let (body, close_brace_span): (&'ast [StmtId<'ast>], Option<Span>) = match body_stmt_id {
+            Stmt::Block { statements, span } => (
+                statements,
+                Some(Span::new(span.end.saturating_sub(1), span.end)),
+            ),
+            _ => (
+                self.arena.alloc_slice_copy(&[body_stmt_id]) as &'ast [StmtId<'ast>],
+                None,
+            ),
         };
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|s| s.end)
+            .unwrap_or(self.current_token.span.end);
         self.arena.alloc(Expr::Closure {
             attributes,
             is_static,
@@ -214,6 +222,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             uses,
             return_type,
             body,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }

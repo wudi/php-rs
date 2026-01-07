@@ -120,6 +120,7 @@ pub enum Stmt<'ast> {
         return_type: Option<&'ast Type<'ast>>,
         body: &'ast [StmtId<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Class {
@@ -448,6 +449,7 @@ pub enum Expr<'ast> {
         uses: &'ast [ClosureUse<'ast>],
         return_type: Option<&'ast Type<'ast>>,
         body: &'ast [StmtId<'ast>],
+        close_brace_span: Option<Span>,
         span: Span,
     },
     ArrowFunction {
@@ -721,6 +723,7 @@ pub enum ClassMember<'ast> {
         return_type: Option<&'ast Type<'ast>>,
         body: &'ast [StmtId<'ast>],
         doc_comment: Option<Span>,
+        close_brace_span: Option<Span>,
         span: Span,
     },
     Const {

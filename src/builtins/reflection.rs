@@ -3044,12 +3044,59 @@ pub fn reflection_function_abstract_get_doc_comment(
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
+/// ReflectionFunctionAbstract::getFileName(): string|false
+pub fn reflection_function_abstract_get_file_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
+    // Try as function
+    if let Ok(func_sym) = get_reflection_function_name(vm) {
+        if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+            if let Some(file_path) = &user_func.chunk.file_path {
+                return Ok(vm.arena.alloc(Val::String(Rc::new(file_path.as_bytes().to_vec()))));
+            }
+        }
+    }
+
+    // Try as method
+    if let Ok(data) = get_reflection_method_data(vm) {
+        if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+            if let Some(method) = class_def.methods.get(&data.method_name) {
+                if let Some(file_path) = &method.func.chunk.file_path {
+                    return Ok(vm.arena.alloc(Val::String(Rc::new(file_path.as_bytes().to_vec()))));
+                }
+            }
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
 /// ReflectionFunctionAbstract::getEndLine(): int|false
 pub fn reflection_function_abstract_get_end_line(
     vm: &mut VM,
     _args: &[Handle],
 ) -> Result<Handle, String> {
-    // Stub: Source line tracking not implemented
+    // Try as function
+    if let Ok(func_sym) = get_reflection_function_name(vm) {
+        if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+            if let Some(end_line) = user_func.end_line {
+                return Ok(vm.arena.alloc(Val::Int(end_line as i64)));
+            }
+        }
+    }
+
+    // Try as method
+    if let Ok(data) = get_reflection_method_data(vm) {
+        if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+            if let Some(method) = class_def.methods.get(&data.method_name) {
+                if let Some(end_line) = method.func.end_line {
+                    return Ok(vm.arena.alloc(Val::Int(end_line as i64)));
+                }
+            }
+        }
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -3085,7 +3132,26 @@ pub fn reflection_function_abstract_get_start_line(
     vm: &mut VM,
     _args: &[Handle],
 ) -> Result<Handle, String> {
-    // Stub: Source line tracking not implemented
+    // Try as function
+    if let Ok(func_sym) = get_reflection_function_name(vm) {
+        if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+            if let Some(start_line) = user_func.start_line {
+                return Ok(vm.arena.alloc(Val::Int(start_line as i64)));
+            }
+        }
+    }
+
+    // Try as method
+    if let Ok(data) = get_reflection_method_data(vm) {
+        if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+            if let Some(method) = class_def.methods.get(&data.method_name) {
+                if let Some(start_line) = method.func.start_line {
+                    return Ok(vm.arena.alloc(Val::Int(start_line as i64)));
+                }
+            }
+        }
+    }
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -3566,20 +3632,44 @@ pub fn reflection_function_get_closure(vm: &mut VM, _args: &[Handle]) -> Result<
 
 /// ReflectionFunction::getFileName(): string|false
 /// Get the filename where the function is defined.
-/// Returns false for internal functions, null for user functions (file tracking not yet implemented).
 pub fn reflection_function_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
 
-    // Check if it's an internal function
-    if !vm.context.user_functions.contains_key(&func_sym) {
-        return Ok(vm.arena.alloc(Val::Bool(false)));
+    // Check user-defined functions
+    if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+        if let Some(file_path) = &user_func.chunk.file_path {
+            return Ok(vm.arena.alloc(Val::String(Rc::new(file_path.as_bytes().to_vec()))));
+        }
     }
 
-    // NOTE: File tracking for functions requires:
-    // 1. Add file_name: Option<PathBuf> to function metadata
-    // 2. Pass file path through parser when compiling functions
-    // 3. Store in user_functions map
-    Ok(vm.arena.alloc(Val::Null))
+    // Internal functions return false
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
+/// ReflectionFunction::getStartLine(): int|false
+pub fn reflection_function_get_start_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let func_sym = get_reflection_function_name(vm)?;
+
+    if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+        if let Some(start_line) = user_func.start_line {
+            return Ok(vm.arena.alloc(Val::Int(start_line as i64)));
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
+/// ReflectionFunction::getEndLine(): int|false
+pub fn reflection_function_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let func_sym = get_reflection_function_name(vm)?;
+
+    if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
+        if let Some(end_line) = user_func.end_line {
+            return Ok(vm.arena.alloc(Val::Int(end_line as i64)));
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 //=============================================================================
@@ -3754,6 +3844,57 @@ pub fn reflection_method_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<
     }
 
     Ok(vm.arena.alloc(Val::Int(modifiers)))
+}
+
+/// ReflectionMethod::getFileName(): string|false
+pub fn reflection_method_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let data = get_reflection_method_data(vm)?;
+
+    // Check user-defined methods
+    if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+        if let Some(method) = class_def.methods.get(&data.method_name) {
+            if let Some(file_path) = &method.func.chunk.file_path {
+                return Ok(vm.arena.alloc(Val::String(Rc::new(file_path.as_bytes().to_vec()))));
+            }
+        }
+    }
+
+    // Check native methods (internal methods return false)
+    if vm.context.native_methods.contains_key(&(data.class_name, data.method_name)) {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
+/// ReflectionMethod::getStartLine(): int|false
+pub fn reflection_method_get_start_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let data = get_reflection_method_data(vm)?;
+
+    if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+        if let Some(method) = class_def.methods.get(&data.method_name) {
+            if let Some(start_line) = method.func.start_line {
+                return Ok(vm.arena.alloc(Val::Int(start_line as i64)));
+            }
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
+/// ReflectionMethod::getEndLine(): int|false
+pub fn reflection_method_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    let data = get_reflection_method_data(vm)?;
+
+    if let Some(class_def) = vm.context.classes.get(&data.class_name) {
+        if let Some(method) = class_def.methods.get(&data.method_name) {
+            if let Some(end_line) = method.func.end_line {
+                return Ok(vm.arena.alloc(Val::Int(end_line as i64)));
+            }
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionMethod::getAttributes(): array
@@ -7956,6 +8097,15 @@ impl Extension for ReflectionExtension {
             },
         );
 
+        reflection_function_abstract_methods.insert(
+            b"getFileName".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_function_abstract_get_file_name,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
         registry.register_class(NativeClassDef {
             name: b"ReflectionFunctionAbstract".to_vec(),
             parent: None,
@@ -7965,9 +8115,10 @@ impl Extension for ReflectionExtension {
             interfaces: vec![],
             methods: reflection_function_abstract_methods,
             constants: HashMap::new(),
-            constructor: None, // Abstract class - cannot be instantiated
+            constructor: None,
             extension_name: None,
         });
+
 
         // Register Reflection (static utility class)
         let mut reflection_methods = HashMap::new();
@@ -8207,6 +8358,33 @@ impl Extension for ReflectionExtension {
             b"invokeArgs".to_vec(),
             NativeMethodEntry {
                 handler: reflection_method_invoke_args,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
+        reflection_method_methods.insert(
+            b"getFileName".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_get_file_name,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
+        reflection_method_methods.insert(
+            b"getStartLine".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_get_start_line,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
+        reflection_method_methods.insert(
+            b"getEndLine".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_method_get_end_line,
                 visibility: Visibility::Public,
                 is_static: false, is_final: false,
             },
@@ -8608,6 +8786,24 @@ impl Extension for ReflectionExtension {
             b"getFileName".to_vec(),
             NativeMethodEntry {
                 handler: reflection_function_get_file_name,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
+        reflection_function_methods.insert(
+            b"getStartLine".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_function_get_start_line,
+                visibility: Visibility::Public,
+                is_static: false, is_final: false,
+            },
+        );
+
+        reflection_function_methods.insert(
+            b"getEndLine".to_vec(),
+            NativeMethodEntry {
+                handler: reflection_function_get_end_line,
                 visibility: Visibility::Public,
                 is_static: false, is_final: false,
             },

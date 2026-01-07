@@ -322,7 +322,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             statements.push(self.parse_stmt());
         }
 
+        let mut end = self.current_token.span.end;
         if self.current_token.kind == TokenKind::CloseBrace {
+            end = self.current_token.span.end;
             self.bump();
         } else {
             self.errors.push(crate::parser::ast::ParseError {
@@ -330,8 +332,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 message: "Missing '}'",
             });
         }
-
-        let end = self.current_token.span.end;
 
         self.arena.alloc(Stmt::Block {
             statements: statements.into_bump_slice(),

@@ -265,6 +265,8 @@ impl<'src> Emitter<'src> {
                     params,
                     modifiers,
                     return_type,
+                    span,
+                    close_brace_span,
                     ..
                 } => {
                     let method_name_str = self.get_text(name.span);
@@ -345,6 +347,10 @@ impl<'src> Emitter<'src> {
 
                     let (method_chunk, is_generator) = method_emitter.compile(body);
 
+                    let start_line = span.line_info(self.source).map(|li| li.line as u32);
+                    let end_line = close_brace_span
+                        .and_then(|s| s.line_info(self.source).map(|li| li.line as u32));
+
                     // Convert return type
                     let ret_type = return_type.and_then(|rt| self.convert_type(rt));
 
@@ -356,6 +362,8 @@ impl<'src> Emitter<'src> {
                         is_generator,
                         statics: Rc::new(RefCell::new(HashMap::new())),
                         return_type: ret_type,
+                        start_line,
+                        end_line,
                     };
 
                     // Store in constants
@@ -930,6 +938,8 @@ impl<'src> Emitter<'src> {
                 body,
                 by_ref,
                 return_type,
+                span,
+                close_brace_span,
                 ..
             } => {
                 let func_name_str = self.get_text(name.span);
@@ -1000,6 +1010,10 @@ impl<'src> Emitter<'src> {
                 // Convert return type
                 let ret_type = return_type.and_then(|rt| self.convert_type(rt));
 
+                let start_line = span.line_info(self.source).map(|li| li.line as u32);
+                let end_line = close_brace_span
+                    .and_then(|s| s.line_info(self.source).map(|li| li.line as u32));
+
                 let user_func = UserFunc {
                     params: param_syms,
                     uses: Vec::new(),
@@ -1008,6 +1022,8 @@ impl<'src> Emitter<'src> {
                     is_generator,
                     statics: Rc::new(RefCell::new(HashMap::new())),
                     return_type: ret_type,
+                    start_line,
+                    end_line,
                 };
 
                 let func_res = Val::Resource(Rc::new(user_func));
@@ -2432,12 +2448,15 @@ impl<'src> Emitter<'src> {
                 }
             }
             Expr::Closure {
+                attributes,
                 params,
                 uses,
                 body,
                 by_ref,
                 is_static,
                 return_type,
+                span,
+                close_brace_span,
                 ..
             } => {
                 // 1. Collect param info
@@ -2525,6 +2544,10 @@ impl<'src> Emitter<'src> {
                 // Convert return type
                 let ret_type = return_type.and_then(|rt| self.convert_type(rt));
 
+                let start_line = span.line_info(self.source).map(|li| li.line as u32);
+                let end_line = close_brace_span
+                    .and_then(|s| s.line_info(self.source).map(|li| li.line as u32));
+
                 let user_func = UserFunc {
                     params: param_syms,
                     uses: use_syms.clone(),
@@ -2533,6 +2556,8 @@ impl<'src> Emitter<'src> {
                     is_generator,
                     statics: Rc::new(RefCell::new(HashMap::new())),
                     return_type: ret_type,
+                    start_line,
+                    end_line,
                 };
 
                 let func_res = Val::Resource(Rc::new(user_func));

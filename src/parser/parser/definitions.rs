@@ -799,19 +799,25 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             let return_type = self.parse_return_type();
 
             let mut has_body_flag = false;
+            let mut close_brace_span = None;
             let body = if self.current_token.kind == TokenKind::OpenBrace {
                 has_body_flag = true;
-                let body_stmt = self.parse_block();
-                match body_stmt {
-                    Stmt::Block { statements, .. } => *statements,
-                    _ => self.arena.alloc_slice_copy(&[body_stmt]) as &'ast [StmtId<'ast>],
+                let body_stmt_id = self.parse_block();
+                match body_stmt_id {
+                    Stmt::Block { statements, span } => {
+                        close_brace_span = Some(Span::new(span.end.saturating_sub(1), span.end));
+                        statements
+                    }
+                    _ => self.arena.alloc_slice_copy(&[body_stmt_id]) as &'ast [StmtId<'ast>],
                 }
             } else {
                 self.expect_semicolon();
                 &[] as &'ast [StmtId<'ast>]
             };
 
-            let end = if body.is_empty() {
+            let end = if let Some(span) = close_brace_span {
+                span.end
+            } else if body.is_empty() {
                 self.current_token.span.end
             } else {
                 body.last().unwrap().span().end
@@ -962,6 +968,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 return_type,
                 body,
                 doc_comment,
+                close_brace_span,
                 span: Span::new(start, end),
             }
         } else if self.current_token.kind == TokenKind::Const {
@@ -1711,13 +1718,21 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         };
 
         // Body
-        let body_stmt = self.parse_stmt(); // Should be a block
-        let body: &'ast [StmtId<'ast>] = match body_stmt {
-            Stmt::Block { statements, .. } => statements,
-            _ => self.arena.alloc_slice_copy(&[body_stmt]) as &'ast [StmtId<'ast>],
+        let body_stmt_id = self.parse_stmt(); // Should be a block
+        let (body, close_brace_span): (&'ast [StmtId<'ast>], Option<Span>) = match body_stmt_id {
+            Stmt::Block { statements, span } => (
+                statements,
+                Some(Span::new(span.end.saturating_sub(1), span.end)),
+            ),
+            _ => (
+                self.arena.alloc_slice_copy(&[body_stmt_id]) as &'ast [StmtId<'ast>],
+                None,
+            ),
         };
 
-        let end = self.current_token.span.end;
+        let end = close_brace_span
+            .map(|s| s.end)
+            .unwrap_or(self.current_token.span.end);
 
         self.arena.alloc(Stmt::Function {
             attributes,
@@ -1727,6 +1742,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             return_type,
             body,
             doc_comment,
+            close_brace_span,
             span: Span::new(start, end),
         })
     }

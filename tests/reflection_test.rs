@@ -1793,8 +1793,8 @@ fn test_reflection_function_get_file_name_user() {
     "#,
     );
 
-    // User functions return null (file tracking not yet implemented)
-    assert_eq!(result, Val::Null);
+    // User functions without path return false (consistent with ReflectionClass)
+    assert_eq!(result, Val::Bool(false));
 }
 
 // ReflectionParameter additional methods tests
@@ -2303,6 +2303,105 @@ return $rc->getStartLine() . ',' . $rc->getEndLine();
     );
 
     assert_eq!(result, Val::String(Rc::new(b"2,5".to_vec())));
+}
+
+#[test]
+fn test_reflection_function_get_file_name() {
+    use php_rs::compiler::emitter::Emitter;
+    use php_rs::runtime::context::{EngineBuilder, RequestContext};
+    use php_rs::vm::engine::VM;
+    use std::rc::Rc;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.php");
+    let file_path_str = file_path.to_string_lossy().into_owned();
+
+    let source = r#"<?php
+function test_func() {}
+$rf = new ReflectionFunction('test_func');
+return $rf->getFileName();
+"#;
+
+    let arena = bumpalo::Bump::new();
+    let lexer = php_rs::parser::lexer::Lexer::new(source.as_bytes());
+    let mut parser = php_rs::parser::parser::Parser::new(lexer, &arena);
+    let program = parser.parse_program();
+    assert!(program.errors.is_empty());
+
+    let context = EngineBuilder::new()
+        .with_core_extensions()
+        .build()
+        .expect("Failed to build engine");
+    let mut request_context = RequestContext::new(context);
+    let emitter = Emitter::new(source.as_bytes(), &mut request_context.interner)
+        .with_file_path(file_path_str.clone());
+    let (chunk, _) = emitter.compile(&program.statements);
+
+    let mut vm = VM::new_with_context(request_context);
+    vm.run(Rc::new(chunk)).expect("execution failed");
+
+    let value = match vm.last_return_value {
+        Some(handle) => vm.arena.get(handle).value.clone(),
+        None => php_rs::core::value::Val::Null,
+    };
+
+    assert_eq!(value, php_rs::core::value::Val::String(Rc::new(file_path_str.into_bytes())));
+}
+
+#[test]
+fn test_reflection_function_get_lines() {
+    use php_rs::compiler::emitter::Emitter;
+    use php_rs::runtime::context::{EngineBuilder, RequestContext};
+    use php_rs::vm::engine::VM;
+    use std::rc::Rc;
+
+    let source = r#"<?php
+function test_lines() {
+    echo 1;
+}
+$rf = new ReflectionFunction('test_lines');
+return $rf->getStartLine() . ',' . $rf->getEndLine();
+"#;
+
+    let arena = bumpalo::Bump::new();
+    let lexer = php_rs::parser::lexer::Lexer::new(source.as_bytes());
+    let mut parser = php_rs::parser::parser::Parser::new(lexer, &arena);
+    let program = parser.parse_program();
+    assert!(program.errors.is_empty());
+
+    let context = EngineBuilder::new()
+        .with_core_extensions()
+        .build()
+        .expect("Failed to build engine");
+    let mut request_context = RequestContext::new(context);
+    let emitter = Emitter::new(source.as_bytes(), &mut request_context.interner);
+    let (chunk, _) = emitter.compile(&program.statements);
+
+    let mut vm = VM::new_with_context(request_context);
+    vm.run(Rc::new(chunk)).expect("execution failed");
+
+    let value = match vm.last_return_value {
+        Some(handle) => vm.arena.get(handle).value.clone(),
+        None => php_rs::core::value::Val::Null,
+    };
+
+    assert_eq!(value, php_rs::core::value::Val::String(Rc::new(b"2,4".to_vec())));
+}
+
+#[test]
+fn test_reflection_method_get_lines() {
+    let result = run_php(r#"<?php
+class TestLines {
+    public function foo() {
+        echo 1;
+    }
+}
+$rm = new ReflectionMethod('TestLines', 'foo');
+return $rm->getStartLine() . ',' . $rm->getEndLine();
+"#);
+
+    assert_eq!(result, Val::String(Rc::new(b"3,5".to_vec())));
 }
 
 #[test]

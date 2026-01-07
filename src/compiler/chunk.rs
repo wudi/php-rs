@@ -14,6 +14,8 @@ pub struct UserFunc {
     pub is_generator: bool,
     pub statics: Rc<RefCell<HashMap<Symbol, Handle>>>,
     pub return_type: Option<ReturnType>,
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

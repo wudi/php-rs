@@ -62,6 +62,8 @@ fn recv_variadic_counts_args() {
         is_generator: false,
         statics: Rc::new(RefCell::new(HashMap::new())),
         return_type: None,
+        start_line: None,
+        end_line: None,
     };
 
     // Main chunk: call varcnt(1, 2, 3)
@@ -151,6 +153,8 @@ fn send_unpack_passes_array_elements() {
         is_generator: false,
         statics: Rc::new(RefCell::new(HashMap::new())),
         return_type: None,
+        start_line: None,
+        end_line: None,
     };
 
     // Main chunk builds $arr = [1,2,3]; sum3(...$arr);
