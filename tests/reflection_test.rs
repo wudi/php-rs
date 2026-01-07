@@ -174,6 +174,61 @@ fn test_reflection_class_new_instance_non_public_constructor_throws() {
 }
 
 #[test]
+fn test_reflection_class_new_instance_args_calls_constructor() {
+    let (result, vm) = run_code_with_vm(r#"<?php
+        class ArgsCtor {
+            public int $a = 0;
+            public int $b = 0;
+            public function __construct(int $a, int $b) {
+                $this->a = $a;
+                $this->b = $b;
+            }
+        }
+        $rc = new ReflectionClass('ArgsCtor');
+        $obj = $rc->newInstanceArgs([1 => 7, 0 => 3]);
+        return [$obj instanceof ArgsCtor, $obj->a, $obj->b];
+    "#).unwrap();
+
+    assert_eq!(get_array_idx(&vm, &result, 0), Val::Bool(true));
+    assert_eq!(get_array_idx(&vm, &result, 1), Val::Int(7));
+    assert_eq!(get_array_idx(&vm, &result, 2), Val::Int(3));
+}
+
+#[test]
+fn test_reflection_class_new_instance_args_no_constructor_with_args_throws() {
+    let result = run_code_with_vm(r#"<?php
+        class NoCtorArgs {}
+        $rc = new ReflectionClass('NoCtorArgs');
+        $rc->newInstanceArgs([1]);
+    "#);
+    match result {
+        Err(VmError::RuntimeError(msg)) => {
+            assert!(
+                msg.contains("Class NoCtorArgs does not have a constructor, so you cannot pass any constructor arguments"),
+                "unexpected error: {msg}"
+            );
+        }
+        Err(other) => panic!("Expected RuntimeError, got {:?}", other),
+        Ok(_) => panic!("Expected error, got Ok"),
+    }
+}
+
+#[test]
+fn test_reflection_class_new_instance_args_zero_args_uses_empty_list() {
+    let (result, vm) = run_code_with_vm(r#"<?php
+        class ZeroArgs {
+            public int $value = 11;
+        }
+        $rc = new ReflectionClass('ZeroArgs');
+        $obj = $rc->newInstanceArgs();
+        return [$obj instanceof ZeroArgs, $obj->value];
+    "#).unwrap();
+
+    assert_eq!(get_array_idx(&vm, &result, 0), Val::Bool(true));
+    assert_eq!(get_array_idx(&vm, &result, 1), Val::Int(11));
+}
+
+#[test]
 fn test_reflection_class_is_subclass_of_multilevel_and_interfaces() {
     let (result, vm) = run_code_with_vm(r#"<?php
         interface BaseInterface {}

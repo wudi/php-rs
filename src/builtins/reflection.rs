@@ -812,9 +812,12 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
 }
 
 /// ReflectionClass::newInstance(...$args): object
-pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
-    let class_name = get_reflection_class_name(vm)?;
-    let class_def = get_class_def(vm, class_name)?;
+fn reflection_class_new_instance_impl(
+    vm: &mut VM,
+    class_name: Symbol,
+    class_def: &ClassDef,
+    args: &[Handle],
+) -> Result<Handle, String> {
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
 
     if class_def.is_abstract && !class_def.is_interface {
@@ -898,16 +901,38 @@ pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Han
     Ok(obj_handle)
 }
 
+pub fn reflection_class_new_instance(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    reflection_class_new_instance_impl(vm, class_name, &class_def, args)
+}
+
 /// ReflectionClass::newInstanceArgs(array $args): object
 pub fn reflection_class_new_instance_args(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
-    if args.is_empty() {
-        return Err("ReflectionClass::newInstanceArgs() expects exactly 1 argument, 0 given".to_string());
+    if args.len() > 1 {
+        return Err(format!(
+            "ReflectionClass::newInstanceArgs() expects at most 1 argument, {} given",
+            args.len()
+        ));
     }
-    // NOTE: Implementation similar to newInstance but:
-    // 1. Extract array argument and convert to Vec<Handle>
-    // 2. Pass unpacked args to constructor
-    // See PHP's reflection_class_new_instance_args in ext/reflection/php_reflection.c
-    Ok(vm.arena.alloc(Val::Null))
+
+    let arg_values = if let Some(arg) = args.first() {
+        match &vm.arena.get(*arg).value {
+            Val::Array(arr) => arr.map.values().copied().collect(),
+            _ => {
+                return Err(format!(
+                    "ReflectionClass::newInstanceArgs() expects parameter 1 to be array, {} given",
+                    vm.get_type_name(*arg)
+                ));
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    let class_name = get_reflection_class_name(vm)?;
+    let class_def = get_class_def(vm, class_name)?;
+    reflection_class_new_instance_impl(vm, class_name, &class_def, &arg_values)
 }
 
 /// ReflectionClass::newInstanceWithoutConstructor(): object
