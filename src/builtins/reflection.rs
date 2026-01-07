@@ -35,11 +35,14 @@ impl UnifiedParam {
             default_value: param.default_value.clone(),
         }
     }
-    
+
     fn from_func_param(param: &crate::compiler::chunk::FuncParam) -> Self {
         Self {
             name: param.name,
-            type_hint: param.param_type.as_ref().map(|rt| convert_return_type_to_type_hint(rt)),
+            type_hint: param
+                .param_type
+                .as_ref()
+                .map(|rt| convert_return_type_to_type_hint(rt)),
             is_reference: param.by_ref,
             is_variadic: param.is_variadic,
             default_value: param.default_value.clone(),
@@ -72,7 +75,10 @@ fn convert_return_type_to_type_hint(rt: &crate::compiler::chunk::ReturnType) -> 
         }
         ReturnType::Nullable(inner) => {
             // Represent as Union with Null
-            TypeHint::Union(vec![convert_return_type_to_type_hint(inner), TypeHint::Null])
+            TypeHint::Union(vec![
+                convert_return_type_to_type_hint(inner),
+                TypeHint::Null,
+            ])
         }
         ReturnType::Static | ReturnType::True | ReturnType::False => TypeHint::Mixed,
     }
@@ -169,19 +175,13 @@ fn build_reflection_attribute(
 
     let mut properties = indexmap::IndexMap::new();
     let name_bytes = lookup_symbol(vm, attr.name).to_vec();
-    properties.insert(
-        name_sym,
-        vm.arena.alloc(Val::String(Rc::new(name_bytes))),
-    );
+    properties.insert(name_sym, vm.arena.alloc(Val::String(Rc::new(name_bytes))));
     properties.insert(
         arguments_sym,
         vm.arena.alloc(Val::Array(Rc::new(args_array))),
     );
     properties.insert(target_sym, vm.arena.alloc(Val::Int(attr.target as i64)));
-    properties.insert(
-        is_repeated_sym,
-        vm.arena.alloc(Val::Bool(is_repeated)),
-    );
+    properties.insert(is_repeated_sym, vm.arena.alloc(Val::Bool(is_repeated)));
 
     let obj_data = ObjectData {
         class: reflection_attr_sym,
@@ -278,9 +278,7 @@ fn apply_attribute_filters(
     let name_lower: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
     Ok(attrs
         .iter()
-        .filter(|attr| {
-            lookup_symbol(vm, attr.lc_name).eq(name_lower.as_slice())
-        })
+        .filter(|attr| lookup_symbol(vm, attr.lc_name).eq(name_lower.as_slice()))
         .cloned()
         .collect())
 }
@@ -304,13 +302,13 @@ fn get_reflection_method_data(vm: &mut VM) -> Result<ReflectionMethodData, Strin
 
     let class_sym = vm.context.interner.intern(b"class");
     let method_sym = vm.context.interner.intern(b"method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionMethod object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         let class_name = if let Some(&h) = obj_data.properties.get(&class_sym) {
             if let Val::String(s) = &vm.arena.get(h).value {
@@ -334,7 +332,10 @@ fn get_reflection_method_data(vm: &mut VM) -> Result<ReflectionMethodData, Strin
             return Err("Missing method property".to_string());
         };
 
-        return Ok(ReflectionMethodData { class_name, method_name });
+        return Ok(ReflectionMethodData {
+            class_name,
+            method_name,
+        });
     }
 
     Err("Failed to retrieve ReflectionMethod data".to_string())
@@ -361,15 +362,19 @@ fn type_hint_to_string(vm: &VM, type_hint: &Option<TypeHint>) -> String {
         Some(TypeHint::Void) => "void".to_string(),
         Some(TypeHint::Never) => "never".to_string(),
         Some(TypeHint::Null) => "null".to_string(),
-        Some(TypeHint::Class(sym)) => {
-            String::from_utf8_lossy(lookup_symbol(vm, *sym)).to_string()
-        }
+        Some(TypeHint::Class(sym)) => String::from_utf8_lossy(lookup_symbol(vm, *sym)).to_string(),
         Some(TypeHint::Union(types)) => {
-            let parts: Vec<String> = types.iter().map(|t| type_hint_to_string(vm, &Some(t.clone()))).collect();
+            let parts: Vec<String> = types
+                .iter()
+                .map(|t| type_hint_to_string(vm, &Some(t.clone())))
+                .collect();
             parts.join("|")
         }
         Some(TypeHint::Intersection(types)) => {
-            let parts: Vec<String> = types.iter().map(|t| type_hint_to_string(vm, &Some(t.clone()))).collect();
+            let parts: Vec<String> = types
+                .iter()
+                .map(|t| type_hint_to_string(vm, &Some(t.clone())))
+                .collect();
             parts.join("&")
         }
     }
@@ -382,7 +387,9 @@ fn type_hint_to_string(vm: &VM, type_hint: &Option<TypeHint>) -> String {
 /// ReflectionClass::__construct(string|object $objectOrClass)
 pub fn reflection_class_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::__construct() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::__construct() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -392,7 +399,7 @@ pub fn reflection_class_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle
         .ok_or("ReflectionClass::__construct() called outside object context")?;
 
     let arg_val = vm.arena.get(args[0]).value.clone();
-    
+
     let class_name_sym = match arg_val {
         Val::String(ref s) => {
             // Class name as string
@@ -407,7 +414,10 @@ pub fn reflection_class_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle
             }
         }
         _ => {
-            return Err("ReflectionClass::__construct() expects parameter 1 to be string or object".to_string());
+            return Err(
+                "ReflectionClass::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            );
         }
     };
 
@@ -423,12 +433,12 @@ pub fn reflection_class_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle
     } else {
         return Err("Invalid ReflectionClass object".to_string());
     };
-    
+
     // Store as a property called "name"
     let name_sym = vm.context.interner.intern(b"name");
     let class_name_bytes = lookup_symbol(vm, class_name_sym).to_vec();
     let name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes)));
-    
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, name_handle);
     }
@@ -445,13 +455,13 @@ pub fn reflection_class_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle
         .ok_or("ReflectionClass::getName() called outside object context")?;
 
     let name_sym = vm.context.interner.intern(b"name");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionClass object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             return Ok(name_handle);
@@ -501,7 +511,7 @@ pub fn reflection_class_is_enum(vm: &mut VM, _args: &[Handle]) -> Result<Handle,
 pub fn reflection_class_is_instantiable(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // Cannot instantiate if abstract or interface or trait
     let instantiable = !class_def.is_abstract && !class_def.is_interface && !class_def.is_trait;
     Ok(vm.arena.alloc(Val::Bool(instantiable)))
@@ -515,59 +525,73 @@ pub fn reflection_class_has_method(vm: &mut VM, args: &[Handle]) -> Result<Handl
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let method_name_val = vm.arena.get(args[0]).value.clone();
     let method_name_bytes = match method_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::hasMethod() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err("ReflectionClass::hasMethod() expects parameter 1 to be string".to_string());
+        }
     };
-    
+
     let method_sym = vm.context.interner.intern(method_name_bytes);
     let has_method = class_def.methods.contains_key(&method_sym);
-    
+
     Ok(vm.arena.alloc(Val::Bool(has_method)))
 }
 
 /// ReflectionClass::hasProperty(string $name): bool
 pub fn reflection_class_has_property(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::hasProperty() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::hasProperty() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let prop_name_val = vm.arena.get(args[0]).value.clone();
     let prop_name_bytes = match prop_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::hasProperty() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::hasProperty() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
-    
+
     let prop_sym = vm.context.interner.intern(prop_name_bytes);
-    let has_property = class_def.properties.contains_key(&prop_sym) || 
-                       class_def.static_properties.contains_key(&prop_sym);
-    
+    let has_property = class_def.properties.contains_key(&prop_sym)
+        || class_def.static_properties.contains_key(&prop_sym);
+
     Ok(vm.arena.alloc(Val::Bool(has_property)))
 }
 
 /// ReflectionClass::hasConstant(string $name): bool
 pub fn reflection_class_has_constant(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::hasConstant() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::hasConstant() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let const_name_val = vm.arena.get(args[0]).value.clone();
     let const_name_bytes = match const_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::hasConstant() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::hasConstant() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
-    
+
     let const_sym = vm.context.interner.intern(const_name_bytes);
     let has_constant = class_def.constants.contains_key(&const_sym);
-    
+
     Ok(vm.arena.alloc(Val::Bool(has_constant)))
 }
 
@@ -575,14 +599,14 @@ pub fn reflection_class_has_constant(vm: &mut VM, args: &[Handle]) -> Result<Han
 pub fn reflection_class_get_methods(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for (method_name_sym, _method_entry) in &class_def.methods {
         let method_name_bytes = lookup_symbol(vm, *method_name_sym).to_vec();
         result.push(vm.arena.alloc(Val::String(Rc::new(method_name_bytes))));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -590,14 +614,14 @@ pub fn reflection_class_get_methods(vm: &mut VM, _args: &[Handle]) -> Result<Han
 pub fn reflection_class_get_properties(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for (prop_name_sym, _prop_entry) in &class_def.properties {
         let prop_name_bytes = lookup_symbol(vm, *prop_name_sym).to_vec();
         result.push(vm.arena.alloc(Val::String(Rc::new(prop_name_bytes))));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -605,35 +629,41 @@ pub fn reflection_class_get_properties(vm: &mut VM, _args: &[Handle]) -> Result<
 pub fn reflection_class_get_constants(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for (const_name_sym, (const_val, _visibility)) in &class_def.constants {
         let const_name_bytes = lookup_symbol(vm, *const_name_sym).to_vec();
         let key = ArrayKey::Str(Rc::new(const_name_bytes));
         result.insert(key, vm.arena.alloc(const_val.clone()));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionClass::getConstant(string $name): mixed
 pub fn reflection_class_get_constant(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::getConstant() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::getConstant() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let const_name_val = vm.arena.get(args[0]).value.clone();
     let const_name_bytes = match const_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::getConstant() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::getConstant() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
-    
+
     let const_sym = vm.context.interner.intern(const_name_bytes);
-    
+
     if let Some((const_val, _visibility)) = class_def.constants.get(&const_sym) {
         Ok(vm.arena.alloc(const_val.clone()))
     } else {
@@ -645,7 +675,7 @@ pub fn reflection_class_get_constant(vm: &mut VM, args: &[Handle]) -> Result<Han
 pub fn reflection_class_get_parent_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     if let Some(parent_sym) = class_def.parent {
         let parent_name = lookup_symbol(vm, parent_sym).to_vec();
         create_object_with_properties(
@@ -659,29 +689,38 @@ pub fn reflection_class_get_parent_class(vm: &mut VM, _args: &[Handle]) -> Resul
 }
 
 /// ReflectionClass::getInterfaceNames(): array
-pub fn reflection_class_get_interface_names(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_interface_names(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for interface_sym in &class_def.interfaces {
         let interface_name = lookup_symbol(vm, *interface_sym).to_vec();
         result.push(vm.arena.alloc(Val::String(Rc::new(interface_name))));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionClass::implementsInterface(ReflectionClass|string $interface): bool
-pub fn reflection_class_implements_interface(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_implements_interface(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::implementsInterface() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::implementsInterface() expects exactly 1 argument, 0 given"
+                .to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let interface_name_val = vm.arena.get(args[0]).value.clone();
     let interface_name_bytes: Vec<u8> = match interface_name_val {
         Val::String(ref s) => s.as_ref().to_vec(),
@@ -705,18 +744,21 @@ pub fn reflection_class_implements_interface(vm: &mut VM, args: &[Handle]) -> Re
         }
         _ => return Err("ReflectionClass::implementsInterface() expects parameter 1 to be string or ReflectionClass".to_string()),
     };
-    
+
     let interface_sym = vm.context.interner.intern(&interface_name_bytes);
     let implements = class_def.interfaces.contains(&interface_sym);
-    
+
     Ok(vm.arena.alloc(Val::Bool(implements)))
 }
 
 /// ReflectionClass::getNamespaceName(): string
-pub fn reflection_class_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_namespace_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
-    
+
     // Find last backslash to extract namespace
     if let Some(pos) = class_name_bytes.iter().rposition(|&b| b == b'\\') {
         let namespace = &class_name_bytes[..pos];
@@ -730,13 +772,15 @@ pub fn reflection_class_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Res
 pub fn reflection_class_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
-    
+
     // Find last backslash to extract short name
     if let Some(pos) = class_name_bytes.iter().rposition(|&b| b == b'\\') {
         let short_name = &class_name_bytes[pos + 1..];
         Ok(vm.arena.alloc(Val::String(Rc::new(short_name.to_vec()))))
     } else {
-        Ok(vm.arena.alloc(Val::String(Rc::new(class_name_bytes.to_vec()))))
+        Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(class_name_bytes.to_vec()))))
     }
 }
 
@@ -744,7 +788,7 @@ pub fn reflection_class_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<
 pub fn reflection_class_in_namespace(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
-    
+
     let has_namespace = class_name_bytes.iter().any(|&b| b == b'\\');
     Ok(vm.arena.alloc(Val::Bool(has_namespace)))
 }
@@ -754,7 +798,7 @@ pub fn reflection_class_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handl
     let class_name = get_reflection_class_name(vm)?;
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     let class_name_str = String::from_utf8_lossy(&class_name_bytes);
-    
+
     let output = format!("Class [ <user> class {} ] {{\n}}\n", class_name_str);
     Ok(vm.arena.alloc(Val::String(Rc::new(output.into_bytes()))))
 }
@@ -763,15 +807,15 @@ pub fn reflection_class_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handl
 pub fn reflection_class_get_constructor(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let constructor_sym = vm.context.interner.intern(b"__construct");
-    
+
     // Check if constructor exists
     if class_def.methods.contains_key(&constructor_sym) {
         // Create ReflectionMethod object with properties
         let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
         let method_name_bytes = b"__construct".to_vec();
-        
+
         create_object_with_properties(
             vm,
             b"ReflectionMethod",
@@ -793,27 +837,32 @@ pub fn reflection_class_get_method(vm: &mut VM, args: &[Handle]) -> Result<Handl
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let method_name_val = vm.arena.get(args[0]).value.clone();
     let method_name_bytes = match method_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::getMethod() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err("ReflectionClass::getMethod() expects parameter 1 to be string".to_string());
+        }
     };
-    
+
     // Method names are case-insensitive in PHP, stored lowercased
-    let method_name_lower: Vec<u8> = method_name_bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let method_name_lower: Vec<u8> = method_name_bytes
+        .iter()
+        .map(|b| b.to_ascii_lowercase())
+        .collect();
     let method_sym = vm.context.interner.intern(&method_name_lower);
-    
+
     // Check if method exists
     if !class_def.methods.contains_key(&method_sym) {
         let method_name_str = String::from_utf8_lossy(method_name_bytes);
         return Err(format!("Method {}() does not exist", method_name_str));
     }
-    
+
     // Create ReflectionMethod object with properties
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     let method_name_bytes_owned = method_name_bytes.to_vec();
-    
+
     create_object_with_properties(
         vm,
         b"ReflectionMethod",
@@ -827,33 +876,39 @@ pub fn reflection_class_get_method(vm: &mut VM, args: &[Handle]) -> Result<Handl
 /// ReflectionClass::getProperty(string $name): ReflectionProperty
 pub fn reflection_class_get_property(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::getProperty() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::getProperty() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let property_name_val = vm.arena.get(args[0]).value.clone();
     let property_name_bytes = match property_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::getProperty() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::getProperty() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
-    
+
     let property_sym = vm.context.interner.intern(property_name_bytes);
-    
+
     // Check if property exists (in static_properties or instance properties via lookup)
-    let exists = class_def.static_properties.contains_key(&property_sym) ||
-                 vm.lookup_property(class_name, property_sym).is_some();
-    
+    let exists = class_def.static_properties.contains_key(&property_sym)
+        || vm.lookup_property(class_name, property_sym).is_some();
+
     if !exists {
         let property_name_str = String::from_utf8_lossy(property_name_bytes);
         return Err(format!("Property {} does not exist", property_name_str));
     }
-    
+
     // Create ReflectionProperty object with properties
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     let property_name_bytes_owned = property_name_bytes.to_vec();
-    
+
     create_object_with_properties(
         vm,
         b"ReflectionProperty",
@@ -868,60 +923,64 @@ pub fn reflection_class_get_property(vm: &mut VM, args: &[Handle]) -> Result<Han
 pub fn reflection_class_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut modifiers = 0;
-    
+
     // These constants match PHP's ReflectionClass constants
     const IS_EXPLICIT_ABSTRACT: i64 = 64;
     const IS_FINAL: i64 = 32;
-    
+
     if class_def.is_abstract {
         modifiers |= IS_EXPLICIT_ABSTRACT;
     }
     if class_def.is_final {
         modifiers |= IS_FINAL;
     }
-    
+
     Ok(vm.arena.alloc(Val::Int(modifiers)))
 }
 
 /// ReflectionClass::isInstance(object $object): bool
 pub fn reflection_class_is_instance(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::isInstance() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::isInstance() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
-    
+
     let obj_val = vm.arena.get(args[0]).value.clone();
-    
+
     // Check if argument is an object
     let obj_handle = match obj_val {
         Val::Object(h) => h,
         _ => return Ok(vm.arena.alloc(Val::Bool(false))),
     };
-    
+
     // Get the object's class
     let obj_class_sym = if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_handle).value {
         obj_data.class
     } else {
         return Ok(vm.arena.alloc(Val::Bool(false)));
     };
-    
+
     let is_instance = vm.is_instance_of_class(obj_class_sym, class_name);
-    
+
     Ok(vm.arena.alloc(Val::Bool(is_instance)))
 }
 
 /// ReflectionClass::isSubclassOf(ReflectionClass|string $class): bool
 pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::isSubclassOf() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::isSubclassOf() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let _ = get_class_def(vm, class_name)?;
-    
+
     let parent_name_val = vm.arena.get(args[0]).value.clone();
     let parent_name_bytes: Vec<u8> = match parent_name_val {
         Val::String(ref s) => s.as_ref().to_vec(),
@@ -943,9 +1002,12 @@ pub fn reflection_class_is_subclass_of(vm: &mut VM, args: &[Handle]) -> Result<H
                 return Err("Invalid ReflectionClass object".to_string());
             }
         }
-        _ => return Err("ReflectionClass::isSubclassOf() expects parameter 1 to be string or ReflectionClass".to_string()),
+        _ => return Err(
+            "ReflectionClass::isSubclassOf() expects parameter 1 to be string or ReflectionClass"
+                .to_string(),
+        ),
     };
-    
+
     let parent_sym = vm.context.interner.intern(&parent_name_bytes);
 
     if class_name == parent_sym {
@@ -1131,7 +1193,10 @@ pub fn reflection_class_new_instance_args(vm: &mut VM, args: &[Handle]) -> Resul
 }
 
 /// ReflectionClass::newInstanceWithoutConstructor(): object
-pub fn reflection_class_new_instance_without_constructor(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_new_instance_without_constructor(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
     reflection_class_new_instance_without_constructor_impl(vm, class_name, &class_def)
@@ -1141,11 +1206,12 @@ pub fn reflection_class_new_instance_without_constructor(vm: &mut VM, _args: &[H
 pub fn reflection_class_is_anonymous(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_name_bytes = lookup_symbol(vm, class_name);
-    
+
     // Anonymous classes typically contain "class@anonymous" in their name
-    let is_anon = class_name_bytes.windows(b"@anonymous".len())
+    let is_anon = class_name_bytes
+        .windows(b"@anonymous".len())
         .any(|w| w == b"@anonymous");
-    
+
     Ok(vm.arena.alloc(Val::Bool(is_anon)))
 }
 
@@ -1153,12 +1219,10 @@ pub fn reflection_class_is_anonymous(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 pub fn reflection_class_is_cloneable(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // Class is cloneable if not abstract/interface/trait
-    let is_cloneable = !class_def.is_abstract && 
-                       !class_def.is_interface &&
-                       !class_def.is_trait;
-    
+    let is_cloneable = !class_def.is_abstract && !class_def.is_interface && !class_def.is_trait;
+
     Ok(vm.arena.alloc(Val::Bool(is_cloneable)))
 }
 
@@ -1167,7 +1231,7 @@ pub fn reflection_class_is_internal(vm: &mut VM, _args: &[Handle]) -> Result<Han
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
     let is_internal = class_def.is_internal;
-    
+
     Ok(vm.arena.alloc(Val::Bool(is_internal)))
 }
 
@@ -1176,7 +1240,7 @@ pub fn reflection_class_is_user_defined(vm: &mut VM, _args: &[Handle]) -> Result
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
     let is_user_defined = !class_def.is_internal;
-    
+
     Ok(vm.arena.alloc(Val::Bool(is_user_defined)))
 }
 
@@ -1184,16 +1248,16 @@ pub fn reflection_class_is_user_defined(vm: &mut VM, _args: &[Handle]) -> Result
 pub fn reflection_class_is_iterable(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // Check if class implements Traversable, Iterator, or IteratorAggregate
     let traversable_sym = vm.context.interner.intern(b"Traversable");
     let iterator_sym = vm.context.interner.intern(b"Iterator");
     let iterator_aggregate_sym = vm.context.interner.intern(b"IteratorAggregate");
-    
-    let is_iterable = class_def.interfaces.contains(&traversable_sym) ||
-                      class_def.interfaces.contains(&iterator_sym) ||
-                      class_def.interfaces.contains(&iterator_aggregate_sym);
-    
+
+    let is_iterable = class_def.interfaces.contains(&traversable_sym)
+        || class_def.interfaces.contains(&iterator_sym)
+        || class_def.interfaces.contains(&iterator_aggregate_sym);
+
     Ok(vm.arena.alloc(Val::Bool(is_iterable)))
 }
 
@@ -1205,21 +1269,24 @@ pub fn reflection_class_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<
 }
 
 /// ReflectionClass::getDefaultProperties(): array
-pub fn reflection_class_get_default_properties(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_default_properties(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     // Add static properties with their default values
     for (prop_sym, static_prop) in &class_def.static_properties {
         let prop_name_bytes = lookup_symbol(vm, *prop_sym).to_vec();
         let key = ArrayKey::Str(Rc::new(prop_name_bytes));
         result.insert(key, vm.arena.alloc(static_prop.value.clone()));
     }
-    
+
     // Instance properties don't have default values tracked
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -1287,9 +1354,9 @@ pub fn reflection_class_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 pub fn reflection_class_get_interfaces(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for interface_sym in &class_def.interfaces {
         let interface_name = lookup_symbol(vm, *interface_sym).to_vec();
         let key = ArrayKey::Str(Rc::new(interface_name.clone()));
@@ -1300,43 +1367,57 @@ pub fn reflection_class_get_interfaces(vm: &mut VM, _args: &[Handle]) -> Result<
         )?;
         result.insert(key, reflection_obj);
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionClass::getStaticProperties(): array
-pub fn reflection_class_get_static_properties(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_static_properties(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for (prop_sym, static_prop) in &class_def.static_properties {
         let prop_name_bytes = lookup_symbol(vm, *prop_sym).to_vec();
         let key = ArrayKey::Str(Rc::new(prop_name_bytes));
         result.insert(key, vm.arena.alloc(static_prop.value.clone()));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
 /// ReflectionClass::getStaticPropertyValue(string $name, mixed $default = null): mixed
-pub fn reflection_class_get_static_property_value(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_static_property_value(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::getStaticPropertyValue() expects at least 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::getStaticPropertyValue() expects at least 1 argument, 0 given"
+                .to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let prop_name_val = vm.arena.get(args[0]).value.clone();
     let prop_name_bytes = match prop_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::getStaticPropertyValue() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::getStaticPropertyValue() expects parameter 1 to be string"
+                    .to_string(),
+            );
+        }
     };
-    
+
     let prop_sym = vm.context.interner.intern(prop_name_bytes);
-    
+
     if let Some(static_prop) = class_def.static_properties.get(&prop_sym) {
         Ok(vm.arena.alloc(static_prop.value.clone()))
     } else {
@@ -1351,26 +1432,36 @@ pub fn reflection_class_get_static_property_value(vm: &mut VM, args: &[Handle]) 
 }
 
 /// ReflectionClass::setStaticPropertyValue(string $name, mixed $value): void
-pub fn reflection_class_set_static_property_value(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_set_static_property_value(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.len() < 2 {
-        return Err("ReflectionClass::setStaticPropertyValue() expects exactly 2 arguments".to_string());
+        return Err(
+            "ReflectionClass::setStaticPropertyValue() expects exactly 2 arguments".to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
-    
+
     // Extract and clone values before mutating
     let prop_name_val = vm.arena.get(args[0]).value.clone();
     let prop_name_bytes = match prop_name_val {
         Val::String(ref s) => s.as_ref().to_vec(),
-        _ => return Err("ReflectionClass::setStaticPropertyValue() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::setStaticPropertyValue() expects parameter 1 to be string"
+                    .to_string(),
+            );
+        }
     };
-    
+
     let new_value = vm.arena.get(args[1]).value.clone();
     let prop_sym = vm.context.interner.intern(&prop_name_bytes);
-    
+
     // Now get mutable access to class_def
     let class_def = get_class_def_mut(vm, class_name)?;
-    
+
     if let Some(static_prop) = class_def.static_properties.get_mut(&prop_sym) {
         static_prop.value = new_value;
         Ok(vm.arena.alloc(Val::Null))
@@ -1384,14 +1475,14 @@ pub fn reflection_class_set_static_property_value(vm: &mut VM, args: &[Handle]) 
 pub fn reflection_class_get_trait_names(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for trait_sym in &class_def.traits {
         let trait_name = lookup_symbol(vm, *trait_sym).to_vec();
         result.push(vm.arena.alloc(Val::String(Rc::new(trait_name))));
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -1399,9 +1490,9 @@ pub fn reflection_class_get_trait_names(vm: &mut VM, _args: &[Handle]) -> Result
 pub fn reflection_class_get_traits(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let mut result = ArrayData::new();
-    
+
     for trait_sym in &class_def.traits {
         let trait_name = lookup_symbol(vm, *trait_sym).to_vec();
         let key = ArrayKey::Str(Rc::new(trait_name.clone()));
@@ -1412,7 +1503,7 @@ pub fn reflection_class_get_traits(vm: &mut VM, _args: &[Handle]) -> Result<Hand
         )?;
         result.insert(key, reflection_obj);
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -1433,7 +1524,10 @@ pub fn reflection_class_get_trait_aliases(vm: &mut VM, _args: &[Handle]) -> Resu
         let trait_sym = if let Some(trait_sym) = info.trait_name {
             Some(trait_sym)
         } else {
-            let method_lc = vm.context.interner.intern(&method_name_bytes.to_ascii_lowercase());
+            let method_lc = vm
+                .context
+                .interner
+                .intern(&method_name_bytes.to_ascii_lowercase());
             class_def.traits.iter().find_map(|trait_sym| {
                 let trait_def = vm.context.classes.get(trait_sym)?;
                 if trait_def.methods.contains_key(&method_lc) {
@@ -1449,7 +1543,8 @@ pub fn reflection_class_get_trait_aliases(vm: &mut VM, _args: &[Handle]) -> Resu
         };
 
         let trait_name_bytes = lookup_symbol(vm, trait_sym).to_vec();
-        let mut full_name = Vec::with_capacity(trait_name_bytes.len() + method_name_bytes.len() + 2);
+        let mut full_name =
+            Vec::with_capacity(trait_name_bytes.len() + method_name_bytes.len() + 2);
         full_name.extend_from_slice(&trait_name_bytes);
         full_name.extend_from_slice(b"::");
         full_name.extend_from_slice(&method_name_bytes);
@@ -1470,22 +1565,33 @@ pub fn reflection_class_is_readonly(vm: &mut VM, _args: &[Handle]) -> Result<Han
 }
 
 /// ReflectionClass::getReflectionConstant(string $name): ReflectionClassConstant|false
-pub fn reflection_class_get_reflection_constant(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_reflection_constant(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::getReflectionConstant() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::getReflectionConstant() expects exactly 1 argument, 0 given"
+                .to_string(),
+        );
     }
 
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let const_name_val = vm.arena.get(args[0]).value.clone();
     let const_name_bytes = match const_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionClass::getReflectionConstant() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClass::getReflectionConstant() expects parameter 1 to be string"
+                    .to_string(),
+            );
+        }
     };
-    
+
     let const_sym = vm.context.interner.intern(const_name_bytes);
-    
+
     if class_def.constants.contains_key(&const_sym) {
         let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
         create_object_with_properties(
@@ -1502,13 +1608,16 @@ pub fn reflection_class_get_reflection_constant(vm: &mut VM, args: &[Handle]) ->
 }
 
 /// ReflectionClass::getReflectionConstants(): array
-pub fn reflection_class_get_reflection_constants(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_reflection_constants(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
-    
+
     let mut result = ArrayData::new();
-    
+
     for (const_sym, _) in &class_def.constants {
         let const_name = lookup_symbol(vm, *const_sym).to_vec();
         let reflection_obj = create_object_with_properties(
@@ -1521,7 +1630,7 @@ pub fn reflection_class_get_reflection_constants(vm: &mut VM, _args: &[Handle]) 
         )?;
         result.push(reflection_obj);
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
 }
 
@@ -1543,7 +1652,10 @@ pub fn reflection_class_get_extension(vm: &mut VM, _args: &[Handle]) -> Result<H
 }
 
 /// ReflectionClass::getExtensionName(): string|false
-pub fn reflection_class_get_extension_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_extension_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
 
@@ -1562,7 +1674,10 @@ pub fn reflection_class_is_iterateable(vm: &mut VM, args: &[Handle]) -> Result<H
 }
 
 /// ReflectionClass::getLazyInitializer(object $object): ?Closure
-pub fn reflection_class_get_lazy_initializer(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_get_lazy_initializer(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Lazy object support (PHP 8.4+) requires:
     // 1. LazyObject internal type with initializer closure
     // 2. Flag in ObjectData: is_lazy_ghost or is_lazy_proxy
@@ -1573,9 +1688,15 @@ pub fn reflection_class_get_lazy_initializer(vm: &mut VM, _args: &[Handle]) -> R
 }
 
 /// ReflectionClass::initializeLazyObject(object $object): object
-pub fn reflection_class_initialize_lazy_object(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_initialize_lazy_object(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionClass::initializeLazyObject() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionClass::initializeLazyObject() expects exactly 1 argument, 0 given"
+                .to_string(),
+        );
     }
     // NOTE: Force initialization of lazy object by calling its initializer
     // Returns the initialized object (same reference, now fully populated)
@@ -1583,14 +1704,20 @@ pub fn reflection_class_initialize_lazy_object(vm: &mut VM, args: &[Handle]) -> 
 }
 
 /// ReflectionClass::isUninitializedLazyObject(object $object): bool
-pub fn reflection_class_is_uninitialized_lazy_object(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_is_uninitialized_lazy_object(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Check if object is lazy and hasn't been initialized yet
     // Would check ObjectData internal state: lazy_initialized flag
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionClass::markLazyObjectAsInitialized(object $object): void
-pub fn reflection_class_mark_lazy_object_as_initialized(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_mark_lazy_object_as_initialized(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Mark lazy object as initialized without calling initializer
     // Used for manual initialization bypass - sets internal flag
     Ok(vm.arena.alloc(Val::Null))
@@ -1619,7 +1746,10 @@ pub fn reflection_class_new_lazy_proxy(vm: &mut VM, _args: &[Handle]) -> Result<
 }
 
 /// ReflectionClass::resetAsLazyGhost(object $object, callable $initializer, int $options = 0): void
-pub fn reflection_class_reset_as_lazy_ghost(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_reset_as_lazy_ghost(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Convert existing object to lazy ghost:
     // 1. Clear object's current property values
     // 2. Store new initializer closure
@@ -1629,7 +1759,10 @@ pub fn reflection_class_reset_as_lazy_ghost(vm: &mut VM, _args: &[Handle]) -> Re
 }
 
 /// ReflectionClass::resetAsLazyProxy(object $object, callable $factory, int $options = 0): void
-pub fn reflection_class_reset_as_lazy_proxy(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_reset_as_lazy_proxy(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Convert existing object to lazy proxy:
     // 1. Clear object's current state
     // 2. Store factory closure
@@ -1645,7 +1778,9 @@ pub fn reflection_class_reset_as_lazy_proxy(vm: &mut VM, _args: &[Handle]) -> Re
 /// ReflectionObject is a specialized version of ReflectionClass for object instances
 pub fn reflection_object_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionObject::__construct() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionObject::__construct() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -1656,33 +1791,39 @@ pub fn reflection_object_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
 
     // Get the object argument
     let obj_val = vm.arena.get(args[0]).value.clone();
-    
+
     // Must be an object
     let obj_handle = match obj_val {
         Val::Object(h) => h,
-        _ => return Err("ReflectionObject::__construct() expects parameter 1 to be object".to_string()),
+        _ => {
+            return Err(
+                "ReflectionObject::__construct() expects parameter 1 to be object".to_string(),
+            );
+        }
     };
-    
+
     // Get the class name from the object
     let class_sym = if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_handle).value {
         obj_data.class
     } else {
         return Err("Invalid object".to_string());
     };
-    
+
     // Store both the class name and the object instance
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionObject object".to_string());
     };
-    
+
     let name_sym = vm.context.interner.intern(b"name");
     let object_sym = vm.context.interner.intern(b"object");
-    
+
     let class_name_bytes = lookup_symbol(vm, class_sym);
-    let name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
-    
+    let name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, name_handle);
         obj_data.properties.insert(object_sym, args[0]); // Store reference to original object
@@ -1699,7 +1840,9 @@ pub fn reflection_object_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
 /// ReflectionEnum extends ReflectionClass for enum introspection
 pub fn reflection_enum_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionEnum::__construct() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionEnum::__construct() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     // Delegate to ReflectionClass constructor logic
@@ -1710,11 +1853,9 @@ pub fn reflection_enum_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle,
         .ok_or("ReflectionEnum::__construct() called outside object context")?;
 
     let arg_val = vm.arena.get(args[0]).value.clone();
-    
+
     let class_sym = match arg_val {
-        Val::String(s) => {
-            vm.context.interner.intern(s.as_ref())
-        }
+        Val::String(s) => vm.context.interner.intern(s.as_ref()),
         Val::Object(obj_handle) => {
             if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_handle).value {
                 obj_data.class
@@ -1722,31 +1863,44 @@ pub fn reflection_enum_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle,
                 return Err("Invalid object".to_string());
             }
         }
-        _ => return Err("ReflectionEnum::__construct() expects parameter 1 to be string or object".to_string()),
+        _ => {
+            return Err(
+                "ReflectionEnum::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            );
+        }
     };
-    
+
     // Verify it's actually an enum
     if let Some(class_def) = vm.context.classes.get(&class_sym) {
         if !class_def.is_enum {
             let class_name = lookup_symbol(vm, class_sym);
-            return Err(format!("Class {} is not an enum", String::from_utf8_lossy(class_name)));
+            return Err(format!(
+                "Class {} is not an enum",
+                String::from_utf8_lossy(class_name)
+            ));
         }
     } else {
         let class_name = lookup_symbol(vm, class_sym);
-        return Err(format!("Enum {} does not exist", String::from_utf8_lossy(class_name)));
+        return Err(format!(
+            "Enum {} does not exist",
+            String::from_utf8_lossy(class_name)
+        ));
     }
-    
+
     // Store the class name
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionEnum object".to_string());
     };
-    
+
     let name_sym = vm.context.interner.intern(b"name");
     let class_name_bytes = lookup_symbol(vm, class_sym);
-    let name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
-    
+    let name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, name_handle);
     }
@@ -1759,12 +1913,14 @@ pub fn reflection_enum_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle,
 pub fn reflection_enum_is_backed(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // NOTE: Proper backing type detection requires:\n    // 1. Add backing_type: Option<BackingType> to ClassDef where BackingType is enum { Int, String }\n    // 2. Parse ': int' or ': string' after enum name during parsing\n    // 3. Store explicitly rather than inferring from constant values\n    // For now, check if any enum cases have values in constants
     // A backed enum has constants with scalar values
-    let has_backing = class_def.constants.values()
+    let has_backing = class_def
+        .constants
+        .values()
         .any(|(val, _)| matches!(val, Val::Int(_) | Val::String(_)));
-    
+
     Ok(vm.arena.alloc(Val::Bool(has_backing)))
 }
 
@@ -1773,7 +1929,7 @@ pub fn reflection_enum_is_backed(vm: &mut VM, _args: &[Handle]) -> Result<Handle
 pub fn reflection_enum_get_backing_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // Infer backing type from first constant value
     for (val, _) in class_def.constants.values() {
         match val {
@@ -1802,7 +1958,7 @@ pub fn reflection_enum_get_backing_type(vm: &mut VM, _args: &[Handle]) -> Result
             _ => continue,
         }
     }
-    
+
     // No backing type (unit enum)
     Ok(vm.arena.alloc(Val::Null))
 }
@@ -1813,18 +1969,18 @@ pub fn reflection_enum_has_case(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
     if args.is_empty() {
         return Err("ReflectionEnum::hasCase() expects exactly 1 argument".to_string());
     }
-    
+
     let case_name = match &vm.arena.get(args[0]).value {
         Val::String(s) => s.as_ref(),
         _ => return Err("ReflectionEnum::hasCase() expects parameter 1 to be string".to_string()),
     };
-    
+
     let case_sym = vm.context.interner.intern(case_name);
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     let has_case = class_def.constants.contains_key(&case_sym);
-    
+
     Ok(vm.arena.alloc(Val::Bool(has_case)))
 }
 
@@ -1834,21 +1990,24 @@ pub fn reflection_enum_get_case(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
     if args.is_empty() {
         return Err("ReflectionEnum::getCase() expects exactly 1 argument".to_string());
     }
-    
+
     let case_name = match &vm.arena.get(args[0]).value {
         Val::String(s) => s.as_ref(),
         _ => return Err("ReflectionEnum::getCase() expects parameter 1 to be string".to_string()),
     };
-    
+
     let case_name_vec = case_name.to_vec();
     let case_sym = vm.context.interner.intern(case_name);
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     if !class_def.constants.contains_key(&case_sym) {
-        return Err(format!("Case {} not found", String::from_utf8_lossy(&case_name_vec)));
+        return Err(format!(
+            "Case {} not found",
+            String::from_utf8_lossy(&case_name_vec)
+        ));
     }
-    
+
     let class_name_bytes = lookup_symbol(vm, class_name).to_vec();
     create_object_with_properties(
         vm,
@@ -1865,15 +2024,17 @@ pub fn reflection_enum_get_case(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
 pub fn reflection_enum_get_cases(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let class_name = get_reflection_class_name(vm)?;
     let class_def = get_class_def(vm, class_name)?;
-    
+
     // Return array of case names
     let mut arr = ArrayData::new();
     for (case_sym, _) in class_def.constants.iter() {
         let case_name_bytes = lookup_symbol(vm, *case_sym);
-        let case_name_handle = vm.arena.alloc(Val::String(Rc::new(case_name_bytes.to_vec())));
+        let case_name_handle = vm
+            .arena
+            .alloc(Val::String(Rc::new(case_name_bytes.to_vec())));
         arr.push(case_name_handle);
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(arr))))
 }
 
@@ -1885,7 +2046,9 @@ pub fn reflection_enum_get_cases(vm: &mut VM, _args: &[Handle]) -> Result<Handle
 /// Creates reflection for an enum case
 pub fn reflection_enum_unit_case_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() < 2 {
-        return Err("ReflectionEnumUnitCase::__construct() expects exactly 2 arguments".to_string());
+        return Err(
+            "ReflectionEnumUnitCase::__construct() expects exactly 2 arguments".to_string(),
+        );
     }
 
     // Use ReflectionClassConstant constructor logic
@@ -1898,37 +2061,55 @@ pub fn reflection_enum_unit_case_construct(vm: &mut VM, args: &[Handle]) -> Resu
     let class_arg = vm.arena.get(args[0]).value.clone();
     let constant_name_val = vm.arena.get(args[1]).value.clone();
 
-    let class_sym = match class_arg {
-        Val::String(s) => vm.context.interner.intern(s.as_ref()),
-        Val::Object(obj_handle) => {
-            if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_handle).value {
-                obj_data.class
-            } else {
-                return Err("Invalid object".to_string());
+    let class_sym =
+        match class_arg {
+            Val::String(s) => vm.context.interner.intern(s.as_ref()),
+            Val::Object(obj_handle) => {
+                if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_handle).value {
+                    obj_data.class
+                } else {
+                    return Err("Invalid object".to_string());
+                }
             }
-        }
-        _ => return Err("ReflectionEnumUnitCase::__construct() expects parameter 1 to be string or object".to_string()),
-    };
+            _ => return Err(
+                "ReflectionEnumUnitCase::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            ),
+        };
 
     let constant_name_bytes = match constant_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionEnumUnitCase::__construct() expects parameter 2 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionEnumUnitCase::__construct() expects parameter 2 to be string"
+                    .to_string(),
+            );
+        }
     };
 
     // Verify the class is an enum
     if let Some(class_def) = vm.context.classes.get(&class_sym) {
         if !class_def.is_enum {
             let class_name = lookup_symbol(vm, class_sym);
-            return Err(format!("Class {} is not an enum", String::from_utf8_lossy(class_name)));
+            return Err(format!(
+                "Class {} is not an enum",
+                String::from_utf8_lossy(class_name)
+            ));
         }
-        
+
         let constant_sym = vm.context.interner.intern(constant_name_bytes);
         if !class_def.constants.contains_key(&constant_sym) {
-            return Err(format!("Case {} not found", String::from_utf8_lossy(constant_name_bytes)));
+            return Err(format!(
+                "Case {} not found",
+                String::from_utf8_lossy(constant_name_bytes)
+            ));
         }
     } else {
         let class_name = lookup_symbol(vm, class_sym);
-        return Err(format!("Enum {} does not exist", String::from_utf8_lossy(class_name)));
+        return Err(format!(
+            "Enum {} does not exist",
+            String::from_utf8_lossy(class_name)
+        ));
     }
 
     // Store class name and constant name
@@ -1942,12 +2123,20 @@ pub fn reflection_enum_unit_case_construct(vm: &mut VM, args: &[Handle]) -> Resu
     let constant_name_sym = vm.context.interner.intern(b"constantName");
 
     let class_name_bytes = lookup_symbol(vm, class_sym);
-    let class_name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
-    let constant_name_handle = vm.arena.alloc(Val::String(Rc::new(constant_name_bytes.to_vec())));
+    let class_name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(class_name_bytes.to_vec())));
+    let constant_name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(constant_name_bytes.to_vec())));
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
-        obj_data.properties.insert(class_name_sym, class_name_handle);
-        obj_data.properties.insert(constant_name_sym, constant_name_handle);
+        obj_data
+            .properties
+            .insert(class_name_sym, class_name_handle);
+        obj_data
+            .properties
+            .insert(constant_name_sym, constant_name_handle);
     }
 
     Ok(vm.arena.alloc(Val::Null))
@@ -1957,9 +2146,9 @@ pub fn reflection_enum_unit_case_construct(vm: &mut VM, args: &[Handle]) -> Resu
 /// Gets the reflection of the enum that contains this case
 pub fn reflection_enum_unit_case_get_enum(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
-    
+
     let class_name_bytes = lookup_symbol(vm, data.class_name).to_vec();
-    
+
     create_object_with_properties(
         vm,
         b"ReflectionEnum",
@@ -1969,9 +2158,12 @@ pub fn reflection_enum_unit_case_get_enum(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionEnumUnitCase::getValue(): object
 /// Gets the actual enum case object (the enum instance)
-pub fn reflection_enum_unit_case_get_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_enum_unit_case_get_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
-    
+
     if let Some(class_def) = vm.context.classes.get(&data.class_name) {
         if let Some((val, _visibility)) = class_def.constants.get(&data.constant_name) {
             // Return the enum case value
@@ -1980,7 +2172,7 @@ pub fn reflection_enum_unit_case_get_value(vm: &mut VM, _args: &[Handle]) -> Res
             return Ok(vm.arena.alloc(val.clone()));
         }
     }
-    
+
     Err("Enum case not found".to_string())
 }
 
@@ -1990,14 +2182,17 @@ pub fn reflection_enum_unit_case_get_value(vm: &mut VM, _args: &[Handle]) -> Res
 
 /// ReflectionEnumBackedCase::getBackingValue(): int|string
 /// Gets the backing/scalar value of a backed enum case
-pub fn reflection_enum_backed_case_get_backing_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_enum_backed_case_get_backing_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
-    
+
     if let Some(class_def) = vm.context.classes.get(&data.class_name) {
         if !class_def.is_enum {
             return Err("Not an enum".to_string());
         }
-        
+
         if let Some((val, _visibility)) = class_def.constants.get(&data.constant_name) {
             // For backed enums, the case value should be a scalar (int or string)
             // Return the backing value
@@ -2043,9 +2238,7 @@ fn get_reflection_extension_data(vm: &mut VM) -> Result<ReflectionExtensionData,
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             if let Val::String(ref s) = vm.arena.get(name_handle).value {
                 let name_symbol = vm.context.interner.intern(s.as_ref());
-                return Ok(ReflectionExtensionData {
-                    name: name_symbol,
-                });
+                return Ok(ReflectionExtensionData { name: name_symbol });
             }
         }
     }
@@ -2069,10 +2262,23 @@ pub fn reflection_extension_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
     let ext_name_val = vm.arena.get(args[0]).value.clone();
     let ext_name_bytes = match ext_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionExtension::__construct() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionExtension::__construct() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
 
-    // For now, accept any extension name (proper validation would check loaded extensions)
+    let ext_name_str = std::str::from_utf8(ext_name_bytes).map_err(|_| {
+        "ReflectionExtension::__construct() expects parameter 1 to be string".to_string()
+    })?;
+    let info = vm
+        .context
+        .engine
+        .registry
+        .get_extension_info_by_name_ci(ext_name_str)
+        .ok_or_else(|| format!("Extension \"{}\" does not exist", ext_name_str))?;
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
@@ -2080,7 +2286,9 @@ pub fn reflection_extension_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
     };
 
     let name_sym = vm.context.interner.intern(b"name");
-    let ext_name_handle = vm.arena.alloc(Val::String(Rc::new(ext_name_bytes.to_vec())));
+    let ext_name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(info.name.as_bytes().to_vec())));
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, ext_name_handle);
@@ -2100,12 +2308,25 @@ pub fn reflection_extension_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// ReflectionExtension::getVersion(): ?string
 /// Gets the version of the extension
 pub fn reflection_extension_get_version(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let _data = get_reflection_extension_data(vm)?;
-    // NOTE: Extension version tracking requires:
-    // 1. Add version: String field to ExtensionInfo struct
-    // 2. Set during extension registration in runtime/extension.rs
-    // 3. Store in VM's extension registry
-    // 4. Look up by extension name and return version string
+    let data = get_reflection_extension_data(vm)?;
+    let name_bytes = lookup_symbol(vm, data.name);
+    let name_str = std::str::from_utf8(name_bytes)
+        .map_err(|_| "ReflectionExtension::getVersion() extension name is invalid".to_string())?;
+
+    if let Some(info) = vm
+        .context
+        .engine
+        .registry
+        .get_extension_info_by_name_ci(name_str)
+    {
+        if info.version.is_empty() {
+            return Ok(vm.arena.alloc(Val::Null));
+        }
+        return Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(info.version.as_bytes().to_vec()))));
+    }
+
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -2135,7 +2356,10 @@ pub fn reflection_extension_get_constants(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionExtension::getINIEntries(): array
 /// Gets INI entries for the extension
-pub fn reflection_extension_get_ini_entries(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_extension_get_ini_entries(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
     // NOTE: INI entries per extension requires:
     // 1. Extension-specific INI configuration system
@@ -2158,7 +2382,10 @@ pub fn reflection_extension_get_classes(vm: &mut VM, _args: &[Handle]) -> Result
 
 /// ReflectionExtension::getClassNames(): array
 /// Gets names of classes provided by the extension
-pub fn reflection_extension_get_class_names(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_extension_get_class_names(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
     // NOTE: Similar to getClasses() but returns array of class name strings
     // Requires same extension_name field in ClassDef
@@ -2167,7 +2394,10 @@ pub fn reflection_extension_get_class_names(vm: &mut VM, _args: &[Handle]) -> Re
 
 /// ReflectionExtension::getDependencies(): array
 /// Gets dependencies of the extension
-pub fn reflection_extension_get_dependencies(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_extension_get_dependencies(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_extension_data(vm)?;
     // NOTE: Extension dependency tracking requires:
     // 1. Add dependencies: Vec<String> to ExtensionInfo
@@ -2181,7 +2411,7 @@ pub fn reflection_extension_get_dependencies(vm: &mut VM, _args: &[Handle]) -> R
 pub fn reflection_extension_info(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_extension_data(vm)?;
     let name_bytes = lookup_symbol(vm, data.name);
-    
+
     // Print basic extension info
     println!("Extension [ {} ] {{", String::from_utf8_lossy(name_bytes));
     println!("  Classes [0] {{");
@@ -2195,7 +2425,7 @@ pub fn reflection_extension_info(vm: &mut VM, _args: &[Handle]) -> Result<Handle
     println!("  Dependencies [0] {{");
     println!("  }}");
     println!("}}");
-    
+
     Ok(vm.arena.alloc(Val::Null))
 }
 
@@ -2240,7 +2470,9 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
 
     let modifiers = match vm.arena.get(args[0]).value {
         Val::Int(i) => i,
-        _ => return Err("Reflection::getModifierNames() expects parameter 1 to be int".to_string()),
+        _ => {
+            return Err("Reflection::getModifierNames() expects parameter 1 to be int".to_string());
+        }
     };
 
     let mut names = Vec::new();
@@ -2253,27 +2485,34 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
     // IS_READONLY = 2048
 
     // Check visibility modifiers first
-    if modifiers & 256 != 0 {  // IS_PUBLIC
+    if modifiers & 256 != 0 {
+        // IS_PUBLIC
         names.push(b"public".to_vec());
     }
-    if modifiers & 512 != 0 {  // IS_PROTECTED
+    if modifiers & 512 != 0 {
+        // IS_PROTECTED
         names.push(b"protected".to_vec());
     }
-    if modifiers & 1024 != 0 {  // IS_PRIVATE
+    if modifiers & 1024 != 0 {
+        // IS_PRIVATE
         names.push(b"private".to_vec());
     }
 
     // Check other modifiers
-    if modifiers & 1 != 0 {  // IS_STATIC
+    if modifiers & 1 != 0 {
+        // IS_STATIC
         names.push(b"static".to_vec());
     }
-    if modifiers & 2 != 0 || modifiers & 64 != 0 {  // IS_ABSTRACT / IS_EXPLICIT_ABSTRACT
+    if modifiers & 2 != 0 || modifiers & 64 != 0 {
+        // IS_ABSTRACT / IS_EXPLICIT_ABSTRACT
         names.push(b"abstract".to_vec());
     }
-    if modifiers & 4 != 0 || modifiers & 32 != 0 {  // IS_FINAL
+    if modifiers & 4 != 0 || modifiers & 32 != 0 {
+        // IS_FINAL
         names.push(b"final".to_vec());
     }
-    if modifiers & 2048 != 0 {  // IS_READONLY
+    if modifiers & 2048 != 0 {
+        // IS_READONLY
         names.push(b"readonly".to_vec());
     }
 
@@ -2292,9 +2531,14 @@ pub fn reflection_get_modifier_names(vm: &mut VM, args: &[Handle]) -> Result<Han
 
 /// ReflectionReference::fromArrayElement(array $array, int|string $key): ?ReflectionReference
 /// Creates a ReflectionReference from an array element (static method)
-pub fn reflection_reference_from_array_element(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_reference_from_array_element(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.len() < 2 {
-        return Err("ReflectionReference::fromArrayElement() expects exactly 2 arguments".to_string());
+        return Err(
+            "ReflectionReference::fromArrayElement() expects exactly 2 arguments".to_string(),
+        );
     }
 
     // NOTE: Reference tracking infrastructure requires:
@@ -2312,7 +2556,9 @@ pub fn reflection_reference_get_id(vm: &mut VM, _args: &[Handle]) -> Result<Hand
     // NOTE: Returns unique string ID for reference group (e.g., "0x7f8b8c0")
     // All variables that reference the same value share the same ID
     // Requires reference tracking infrastructure (see fromArrayElement)
-    Ok(vm.arena.alloc(Val::String(Rc::new(b"ref_placeholder".to_vec()))))
+    Ok(vm
+        .arena
+        .alloc(Val::String(Rc::new(b"ref_placeholder".to_vec()))))
 }
 
 //=============================================================================
@@ -2344,9 +2590,7 @@ fn get_reflection_zend_extension_data(vm: &mut VM) -> Result<ReflectionZendExten
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             if let Val::String(ref s) = vm.arena.get(name_handle).value {
                 let name_symbol = vm.context.interner.intern(s.as_ref());
-                return Ok(ReflectionZendExtensionData {
-                    name: name_symbol,
-                });
+                return Ok(ReflectionZendExtensionData { name: name_symbol });
             }
         }
     }
@@ -2357,7 +2601,9 @@ fn get_reflection_zend_extension_data(vm: &mut VM) -> Result<ReflectionZendExten
 /// ReflectionZendExtension::__construct(string $name)
 pub fn reflection_zend_extension_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionZendExtension::__construct() expects exactly 1 argument".to_string());
+        return Err(
+            "ReflectionZendExtension::__construct() expects exactly 1 argument".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -2369,7 +2615,12 @@ pub fn reflection_zend_extension_construct(vm: &mut VM, args: &[Handle]) -> Resu
     let ext_name_val = vm.arena.get(args[0]).value.clone();
     let ext_name_bytes = match ext_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionZendExtension::__construct() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionZendExtension::__construct() expects parameter 1 to be string"
+                    .to_string(),
+            );
+        }
     };
 
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
@@ -2379,7 +2630,9 @@ pub fn reflection_zend_extension_construct(vm: &mut VM, args: &[Handle]) -> Resu
     };
 
     let name_sym = vm.context.interner.intern(b"name");
-    let ext_name_handle = vm.arena.alloc(Val::String(Rc::new(ext_name_bytes.to_vec())));
+    let ext_name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(ext_name_bytes.to_vec())));
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, ext_name_handle);
@@ -2391,21 +2644,30 @@ pub fn reflection_zend_extension_construct(vm: &mut VM, args: &[Handle]) -> Resu
 /// ReflectionZendExtension::getName(): string
 pub fn reflection_zend_extension_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_zend_extension_data(vm)?;
-    let name_bytes = vm.context.interner.lookup(data.name)
+    let name_bytes = vm
+        .context
+        .interner
+        .lookup(data.name)
         .ok_or("Failed to lookup extension name symbol")?
         .to_vec();
     Ok(vm.arena.alloc(Val::String(Rc::new(name_bytes))))
 }
 
 /// ReflectionZendExtension::getVersion(): string
-pub fn reflection_zend_extension_get_version(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_zend_extension_get_version(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_zend_extension_data(vm)?;
     // Stub: No Zend extension version tracking yet
     Ok(vm.arena.alloc(Val::String(Rc::new(b"1.0.0".to_vec()))))
 }
 
 /// ReflectionZendExtension::getAuthor(): string
-pub fn reflection_zend_extension_get_author(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_zend_extension_get_author(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_zend_extension_data(vm)?;
     // Stub: No Zend extension author tracking yet
     Ok(vm.arena.alloc(Val::String(Rc::new(b"Unknown".to_vec()))))
@@ -2415,14 +2677,21 @@ pub fn reflection_zend_extension_get_author(vm: &mut VM, _args: &[Handle]) -> Re
 pub fn reflection_zend_extension_get_url(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_zend_extension_data(vm)?;
     // Stub: No Zend extension URL tracking yet
-    Ok(vm.arena.alloc(Val::String(Rc::new(b"https://example.com".to_vec()))))
+    Ok(vm
+        .arena
+        .alloc(Val::String(Rc::new(b"https://example.com".to_vec()))))
 }
 
 /// ReflectionZendExtension::getCopyright(): string
-pub fn reflection_zend_extension_get_copyright(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_zend_extension_get_copyright(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_zend_extension_data(vm)?;
     // Stub: No Zend extension copyright tracking yet
-    Ok(vm.arena.alloc(Val::String(Rc::new(b"Copyright (c) 2026".to_vec()))))
+    Ok(vm
+        .arena
+        .alloc(Val::String(Rc::new(b"Copyright (c) 2026".to_vec()))))
 }
 
 //=============================================================================
@@ -2490,21 +2759,30 @@ pub fn reflection_generator_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
 }
 
 /// ReflectionGenerator::getExecutingFile(): string
-pub fn reflection_generator_get_executing_file(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_generator_get_executing_file(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_generator_data(vm)?;
     // Stub: Generator execution tracking not implemented
     Ok(vm.arena.alloc(Val::String(Rc::new(b"unknown".to_vec()))))
 }
 
 /// ReflectionGenerator::getExecutingLine(): int
-pub fn reflection_generator_get_executing_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_generator_get_executing_line(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_generator_data(vm)?;
     // Stub: Generator execution tracking not implemented
     Ok(vm.arena.alloc(Val::Int(0)))
 }
 
 /// ReflectionGenerator::getExecutingGenerator(): Generator
-pub fn reflection_generator_get_executing_generator(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_generator_get_executing_generator(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_generator_data(vm)?;
     // Return the stored generator reference
     Ok(data.generator_handle)
@@ -2618,14 +2896,20 @@ pub fn reflection_fiber_get_callable(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 }
 
 /// ReflectionFiber::getExecutingFile(): string
-pub fn reflection_fiber_get_executing_file(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_fiber_get_executing_file(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_fiber_data(vm)?;
     // Stub: Fiber execution tracking not implemented
     Ok(vm.arena.alloc(Val::String(Rc::new(b"unknown".to_vec()))))
 }
 
 /// ReflectionFiber::getExecutingLine(): int
-pub fn reflection_fiber_get_executing_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_fiber_get_executing_line(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_fiber_data(vm)?;
     // Stub: Fiber execution tracking not implemented
     Ok(vm.arena.alloc(Val::Int(0)))
@@ -2646,85 +2930,127 @@ pub fn reflection_fiber_get_trace(vm: &mut VM, _args: &[Handle]) -> Result<Handl
 // extend this class (inheritance not yet refactored).
 
 /// ReflectionFunctionAbstract::getClosureScopeClass(): ?ReflectionClass
-pub fn reflection_function_abstract_get_closure_scope_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_closure_scope_class(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Closure scope tracking not implemented
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionFunctionAbstract::getClosureThis(): ?object
-pub fn reflection_function_abstract_get_closure_this(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_closure_this(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Closure $this tracking not implemented
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionFunctionAbstract::getClosureUsedVariables(): array
-pub fn reflection_function_abstract_get_closure_used_variables(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_closure_used_variables(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Closure used variables tracking not implemented
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
 /// ReflectionFunctionAbstract::getDocComment(): string|false
-pub fn reflection_function_abstract_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_doc_comment(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Doc comment parsing not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::getEndLine(): int|false
-pub fn reflection_function_abstract_get_end_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_end_line(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Source line tracking not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::getExtension(): ?ReflectionExtension
-pub fn reflection_function_abstract_get_extension(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_extension(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Extension tracking not implemented
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionFunctionAbstract::getExtensionName(): string|false
-pub fn reflection_function_abstract_get_extension_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_extension_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Extension tracking not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::getReturnType(): ?ReflectionType
-pub fn reflection_function_abstract_get_return_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_return_type(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Return type reflection not fully implemented
     Ok(vm.arena.alloc(Val::Null))
 }
 
 /// ReflectionFunctionAbstract::getStartLine(): int|false
-pub fn reflection_function_abstract_get_start_line(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_start_line(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Source line tracking not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::getStaticVariables(): array
-pub fn reflection_function_abstract_get_static_variables(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_static_variables(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Static variable tracking not implemented
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))))
 }
 
 /// ReflectionFunctionAbstract::hasReturnType(): bool
-pub fn reflection_function_abstract_has_return_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_has_return_type(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Return type tracking not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::isDeprecated(): bool
-pub fn reflection_function_abstract_is_deprecated(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_is_deprecated(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Deprecation tracking not implemented
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::hasTentativeReturnType(): bool
-pub fn reflection_function_abstract_has_tentative_return_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_has_tentative_return_type(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Tentative return type tracking not implemented (PHP 8.1+)
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionFunctionAbstract::getTentativeReturnType(): ?ReflectionType
-pub fn reflection_function_abstract_get_tentative_return_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_abstract_get_tentative_return_type(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Stub: Tentative return type not implemented (PHP 8.1+)
     Ok(vm.arena.alloc(Val::Null))
 }
@@ -2736,7 +3062,9 @@ pub fn reflection_function_abstract_get_tentative_return_type(vm: &mut VM, _args
 /// ReflectionFunction::__construct(string $name)
 pub fn reflection_function_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionFunction::__construct() expects exactly 1 argument, 0 given".to_string());
+        return Err(
+            "ReflectionFunction::__construct() expects exactly 1 argument, 0 given".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -2748,15 +3076,24 @@ pub fn reflection_function_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
     let func_name_val = vm.arena.get(args[0]).value.clone();
     let func_name_bytes = match func_name_val {
         Val::String(ref s) => s.as_ref(),
-        _ => return Err("ReflectionFunction::__construct() expects parameter 1 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionFunction::__construct() expects parameter 1 to be string".to_string(),
+            );
+        }
     };
-    
+
     let func_sym = vm.context.interner.intern(func_name_bytes);
-    
+
     // Check if function exists (user-defined or native)
-    let exists = vm.context.user_functions.contains_key(&func_sym) ||
-                 vm.context.engine.registry.get_function(func_name_bytes).is_some();
-    
+    let exists = vm.context.user_functions.contains_key(&func_sym)
+        || vm
+            .context
+            .engine
+            .registry
+            .get_function(func_name_bytes)
+            .is_some();
+
     if !exists {
         let func_name_str = String::from_utf8_lossy(func_name_bytes);
         return Err(format!("Function {}() does not exist", func_name_str));
@@ -2768,10 +3105,12 @@ pub fn reflection_function_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
     } else {
         return Err("Invalid ReflectionFunction object".to_string());
     };
-    
+
     let name_sym = vm.context.interner.intern(b"name");
-    let name_handle = vm.arena.alloc(Val::String(Rc::new(func_name_bytes.to_vec())));
-    
+    let name_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(func_name_bytes.to_vec())));
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, name_handle);
     }
@@ -2788,13 +3127,13 @@ pub fn reflection_function_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Han
         .ok_or("ReflectionFunction::getName() called outside object context")?;
 
     let name_sym = vm.context.interner.intern(b"name");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionFunction object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             return Ok(name_handle);
@@ -2813,13 +3152,13 @@ fn get_reflection_function_name(vm: &mut VM) -> Result<Symbol, String> {
         .ok_or("ReflectionFunction method called outside object context")?;
 
     let name_sym = vm.context.interner.intern(b"name");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionFunction object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             let name_val = vm.arena.get(name_handle).value.clone();
@@ -2833,9 +3172,12 @@ fn get_reflection_function_name(vm: &mut VM) -> Result<Symbol, String> {
 }
 
 /// ReflectionFunction::getNumberOfParameters(): int
-pub fn reflection_function_get_number_of_parameters(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_get_number_of_parameters(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
         Ok(vm.arena.alloc(Val::Int(user_func.params.len() as i64)))
     } else {
@@ -2845,11 +3187,16 @@ pub fn reflection_function_get_number_of_parameters(vm: &mut VM, _args: &[Handle
 }
 
 /// ReflectionFunction::getNumberOfRequiredParameters(): int
-pub fn reflection_function_get_number_of_required_parameters(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_get_number_of_required_parameters(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
-        let required = user_func.params.iter()
+        let required = user_func
+            .params
+            .iter()
             .filter(|p| p.default_value.is_none())
             .count();
         Ok(vm.arena.alloc(Val::Int(required as i64)))
@@ -2861,7 +3208,7 @@ pub fn reflection_function_get_number_of_required_parameters(vm: &mut VM, _args:
 /// ReflectionFunction::getParameters(): array
 pub fn reflection_function_get_parameters(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     // Get the parameter count first to avoid holding a reference to user_functions
     let param_count = if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
         user_func.params.len()
@@ -2869,10 +3216,10 @@ pub fn reflection_function_get_parameters(vm: &mut VM, _args: &[Handle]) -> Resu
         // Native function - return empty array
         return Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::new()))));
     };
-    
+
     let mut arr_data = ArrayData::new();
     let reflection_param_sym = vm.context.interner.intern(b"ReflectionParameter");
-    
+
     for idx in 0..param_count {
         // Create ReflectionParameter object
         let obj_data = crate::core::value::ObjectData {
@@ -2883,27 +3230,27 @@ pub fn reflection_function_get_parameters(vm: &mut VM, _args: &[Handle]) -> Resu
         };
         let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
         let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-        
+
         // Set up this context and call constructor
         let old_this = vm.frames.last_mut().and_then(|f| f.this);
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = Some(obj_handle);
         }
-        
+
         let func_name_bytes = lookup_symbol(vm, func_sym).to_vec();
         let func_name_handle = vm.arena.alloc(Val::String(Rc::new(func_name_bytes)));
         let idx_handle = vm.arena.alloc(Val::Int(idx as i64));
-        
+
         reflection_parameter_construct(vm, &[func_name_handle, idx_handle])?;
-        
+
         // Restore original this
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = old_this;
         }
-        
+
         arr_data.push(obj_handle);
     }
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(arr_data))))
 }
 
@@ -2920,7 +3267,10 @@ pub fn reflection_function_get_attributes(vm: &mut VM, _args: &[Handle]) -> Resu
 }
 
 /// ReflectionFunction::isUserDefined(): bool
-pub fn reflection_function_is_user_defined(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_is_user_defined(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let is_user_defined = vm.context.user_functions.contains_key(&func_sym);
     Ok(vm.arena.alloc(Val::Bool(is_user_defined)))
@@ -2936,7 +3286,7 @@ pub fn reflection_function_is_internal(vm: &mut VM, _args: &[Handle]) -> Result<
 /// ReflectionFunction::isVariadic(): bool
 pub fn reflection_function_is_variadic(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
         let is_variadic = user_func.params.iter().any(|p| p.is_variadic);
         Ok(vm.arena.alloc(Val::Bool(is_variadic)))
@@ -2946,9 +3296,12 @@ pub fn reflection_function_is_variadic(vm: &mut VM, _args: &[Handle]) -> Result<
 }
 
 /// ReflectionFunction::returnsReference(): bool
-pub fn reflection_function_returns_reference(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_returns_reference(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
         Ok(vm.arena.alloc(Val::Bool(user_func.chunk.returns_ref)))
     } else {
@@ -2957,10 +3310,13 @@ pub fn reflection_function_returns_reference(vm: &mut VM, _args: &[Handle]) -> R
 }
 
 /// ReflectionFunction::getNamespaceName(): string
-pub fn reflection_function_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_function_get_namespace_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name_bytes = lookup_symbol(vm, func_sym);
-    
+
     // Find last backslash to extract namespace
     if let Some(pos) = func_name_bytes.iter().rposition(|&b| b == b'\\') {
         let namespace = &func_name_bytes[..pos];
@@ -2974,13 +3330,15 @@ pub fn reflection_function_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> 
 pub fn reflection_function_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name_bytes = lookup_symbol(vm, func_sym);
-    
+
     // Find last backslash to extract short name
     if let Some(pos) = func_name_bytes.iter().rposition(|&b| b == b'\\') {
         let short_name = &func_name_bytes[pos + 1..];
         Ok(vm.arena.alloc(Val::String(Rc::new(short_name.to_vec()))))
     } else {
-        Ok(vm.arena.alloc(Val::String(Rc::new(func_name_bytes.to_vec()))))
+        Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(func_name_bytes.to_vec()))))
     }
 }
 
@@ -2988,7 +3346,7 @@ pub fn reflection_function_get_short_name(vm: &mut VM, _args: &[Handle]) -> Resu
 pub fn reflection_function_in_namespace(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name_bytes = lookup_symbol(vm, func_sym);
-    
+
     let has_namespace = func_name_bytes.iter().any(|&b| b == b'\\');
     Ok(vm.arena.alloc(Val::Bool(has_namespace)))
 }
@@ -3002,7 +3360,7 @@ pub fn reflection_function_is_closure(vm: &mut VM, _args: &[Handle]) -> Result<H
 /// ReflectionFunction::isGenerator(): bool
 pub fn reflection_function_is_generator(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
         Ok(vm.arena.alloc(Val::Bool(user_func.is_generator)))
     } else {
@@ -3015,13 +3373,13 @@ pub fn reflection_function_is_generator(vm: &mut VM, _args: &[Handle]) -> Result
 pub fn reflection_function_invoke(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name = lookup_symbol(vm, func_sym).to_vec();
-    
+
     // Create function name handle
     let func_name_handle = vm.arena.alloc(Val::String(Rc::new(func_name)));
-    
+
     // Convert args to SmallVec
     let func_args: smallvec::SmallVec<[Handle; 8]> = args.iter().copied().collect();
-    
+
     // Call using the callable system
     vm.call_callable(func_name_handle, func_args)
         .map_err(|e| format!("Function invocation error: {:?}", e))
@@ -3033,10 +3391,10 @@ pub fn reflection_function_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<H
     if args.is_empty() {
         return Err("ReflectionFunction::invokeArgs() expects exactly 1 argument".to_string());
     }
-    
+
     let func_sym = get_reflection_function_name(vm)?;
     let func_name = lookup_symbol(vm, func_sym).to_vec();
-    
+
     // Extract arguments from array
     let args_val = vm.arena.get(args[0]).value.clone();
     let func_args: smallvec::SmallVec<[Handle; 8]> = match args_val {
@@ -3057,10 +3415,10 @@ pub fn reflection_function_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<H
             return Err("ReflectionFunction::invokeArgs() expects array argument".to_string());
         }
     };
-    
+
     // Create function name handle
     let func_name_handle = vm.arena.alloc(Val::String(Rc::new(func_name)));
-    
+
     // Call using the callable system
     vm.call_callable(func_name_handle, func_args)
         .map_err(|e| format!("Function invocation error: {:?}", e))
@@ -3071,11 +3429,13 @@ pub fn reflection_function_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<H
 pub fn reflection_function_is_anonymous(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name = lookup_symbol(vm, func_sym);
-    
+
     // Anonymous functions typically have names like "{closure}" or contain "{closure}"
-    let is_anon = func_name.starts_with(b"{closure}") || 
-                  func_name.windows(b"{closure}".len()).any(|w| w == b"{closure}");
-    
+    let is_anon = func_name.starts_with(b"{closure}")
+        || func_name
+            .windows(b"{closure}".len())
+            .any(|w| w == b"{closure}");
+
     Ok(vm.arena.alloc(Val::Bool(is_anon)))
 }
 
@@ -3092,10 +3452,10 @@ pub fn reflection_function_is_disabled(vm: &mut VM, _args: &[Handle]) -> Result<
 pub fn reflection_function_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
     let func_name = lookup_symbol(vm, func_sym);
-    
+
     let mut result = String::new();
     result.push_str("Function [ <");
-    
+
     // Check if user-defined or internal
     if vm.context.user_functions.contains_key(&func_sym) {
         result.push_str("user");
@@ -3105,11 +3465,11 @@ pub fn reflection_function_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Ha
     result.push_str("> function ");
     result.push_str(&String::from_utf8_lossy(func_name));
     result.push_str(" ] {\n");
-    
+
     // Add basic info (in a full implementation, would include parameters, return type, etc.)
     result.push_str("  @@ (unknown) (unknown)\n");
     result.push_str("}");
-    
+
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
@@ -3130,12 +3490,12 @@ pub fn reflection_function_get_closure(vm: &mut VM, _args: &[Handle]) -> Result<
 /// Returns false for internal functions, null for user functions (file tracking not yet implemented).
 pub fn reflection_function_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let func_sym = get_reflection_function_name(vm)?;
-    
+
     // Check if it's an internal function
     if !vm.context.user_functions.contains_key(&func_sym) {
         return Ok(vm.arena.alloc(Val::Bool(false)));
     }
-    
+
     // NOTE: File tracking for functions requires:
     // 1. Add file_name: Option<PathBuf> to function metadata
     // 2. Pass file path through parser when compiling functions
@@ -3161,12 +3521,10 @@ pub fn reflection_method_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
 
     let arg1_val = vm.arena.get(args[0]).value.clone();
     let arg2_val = vm.arena.get(args[1]).value.clone();
-    
+
     // Get class name
     let class_name_sym = match arg1_val {
-        Val::String(ref s) => {
-            vm.context.interner.intern(s.as_ref())
-        }
+        Val::String(ref s) => vm.context.interner.intern(s.as_ref()),
         Val::Object(payload_handle) => {
             if let Val::ObjPayload(obj_data) = &vm.arena.get(payload_handle).value {
                 obj_data.class
@@ -3175,7 +3533,10 @@ pub fn reflection_method_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
             }
         }
         _ => {
-            return Err("ReflectionMethod::__construct() expects parameter 1 to be string or object".to_string());
+            return Err(
+                "ReflectionMethod::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            );
         }
     };
 
@@ -3183,22 +3544,30 @@ pub fn reflection_method_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
     let original_method_name_bytes = match arg2_val {
         Val::String(s) => s.as_ref().to_vec(),
         _ => {
-            return Err("ReflectionMethod::__construct() expects parameter 2 to be string".to_string());
+            return Err(
+                "ReflectionMethod::__construct() expects parameter 2 to be string".to_string(),
+            );
         }
     };
     // PHP stores method names in lowercase for lookup
-    let method_name_bytes: Vec<u8> = original_method_name_bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let method_name_bytes: Vec<u8> = original_method_name_bytes
+        .iter()
+        .map(|b| b.to_ascii_lowercase())
+        .collect();
     let method_name_sym = vm.context.interner.intern(&method_name_bytes);
 
     // Verify class exists
     let _class_def = get_class_def(vm, class_name_sym)?;
-    
+
     // Verify method exists
     let class_def = get_class_def(vm, class_name_sym)?;
     if !class_def.methods.contains_key(&method_name_sym) {
         let class_name_str = String::from_utf8_lossy(lookup_symbol(vm, class_name_sym));
         let method_name_str = String::from_utf8_lossy(&method_name_bytes);
-        return Err(format!("Method {}::{}() does not exist", class_name_str, method_name_str));
+        return Err(format!(
+            "Method {}::{}() does not exist",
+            class_name_str, method_name_str
+        ));
     }
 
     // Store in object properties
@@ -3207,14 +3576,16 @@ pub fn reflection_method_construct(vm: &mut VM, args: &[Handle]) -> Result<Handl
     } else {
         return Err("Invalid ReflectionMethod object".to_string());
     };
-    
+
     let class_sym = vm.context.interner.intern(b"class");
     let method_sym = vm.context.interner.intern(b"method");
-    
+
     let class_name_bytes = lookup_symbol(vm, class_name_sym).to_vec();
     let class_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes)));
-    let method_handle = vm.arena.alloc(Val::String(Rc::new(original_method_name_bytes)));
-    
+    let method_handle = vm
+        .arena
+        .alloc(Val::String(Rc::new(original_method_name_bytes)));
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(class_sym, class_handle);
         obj_data.properties.insert(method_sym, method_handle);
@@ -3232,13 +3603,13 @@ pub fn reflection_method_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handl
         .ok_or("Method called outside object context")?;
 
     let method_sym = vm.context.interner.intern(b"method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionMethod object".to_string());
     };
-    
+
     // Return the original method name string stored in the property (with original casing)
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&method_sym) {
@@ -3250,13 +3621,16 @@ pub fn reflection_method_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handl
 }
 
 /// ReflectionMethod::getDeclaringClass(): ReflectionClass
-pub fn reflection_method_get_declaring_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_method_get_declaring_class(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_method_data(vm)?;
-    
+
     // Create a new ReflectionClass object
     let reflection_class_sym = vm.context.interner.intern(b"ReflectionClass");
     let _class_def = get_class_def(vm, reflection_class_sym)?;
-    
+
     let obj_data = crate::core::value::ObjectData {
         class: reflection_class_sym,
         properties: indexmap::IndexMap::new(),
@@ -3265,22 +3639,22 @@ pub fn reflection_method_get_declaring_class(vm: &mut VM, _args: &[Handle]) -> R
     };
     let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
     let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-    
+
     // Call ReflectionClass constructor by temporarily setting this
     let old_this = vm.frames.last_mut().and_then(|f| f.this);
     if let Some(frame) = vm.frames.last_mut() {
         frame.this = Some(obj_handle);
     }
-    
+
     let class_name_bytes = lookup_symbol(vm, data.class_name).to_vec();
     let class_name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes)));
     reflection_class_construct(vm, &[class_name_handle])?;
-    
+
     // Restore original this
     if let Some(frame) = vm.frames.last_mut() {
         frame.this = old_this;
     }
-    
+
     Ok(obj_handle)
 }
 
@@ -3289,7 +3663,7 @@ pub fn reflection_method_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_entry = get_method(&class_def, data.method_name)?;
-    
+
     let mut modifiers = visibility_to_modifiers(method_entry.visibility);
     if method_entry.is_abstract {
         modifiers |= 64; // IS_ABSTRACT
@@ -3298,7 +3672,7 @@ pub fn reflection_method_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<
     if method_entry.is_static {
         modifiers |= 16; // IS_STATIC
     }
-    
+
     Ok(vm.arena.alloc(Val::Int(modifiers)))
 }
 
@@ -3307,7 +3681,10 @@ pub fn reflection_method_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
-    let method_lower: Vec<u8> = method_name_bytes.iter().map(|b| b.to_ascii_lowercase()).collect();
+    let method_lower: Vec<u8> = method_name_bytes
+        .iter()
+        .map(|b| b.to_ascii_lowercase())
+        .collect();
     let method_sym = vm.context.interner.intern(&method_lower);
     let method_entry = class_def
         .methods
@@ -3321,7 +3698,10 @@ pub fn reflection_method_is_public(vm: &mut VM, _args: &[Handle]) -> Result<Hand
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_entry = get_method(&class_def, data.method_name)?;
-    Ok(vm.arena.alloc(Val::Bool(matches!(method_entry.visibility, Visibility::Public))))
+    Ok(vm.arena.alloc(Val::Bool(matches!(
+        method_entry.visibility,
+        Visibility::Public
+    ))))
 }
 
 /// ReflectionMethod::isPrivate(): bool
@@ -3329,7 +3709,10 @@ pub fn reflection_method_is_private(vm: &mut VM, _args: &[Handle]) -> Result<Han
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_entry = get_method(&class_def, data.method_name)?;
-    Ok(vm.arena.alloc(Val::Bool(matches!(method_entry.visibility, Visibility::Private))))
+    Ok(vm.arena.alloc(Val::Bool(matches!(
+        method_entry.visibility,
+        Visibility::Private
+    ))))
 }
 
 /// ReflectionMethod::isProtected(): bool
@@ -3337,7 +3720,10 @@ pub fn reflection_method_is_protected(vm: &mut VM, _args: &[Handle]) -> Result<H
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_entry = get_method(&class_def, data.method_name)?;
-    Ok(vm.arena.alloc(Val::Bool(matches!(method_entry.visibility, Visibility::Protected))))
+    Ok(vm.arena.alloc(Val::Bool(matches!(
+        method_entry.visibility,
+        Visibility::Protected
+    ))))
 }
 
 /// ReflectionMethod::isAbstract(): bool
@@ -3384,16 +3770,16 @@ pub fn reflection_method_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Hand
     let data = get_reflection_method_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     let method_entry = get_method(&class_def, data.method_name)?;
-    
+
     let class_name = String::from_utf8_lossy(lookup_symbol(vm, data.class_name));
     let method_name = String::from_utf8_lossy(lookup_symbol(vm, data.method_name));
-    
+
     let visibility = match method_entry.visibility {
         Visibility::Public => "public",
         Visibility::Protected => "protected",
         Visibility::Private => "private",
     };
-    
+
     let mut modifiers = vec![visibility.to_string()];
     if method_entry.is_static {
         modifiers.insert(0, "static".to_string());
@@ -3402,14 +3788,14 @@ pub fn reflection_method_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Hand
         modifiers.insert(0, "abstract".to_string());
     }
     // Note: is_final not available in MethodEntry
-    
+
     let result = format!(
         "Method [ <user> {} method {}::{} ] {{\n  @@ (unknown) 0 - 0\n}}",
         modifiers.join(" "),
         class_name,
         method_name
     );
-    
+
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
@@ -3418,32 +3804,34 @@ pub fn reflection_method_invoke(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
     if args.is_empty() {
         return Err("ReflectionMethod::invoke() expects at least 1 argument (object)".to_string());
     }
-    
+
     let data = get_reflection_method_data(vm)?;
     let object_handle = args[0];
-    
+
     // Verify the object is valid
     let obj_val = vm.arena.get(object_handle).value.clone();
     if !matches!(obj_val, Val::Object(_)) {
-        return Err("ReflectionMethod::invoke() expects first parameter to be an object".to_string());
+        return Err(
+            "ReflectionMethod::invoke() expects first parameter to be an object".to_string(),
+        );
     }
-    
+
     // Get method arguments (everything after the object parameter)
     let method_args: smallvec::SmallVec<[Handle; 8]> = if args.len() > 1 {
         args[1..].iter().copied().collect()
     } else {
         smallvec::SmallVec::new()
     };
-    
+
     // Create callable array: [$object, 'methodName']
     let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
     let method_name_handle = vm.arena.alloc(Val::String(Rc::new(method_name_bytes)));
-    
+
     let mut arr_data = ArrayData::new();
     arr_data.push(object_handle);
     arr_data.push(method_name_handle);
     let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
-    
+
     // Call using the callable system
     vm.call_callable(callable_handle, method_args)
         .map_err(|e| format!("Method invocation error: {:?}", e))
@@ -3454,17 +3842,19 @@ pub fn reflection_method_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<Han
     if args.len() < 2 {
         return Err("ReflectionMethod::invokeArgs() expects exactly 2 arguments".to_string());
     }
-    
+
     let data = get_reflection_method_data(vm)?;
     let object_handle = args[0];
     let args_array_handle = args[1];
-    
+
     // Verify the object is valid
     let obj_val = vm.arena.get(object_handle).value.clone();
     if !matches!(obj_val, Val::Object(_)) {
-        return Err("ReflectionMethod::invokeArgs() expects first parameter to be an object".to_string());
+        return Err(
+            "ReflectionMethod::invokeArgs() expects first parameter to be an object".to_string(),
+        );
     }
-    
+
     // Extract arguments from array
     let args_val = vm.arena.get(args_array_handle).value.clone();
     let method_args: smallvec::SmallVec<[Handle; 8]> = match args_val {
@@ -3482,19 +3872,22 @@ pub fn reflection_method_invoke_args(vm: &mut VM, args: &[Handle]) -> Result<Han
             result_args
         }
         _ => {
-            return Err("ReflectionMethod::invokeArgs() expects second parameter to be an array".to_string());
+            return Err(
+                "ReflectionMethod::invokeArgs() expects second parameter to be an array"
+                    .to_string(),
+            );
         }
     };
-    
+
     // Create callable array: [$object, 'methodName']
     let method_name_bytes = lookup_symbol(vm, data.method_name).to_vec();
     let method_name_handle = vm.arena.alloc(Val::String(Rc::new(method_name_bytes)));
-    
+
     let mut arr_data = ArrayData::new();
     arr_data.push(object_handle);
     arr_data.push(method_name_handle);
     let callable_handle = vm.arena.alloc(Val::Array(Rc::new(arr_data)));
-    
+
     // Call using the callable system
     vm.call_callable(callable_handle, method_args)
         .map_err(|e| format!("Method invocation error: {:?}", e))
@@ -3518,7 +3911,7 @@ pub fn reflection_parameter_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
 
     let arg1_val = vm.arena.get(args[0]).value.clone();
     let arg2_val = vm.arena.get(args[1]).value.clone();
-    
+
     // Parse function/method specification
     // Can be: "function_name" or ["ClassName", "methodName"] or object
     let (function_name, class_name, is_method) = match arg1_val {
@@ -3530,32 +3923,39 @@ pub fn reflection_parameter_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
             // [class, method] array
             let class_key = crate::core::value::ArrayKey::Int(0);
             let method_key = crate::core::value::ArrayKey::Int(1);
-            
-            let class_handle = arr_data.map.get(&class_key)
+
+            let class_handle = arr_data
+                .map
+                .get(&class_key)
                 .ok_or("Invalid array format for ReflectionParameter")?;
-            let method_handle = arr_data.map.get(&method_key)
+            let method_handle = arr_data
+                .map
+                .get(&method_key)
                 .ok_or("Invalid array format for ReflectionParameter")?;
-            
+
             let class_val = vm.arena.get(*class_handle).value.clone();
             let method_val = vm.arena.get(*method_handle).value.clone();
-            
+
             let class_bytes = match class_val {
                 Val::String(s) => s.as_ref().to_vec(),
                 _ => return Err("Class name must be string".to_string()),
             };
-            
+
             let method_bytes = match method_val {
                 Val::String(s) => s.as_ref().to_vec(),
                 _ => return Err("Method name must be string".to_string()),
             };
-            
+
             (method_bytes, Some(class_bytes), true)
         }
         _ => {
-            return Err("ReflectionParameter::__construct() expects parameter 1 to be string or array".to_string());
+            return Err(
+                "ReflectionParameter::__construct() expects parameter 1 to be string or array"
+                    .to_string(),
+            );
         }
     };
-    
+
     // Parse parameter specification (can be int index or string name)
     let param_spec = match arg2_val {
         Val::Int(i) => {
@@ -3564,85 +3964,106 @@ pub fn reflection_parameter_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
             }
             (i as usize, None)
         }
-        Val::String(ref s) => {
-            (0, Some(s.as_ref().to_vec()))
-        }
+        Val::String(ref s) => (0, Some(s.as_ref().to_vec())),
         _ => {
-            return Err("ReflectionParameter::__construct() expects parameter 2 to be int or string".to_string());
+            return Err(
+                "ReflectionParameter::__construct() expects parameter 2 to be int or string"
+                    .to_string(),
+            );
         }
     };
-    
+
     // Get parameter info - just verify it exists and get the name
     let param_name_sym = if is_method {
         // Method parameter
         let class_bytes = class_name.as_ref().ok_or("Missing class name")?;
         let class_sym = vm.context.interner.intern(class_bytes);
         let class_def = get_class_def(vm, class_sym)?;
-        
-        let method_lowercase: Vec<u8> = function_name.iter().map(|b| b.to_ascii_lowercase()).collect();
+
+        let method_lowercase: Vec<u8> = function_name
+            .iter()
+            .map(|b| b.to_ascii_lowercase())
+            .collect();
         let method_sym = vm.context.interner.intern(&method_lowercase);
         let method_entry = get_method(&class_def, method_sym)?;
-        
+
         // Find parameter by index or name
         if let Some(name_bytes) = param_spec.1 {
             let param_sym = vm.context.interner.intern(&name_bytes);
-            let _param = method_entry.signature.parameters.iter()
+            let _param = method_entry
+                .signature
+                .parameters
+                .iter()
                 .find(|p| p.name == param_sym)
                 .ok_or("Parameter does not exist")?;
             param_sym
         } else {
-            let param = method_entry.signature.parameters.get(param_spec.0)
+            let param = method_entry
+                .signature
+                .parameters
+                .get(param_spec.0)
                 .ok_or("Parameter index out of range")?;
             param.name
         }
     } else {
         // Function parameter
         let func_sym = vm.context.interner.intern(&function_name);
-        let user_func = vm.context.user_functions.get(&func_sym)
+        let user_func = vm
+            .context
+            .user_functions
+            .get(&func_sym)
             .ok_or("Function does not exist")?;
-        
+
         // Find parameter by index or name
         if let Some(name_bytes) = param_spec.1 {
             let param_sym = vm.context.interner.intern(&name_bytes);
-            let _param = user_func.params.iter()
+            let _param = user_func
+                .params
+                .iter()
                 .find(|p| p.name == param_sym)
                 .ok_or("Parameter does not exist")?;
             param_sym
         } else {
-            let param = user_func.params.get(param_spec.0)
+            let param = user_func
+                .params
+                .get(param_spec.0)
                 .ok_or("Parameter index out of range")?;
             param.name
         }
     };
-    
+
     // Store in object properties
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     let param_name_bytes = lookup_symbol(vm, param_name_sym).to_vec();
     let param_name_handle = vm.arena.alloc(Val::String(Rc::new(param_name_bytes)));
-    
+
     let function_name_handle = vm.arena.alloc(Val::String(Rc::new(function_name)));
     let class_name_handle = if let Some(cn) = class_name {
         vm.arena.alloc(Val::String(Rc::new(cn)))
     } else {
         vm.arena.alloc(Val::Null)
     };
-    
+
     let is_method_handle = vm.arena.alloc(Val::Bool(is_method));
-    
+
     let name_sym = vm.context.interner.intern(b"name");
     let function_sym = vm.context.interner.intern(b"function");
     let class_sym_prop = vm.context.interner.intern(b"class");
     let is_method_sym = vm.context.interner.intern(b"is_method");
-    
+
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, param_name_handle);
-        obj_data.properties.insert(function_sym, function_name_handle);
-        obj_data.properties.insert(class_sym_prop, class_name_handle);
+        obj_data
+            .properties
+            .insert(function_sym, function_name_handle);
+        obj_data
+            .properties
+            .insert(class_sym_prop, class_name_handle);
         obj_data.properties.insert(is_method_sym, is_method_handle);
     }
 
@@ -3650,7 +4071,9 @@ pub fn reflection_parameter_construct(vm: &mut VM, args: &[Handle]) -> Result<Ha
 }
 
 /// Get ReflectionParameter internal data
-fn get_reflection_parameter_info(vm: &mut VM) -> Result<(UnifiedParam, Option<Symbol>, Symbol), String> {
+fn get_reflection_parameter_info(
+    vm: &mut VM,
+) -> Result<(UnifiedParam, Option<Symbol>, Symbol), String> {
     let this_handle = vm
         .frames
         .last()
@@ -3661,13 +4084,13 @@ fn get_reflection_parameter_info(vm: &mut VM) -> Result<(UnifiedParam, Option<Sy
     let function_sym = vm.context.interner.intern(b"function");
     let class_sym_prop = vm.context.interner.intern(b"class");
     let is_method_sym = vm.context.interner.intern(b"is_method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         let param_name_sym = if let Some(&h) = obj_data.properties.get(&name_sym) {
             if let Val::String(s) = &vm.arena.get(h).value {
@@ -3712,26 +4135,43 @@ fn get_reflection_parameter_info(vm: &mut VM) -> Result<(UnifiedParam, Option<Sy
         if is_method && class_name.is_some() {
             let class_sym = class_name.unwrap();
             let class_def = get_class_def(vm, class_sym)?;
-            
-            let method_lowercase: Vec<u8> = function_name.iter().map(|b| b.to_ascii_lowercase()).collect();
+
+            let method_lowercase: Vec<u8> = function_name
+                .iter()
+                .map(|b| b.to_ascii_lowercase())
+                .collect();
             let method_sym = vm.context.interner.intern(&method_lowercase);
-            let method_entry = class_def.methods.get(&method_sym)
+            let method_entry = class_def
+                .methods
+                .get(&method_sym)
                 .ok_or("Method not found")?;
-            
-            let param = method_entry.signature.parameters.iter()
+
+            let param = method_entry
+                .signature
+                .parameters
+                .iter()
                 .find(|p| p.name == param_name_sym)
                 .ok_or("Parameter not found")?;
-            
-            return Ok((UnifiedParam::from_parameter_info(param), Some(class_sym), method_sym));
+
+            return Ok((
+                UnifiedParam::from_parameter_info(param),
+                Some(class_sym),
+                method_sym,
+            ));
         } else {
             let func_sym = vm.context.interner.intern(&function_name);
-            let user_func = vm.context.user_functions.get(&func_sym)
+            let user_func = vm
+                .context
+                .user_functions
+                .get(&func_sym)
                 .ok_or("Function not found")?;
-            
-            let param = user_func.params.iter()
+
+            let param = user_func
+                .params
+                .iter()
                 .find(|p| p.name == param_name_sym)
                 .ok_or("Parameter not found")?;
-            
+
             return Ok((UnifiedParam::from_func_param(param), None, func_sym));
         }
     }
@@ -3748,13 +4188,13 @@ pub fn reflection_parameter_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Ha
         .ok_or("Method called outside object context")?;
 
     let name_sym = vm.context.interner.intern(b"name");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             return Ok(name_handle);
@@ -3778,7 +4218,10 @@ pub fn reflection_parameter_is_variadic(vm: &mut VM, _args: &[Handle]) -> Result
 }
 
 /// ReflectionParameter::isPassedByReference(): bool
-pub fn reflection_parameter_is_passed_by_reference(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_is_passed_by_reference(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
     Ok(vm.arena.alloc(Val::Bool(param.is_reference)))
 }
@@ -3792,25 +4235,28 @@ pub fn reflection_parameter_has_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// ReflectionParameter::allowsNull(): bool
 pub fn reflection_parameter_allows_null(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     // Check if type allows null
     let allows_null = match &param.type_hint {
         None => true, // No type hint means anything including null
         Some(TypeHint::Mixed) => true,
         Some(TypeHint::Null) => true,
-        Some(TypeHint::Union(types)) => {
-            types.iter().any(|t| matches!(t, TypeHint::Null | TypeHint::Mixed))
-        }
+        Some(TypeHint::Union(types)) => types
+            .iter()
+            .any(|t| matches!(t, TypeHint::Null | TypeHint::Mixed)),
         _ => false,
     };
-    
+
     Ok(vm.arena.alloc(Val::Bool(allows_null)))
 }
 
 /// ReflectionParameter::getDefaultValue(): mixed
-pub fn reflection_parameter_get_default_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_get_default_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     match &param.default_value {
         Some(val) => {
             // Clone and allocate the default value
@@ -3822,7 +4268,10 @@ pub fn reflection_parameter_get_default_value(vm: &mut VM, _args: &[Handle]) -> 
 }
 
 /// ReflectionParameter::isDefaultValueAvailable(): bool
-pub fn reflection_parameter_is_default_value_available(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_is_default_value_available(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
     Ok(vm.arena.alloc(Val::Bool(param.default_value.is_some())))
 }
@@ -3839,13 +4288,13 @@ pub fn reflection_parameter_get_position(vm: &mut VM, _args: &[Handle]) -> Resul
     let function_sym = vm.context.interner.intern(b"function");
     let class_sym_prop = vm.context.interner.intern(b"class");
     let is_method_sym = vm.context.interner.intern(b"is_method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         let param_name_sym = if let Some(&h) = obj_data.properties.get(&name_sym) {
             if let Val::String(s) = &vm.arena.get(h).value {
@@ -3890,10 +4339,13 @@ pub fn reflection_parameter_get_position(vm: &mut VM, _args: &[Handle]) -> Resul
 
             if let Some(class_sym) = class_name {
                 let class_def = get_class_def(vm, class_sym)?;
-                let method_lowercase: Vec<u8> = function_name.iter().map(|b| b.to_ascii_lowercase()).collect();
+                let method_lowercase: Vec<u8> = function_name
+                    .iter()
+                    .map(|b| b.to_ascii_lowercase())
+                    .collect();
                 let method_sym = vm.context.interner.intern(&method_lowercase);
                 let method_entry = get_method(&class_def, method_sym)?;
-                
+
                 for (idx, param) in method_entry.signature.parameters.iter().enumerate() {
                     if param.name == param_name_sym {
                         return Ok(vm.arena.alloc(Val::Int(idx as i64)));
@@ -3916,7 +4368,10 @@ pub fn reflection_parameter_get_position(vm: &mut VM, _args: &[Handle]) -> Resul
 }
 
 /// ReflectionParameter::getDeclaringFunction(): ReflectionFunction
-pub fn reflection_parameter_get_declaring_function(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_get_declaring_function(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let this_handle = vm
         .frames
         .last()
@@ -3925,13 +4380,13 @@ pub fn reflection_parameter_get_declaring_function(vm: &mut VM, _args: &[Handle]
 
     let function_sym = vm.context.interner.intern(b"function");
     let is_method_sym = vm.context.interner.intern(b"is_method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         let function_name = if let Some(&h) = obj_data.properties.get(&function_sym) {
             if let Val::String(s) = &vm.arena.get(h).value {
@@ -3965,20 +4420,20 @@ pub fn reflection_parameter_get_declaring_function(vm: &mut VM, _args: &[Handle]
             };
             let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
             let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-            
+
             // Set up context and call constructor
             let old_this = vm.frames.last_mut().and_then(|f| f.this);
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = Some(obj_handle);
             }
-            
+
             let func_name_handle = vm.arena.alloc(Val::String(Rc::new(function_name)));
             reflection_function_construct(vm, &[func_name_handle])?;
-            
+
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = old_this;
             }
-            
+
             return Ok(obj_handle);
         } else {
             // Regular function
@@ -3991,19 +4446,19 @@ pub fn reflection_parameter_get_declaring_function(vm: &mut VM, _args: &[Handle]
             };
             let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
             let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-            
+
             let old_this = vm.frames.last_mut().and_then(|f| f.this);
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = Some(obj_handle);
             }
-            
+
             let func_name_handle = vm.arena.alloc(Val::String(Rc::new(function_name)));
             reflection_function_construct(vm, &[func_name_handle])?;
-            
+
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = old_this;
             }
-            
+
             return Ok(obj_handle);
         }
     }
@@ -4012,7 +4467,10 @@ pub fn reflection_parameter_get_declaring_function(vm: &mut VM, _args: &[Handle]
 }
 
 /// ReflectionParameter::getDeclaringClass(): ?ReflectionClass
-pub fn reflection_parameter_get_declaring_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_get_declaring_class(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let this_handle = vm
         .frames
         .last()
@@ -4021,13 +4479,13 @@ pub fn reflection_parameter_get_declaring_class(vm: &mut VM, _args: &[Handle]) -
 
     let class_sym_prop = vm.context.interner.intern(b"class");
     let is_method_sym = vm.context.interner.intern(b"is_method");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionParameter object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         let is_method = if let Some(&h) = obj_data.properties.get(&is_method_sym) {
             match vm.arena.get(h).value {
@@ -4063,19 +4521,19 @@ pub fn reflection_parameter_get_declaring_class(vm: &mut VM, _args: &[Handle]) -
         };
         let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
         let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-        
+
         let old_this = vm.frames.last_mut().and_then(|f| f.this);
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = Some(obj_handle);
         }
-        
+
         let class_name_handle = vm.arena.alloc(Val::String(Rc::new(class_name)));
         reflection_class_construct(vm, &[class_name_handle])?;
-        
+
         if let Some(frame) = vm.frames.last_mut() {
             frame.this = old_this;
         }
-        
+
         return Ok(obj_handle);
     }
 
@@ -4085,7 +4543,7 @@ pub fn reflection_parameter_get_declaring_class(vm: &mut VM, _args: &[Handle]) -
 /// ReflectionParameter::getType(): ?ReflectionNamedType
 pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     match &param.type_hint {
         Some(type_hint) => {
             // Check if type allows null (either explicitly nullable or a union with Null)
@@ -4094,7 +4552,7 @@ pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
                 TypeHint::Mixed => true, // mixed allows null
                 _ => false,
             };
-            
+
             let (type_name, is_builtin) = match type_hint {
                 TypeHint::Class(sym) => {
                     let type_name = lookup_symbol(vm, *sym);
@@ -4115,7 +4573,8 @@ pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
                 TypeHint::Union(types) => {
                     // For nullable types (e.g., ?int), extract the non-null type
                     if types.len() == 2 && types.iter().any(|t| matches!(t, TypeHint::Null)) {
-                        let non_null_type = types.iter().find(|t| !matches!(t, TypeHint::Null)).unwrap();
+                        let non_null_type =
+                            types.iter().find(|t| !matches!(t, TypeHint::Null)).unwrap();
                         match non_null_type {
                             TypeHint::Int => ("int".to_string(), true),
                             TypeHint::Float => ("float".to_string(), true),
@@ -4134,10 +4593,10 @@ pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
                     } else {
                         ("union".to_string(), true)
                     }
-                },
+                }
                 TypeHint::Intersection(_) => ("intersection".to_string(), true), // Simplified
             };
-            
+
             // Create ReflectionNamedType object
             let reflection_named_type_sym = vm.context.interner.intern(b"ReflectionNamedType");
             let obj_data = crate::core::value::ObjectData {
@@ -4148,22 +4607,25 @@ pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
             };
             let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
             let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-            
+
             let old_this = vm.frames.last_mut().and_then(|f| f.this);
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = Some(obj_handle);
             }
-            
+
             let type_name_handle = vm.arena.alloc(Val::String(Rc::new(type_name.into_bytes())));
             let allows_null_handle = vm.arena.alloc(Val::Bool(allows_null));
             let is_builtin_handle = vm.arena.alloc(Val::Bool(is_builtin));
-            
-            reflection_named_type_construct(vm, &[type_name_handle, allows_null_handle, is_builtin_handle])?;
-            
+
+            reflection_named_type_construct(
+                vm,
+                &[type_name_handle, allows_null_handle, is_builtin_handle],
+            )?;
+
             if let Some(frame) = vm.frames.last_mut() {
                 frame.this = old_this;
             }
-            
+
             Ok(obj_handle)
         }
         None => Ok(vm.arena.alloc(Val::Null)),
@@ -4171,16 +4633,22 @@ pub fn reflection_parameter_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 }
 
 /// ReflectionParameter::canBePassedByValue(): bool
-pub fn reflection_parameter_can_be_passed_by_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_can_be_passed_by_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
     // A parameter can be passed by value if it's not passed by reference
     Ok(vm.arena.alloc(Val::Bool(!param.is_reference)))
 }
 
 /// ReflectionParameter::isDefaultValueConstant(): bool
-pub fn reflection_parameter_is_default_value_constant(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_is_default_value_constant(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     // Check if the parameter has a default value that is a constant expression
     if param.default_value.is_some() {
         // NOTE: Tracking if default is from constant requires:
@@ -4194,9 +4662,12 @@ pub fn reflection_parameter_is_default_value_constant(vm: &mut VM, _args: &[Hand
 }
 
 /// ReflectionParameter::getDefaultValueConstantName(): ?string
-pub fn reflection_parameter_get_default_value_constant_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_get_default_value_constant_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     // If the default value is a constant, return its name
     if param.default_value.is_some() {
         // NOTE: Requires storing constant_name: Option<String> in ParameterInfo
@@ -4210,7 +4681,7 @@ pub fn reflection_parameter_get_default_value_constant_name(vm: &mut VM, _args: 
 /// ReflectionParameter::isPromoted(): bool
 pub fn reflection_parameter_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let (param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     // Check if this is a promoted constructor parameter (PHP 8.0+)
     // A promoted parameter becomes a class property automatically
     // NOTE: Requires:
@@ -4221,9 +4692,12 @@ pub fn reflection_parameter_is_promoted(vm: &mut VM, _args: &[Handle]) -> Result
 }
 
 /// ReflectionParameter::getAttributes(): array
-pub fn reflection_parameter_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_parameter_get_attributes(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let (_param, _, _) = get_reflection_parameter_info(vm)?;
-    
+
     // NOTE: Parameter attributes (PHP 8.0+) require:
     // 1. Add attributes: Vec<Attribute> to ParameterInfo
     // 2. Parse #[Attr] before parameters
@@ -4235,12 +4709,15 @@ pub fn reflection_parameter_get_attributes(vm: &mut VM, _args: &[Handle]) -> Res
 /// ReflectionParameter::__toString(): string
 pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let (param, class_sym_opt, func_sym) = get_reflection_parameter_info(vm)?;
-    
+
     // Get the parameter position
     let position = if let Some(class_sym) = class_sym_opt {
         let class_def = get_class_def(vm, class_sym)?;
         if let Some(method_entry) = class_def.methods.get(&func_sym) {
-            method_entry.signature.parameters.iter()
+            method_entry
+                .signature
+                .parameters
+                .iter()
                 .position(|p| p.name == param.name)
                 .unwrap_or(0)
         } else {
@@ -4248,18 +4725,20 @@ pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<H
         }
     } else {
         if let Some(user_func) = vm.context.user_functions.get(&func_sym) {
-            user_func.params.iter()
+            user_func
+                .params
+                .iter()
                 .position(|p| p.name == param.name)
                 .unwrap_or(0)
         } else {
             0
         }
     };
-    
+
     let mut result = String::from("Parameter #");
     result.push_str(&position.to_string());
     result.push_str(" [ ");
-    
+
     // Add optional/required indicator
     if param.default_value.is_some() {
         result.push_str("<optional> ");
@@ -4268,7 +4747,7 @@ pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<H
     } else {
         result.push_str("<required> ");
     }
-    
+
     // Add type if present
     if let Some(ref type_hint) = param.type_hint {
         let type_str = match type_hint {
@@ -4287,11 +4766,12 @@ pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<H
             TypeHint::Class(sym) => {
                 let name = lookup_symbol(vm, *sym);
                 String::from_utf8_lossy(name).to_string()
-            },
+            }
             TypeHint::Union(types) => {
                 // For nullable types (e.g., ?int), format appropriately
                 if types.len() == 2 && types.iter().any(|t| matches!(t, TypeHint::Null)) {
-                    let non_null_type = types.iter().find(|t| !matches!(t, TypeHint::Null)).unwrap();
+                    let non_null_type =
+                        types.iter().find(|t| !matches!(t, TypeHint::Null)).unwrap();
                     let type_name = match non_null_type {
                         TypeHint::Int => "int",
                         TypeHint::String => "string",
@@ -4304,28 +4784,28 @@ pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<H
                 } else {
                     "mixed".to_string()
                 }
-            },
+            }
             _ => "mixed".to_string(),
         };
         result.push_str(&type_str);
         result.push(' ');
     }
-    
+
     // Add reference indicator
     if param.is_reference {
         result.push('&');
     }
-    
+
     // Add variadic indicator
     if param.is_variadic {
         result.push_str("...");
     }
-    
+
     // Add parameter name
     result.push('$');
     let param_name = lookup_symbol(vm, param.name);
     result.push_str(&String::from_utf8_lossy(param_name));
-    
+
     // Add default value if present
     if let Some(ref default_val) = param.default_value {
         result.push_str(" = ");
@@ -4336,16 +4816,16 @@ pub fn reflection_parameter_to_string(vm: &mut VM, _args: &[Handle]) -> Result<H
                 result.push('\'');
                 result.push_str(&String::from_utf8_lossy(s));
                 result.push('\'');
-            },
+            }
             Val::Bool(b) => result.push_str(if *b { "true" } else { "false" }),
             Val::Null => result.push_str("NULL"),
             Val::Array(_) => result.push_str("Array"),
             _ => result.push_str("..."),
         }
     }
-    
+
     result.push_str(" ]");
-    
+
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
@@ -4379,7 +4859,10 @@ pub fn reflection_property_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
             }
         }
         _ => {
-            return Err("ReflectionProperty::__construct() expects parameter 1 to be string or object".to_string());
+            return Err(
+                "ReflectionProperty::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            );
         }
     };
 
@@ -4387,25 +4870,29 @@ pub fn reflection_property_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
     let property_name = match arg2_val {
         Val::String(ref s) => s.as_ref().to_vec(),
         _ => {
-            return Err("ReflectionProperty::__construct() expects parameter 2 to be string".to_string());
+            return Err(
+                "ReflectionProperty::__construct() expects parameter 2 to be string".to_string(),
+            );
         }
     };
 
     // Verify property exists (check instance properties in hierarchy)
     let class_sym = vm.context.interner.intern(&class_name);
     let prop_sym = vm.context.interner.intern(&property_name);
-    
+
     // Check instance properties in the inheritance chain
     let has_instance_prop = vm.lookup_property(class_sym, prop_sym).is_some();
-    
+
     // Check static properties in the immediate class (static props aren't inherited in the same way)
     let class_def = get_class_def(vm, class_sym)?;
     let has_static_prop = class_def.static_properties.contains_key(&prop_sym);
-    
+
     if !has_instance_prop && !has_static_prop {
-        return Err(format!("Property {}::{} does not exist", 
+        return Err(format!(
+            "Property {}::{} does not exist",
             String::from_utf8_lossy(&class_name),
-            String::from_utf8_lossy(&property_name)));
+            String::from_utf8_lossy(&property_name)
+        ));
     }
 
     // Store in object properties
@@ -4423,7 +4910,9 @@ pub fn reflection_property_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(name_sym, prop_name_handle);
-        obj_data.properties.insert(class_sym_prop, class_name_handle);
+        obj_data
+            .properties
+            .insert(class_sym_prop, class_name_handle);
     }
 
     Ok(vm.arena.alloc(Val::Null))
@@ -4491,17 +4980,24 @@ pub fn reflection_property_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Han
 /// ReflectionProperty::getValue(?object $object = null): mixed
 pub fn reflection_property_get_value(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
-    
+
     if args.is_empty() {
-        return Err("ReflectionProperty::getValue() expects at least 1 argument for instance properties".to_string());
+        return Err(
+            "ReflectionProperty::getValue() expects at least 1 argument for instance properties"
+                .to_string(),
+        );
     }
 
     let obj_handle = args[0];
     let obj_val = vm.arena.get(obj_handle).value.clone();
-    
+
     let obj_payload_handle = match obj_val {
         Val::Object(h) => h,
-        _ => return Err("ReflectionProperty::getValue() expects parameter 1 to be object".to_string()),
+        _ => {
+            return Err(
+                "ReflectionProperty::getValue() expects parameter 1 to be object".to_string(),
+            );
+        }
     };
 
     if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_payload_handle).value {
@@ -4527,7 +5023,11 @@ pub fn reflection_property_set_value(vm: &mut VM, args: &[Handle]) -> Result<Han
     let obj_val = vm.arena.get(obj_handle).value.clone();
     let obj_payload_handle = match obj_val {
         Val::Object(h) => h,
-        _ => return Err("ReflectionProperty::setValue() expects parameter 1 to be object".to_string()),
+        _ => {
+            return Err(
+                "ReflectionProperty::setValue() expects parameter 1 to be object".to_string(),
+            );
+        }
     };
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(obj_payload_handle).value {
@@ -4541,17 +5041,21 @@ pub fn reflection_property_set_value(vm: &mut VM, args: &[Handle]) -> Result<Han
 pub fn reflection_property_is_public(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check static property first
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(static_prop.visibility == Visibility::Public)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(static_prop.visibility == Visibility::Public)));
     }
-    
+
     // Check instance property in hierarchy
     if let Some(prop_info) = vm.lookup_property(data.class_name, data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(prop_info.visibility == Visibility::Public)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(prop_info.visibility == Visibility::Public)));
     }
-    
+
     Err("Property not found".to_string())
 }
 
@@ -4559,17 +5063,21 @@ pub fn reflection_property_is_public(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 pub fn reflection_property_is_private(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check static property first
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(static_prop.visibility == Visibility::Private)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(static_prop.visibility == Visibility::Private)));
     }
-    
+
     // Check instance property in hierarchy
     if let Some(prop_info) = vm.lookup_property(data.class_name, data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(prop_info.visibility == Visibility::Private)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(prop_info.visibility == Visibility::Private)));
     }
-    
+
     Err("Property not found".to_string())
 }
 
@@ -4577,17 +5085,21 @@ pub fn reflection_property_is_private(vm: &mut VM, _args: &[Handle]) -> Result<H
 pub fn reflection_property_is_protected(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check static property first
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(static_prop.visibility == Visibility::Protected)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(static_prop.visibility == Visibility::Protected)));
     }
-    
+
     // Check instance property in hierarchy
     if let Some(prop_info) = vm.lookup_property(data.class_name, data.property_name) {
-        return Ok(vm.arena.alloc(Val::Bool(prop_info.visibility == Visibility::Protected)));
+        return Ok(vm
+            .arena
+            .alloc(Val::Bool(prop_info.visibility == Visibility::Protected)));
     }
-    
+
     Err("Property not found".to_string())
 }
 
@@ -4595,9 +5107,11 @@ pub fn reflection_property_is_protected(vm: &mut VM, _args: &[Handle]) -> Result
 pub fn reflection_property_is_static(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check if property is in static_properties
-    let is_static = class_def.static_properties.contains_key(&data.property_name);
+    let is_static = class_def
+        .static_properties
+        .contains_key(&data.property_name);
     Ok(vm.arena.alloc(Val::Bool(is_static)))
 }
 
@@ -4605,12 +5119,16 @@ pub fn reflection_property_is_static(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 pub fn reflection_property_is_default(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // A property is "default" if it's declared in the class (not dynamic)
     // Check both static properties and instance properties in hierarchy
-    let is_static = class_def.static_properties.contains_key(&data.property_name);
-    let is_instance = vm.lookup_property(data.class_name, data.property_name).is_some();
-    
+    let is_static = class_def
+        .static_properties
+        .contains_key(&data.property_name);
+    let is_instance = vm
+        .lookup_property(data.class_name, data.property_name)
+        .is_some();
+
     Ok(vm.arena.alloc(Val::Bool(is_static || is_instance)))
 }
 
@@ -4618,9 +5136,9 @@ pub fn reflection_property_is_default(vm: &mut VM, _args: &[Handle]) -> Result<H
 pub fn reflection_property_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     let mut modifiers = 0;
-    
+
     // Check if it's a static property first
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
         modifiers |= match static_prop.visibility {
@@ -4639,14 +5157,17 @@ pub fn reflection_property_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Resul
     } else {
         return Err("Property not found".to_string());
     }
-    
+
     Ok(vm.arena.alloc(Val::Int(modifiers as i64)))
 }
 
 /// ReflectionProperty::getDeclaringClass(): ReflectionClass
-pub fn reflection_property_get_declaring_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_get_declaring_class(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
-    
+
     // Create ReflectionClass object
     let reflection_class_sym = vm.context.interner.intern(b"ReflectionClass");
     let obj_data = crate::core::value::ObjectData {
@@ -4657,20 +5178,20 @@ pub fn reflection_property_get_declaring_class(vm: &mut VM, _args: &[Handle]) ->
     };
     let obj_payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
     let obj_handle = vm.arena.alloc(Val::Object(obj_payload_handle));
-    
+
     let old_this = vm.frames.last_mut().and_then(|f| f.this);
     if let Some(frame) = vm.frames.last_mut() {
         frame.this = Some(obj_handle);
     }
-    
+
     let class_name_bytes = lookup_symbol(vm, data.class_name).to_vec();
     let class_name_handle = vm.arena.alloc(Val::String(Rc::new(class_name_bytes)));
     reflection_class_construct(vm, &[class_name_handle])?;
-    
+
     if let Some(frame) = vm.frames.last_mut() {
         frame.this = old_this;
     }
-    
+
     Ok(obj_handle)
 }
 
@@ -4678,35 +5199,33 @@ pub fn reflection_property_get_declaring_class(vm: &mut VM, _args: &[Handle]) ->
 pub fn reflection_property_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     let class_name = String::from_utf8_lossy(lookup_symbol(vm, data.class_name));
     let prop_name = String::from_utf8_lossy(lookup_symbol(vm, data.property_name));
-    
+
     // Check both static and instance properties (including hierarchy)
-    let (visibility, is_static) = if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
-        (static_prop.visibility, true)
-    } else if let Some(prop_info) = vm.lookup_property(data.class_name, data.property_name) {
-        (prop_info.visibility, false)
-    } else {
-        return Err("Property not found".to_string());
-    };
-    
+    let (visibility, is_static) =
+        if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
+            (static_prop.visibility, true)
+        } else if let Some(prop_info) = vm.lookup_property(data.class_name, data.property_name) {
+            (prop_info.visibility, false)
+        } else {
+            return Err("Property not found".to_string());
+        };
+
     let visibility_str = match visibility {
         Visibility::Public => "public",
         Visibility::Protected => "protected",
         Visibility::Private => "private",
     };
-    
+
     let static_str = if is_static { "static " } else { "" };
-    
+
     let result = format!(
         "Property [ {}{} ${}::{} ]",
-        static_str,
-        visibility_str,
-        class_name,
-        prop_name
+        static_str, visibility_str, class_name, prop_name
     );
-    
+
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
@@ -4723,15 +5242,18 @@ pub fn reflection_property_get_attributes(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionProperty::getDefaultValue(): mixed
 /// Get the default value of the property.
-pub fn reflection_property_get_default_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_get_default_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check static properties first
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
         return Ok(vm.arena.alloc(static_prop.value.clone()));
     }
-    
+
     // NOTE: Instance property defaults require:
     // 1. Add default_values: HashMap<Symbol, Val> to ClassDef
     // 2. Store property defaults during class parsing
@@ -4741,7 +5263,10 @@ pub fn reflection_property_get_default_value(vm: &mut VM, _args: &[Handle]) -> R
 
 /// ReflectionProperty::getDocComment(): string|false
 /// Get doc comment for the property.
-pub fn reflection_property_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_get_doc_comment(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
@@ -4777,15 +5302,21 @@ pub fn reflection_property_get_type(vm: &mut VM, _args: &[Handle]) -> Result<Han
 
 /// ReflectionProperty::hasDefaultValue(): bool
 /// Check if the property has a default value.
-pub fn reflection_property_has_default_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_has_default_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Static properties always have values
-    if class_def.static_properties.contains_key(&data.property_name) {
+    if class_def
+        .static_properties
+        .contains_key(&data.property_name)
+    {
         return Ok(vm.arena.alloc(Val::Bool(true)));
     }
-    
+
     // NOTE: Instance properties need default_values tracking in ClassDef
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
@@ -4819,16 +5350,16 @@ pub fn reflection_property_is_initialized(vm: &mut VM, args: &[Handle]) -> Resul
     if args.is_empty() {
         return Err("ReflectionProperty::isInitialized() expects exactly 1 argument".to_string());
     }
-    
+
     let data = get_reflection_property_data(vm)?;
     let object_handle = args[0];
-    
+
     // Get object handle
     let obj_payload_handle = match vm.arena.get(object_handle).value {
         Val::Object(h) => h,
         _ => return Err("ReflectionProperty::isInitialized() expects object argument".to_string()),
     };
-    
+
     // Get object data
     if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_payload_handle).value {
         let is_init = obj_data.properties.contains_key(&data.property_name);
@@ -4848,15 +5379,18 @@ pub fn reflection_property_set_accessible(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionProperty::getRawDefaultValue(): mixed
 /// Get the default value without calling __get.
-pub fn reflection_property_get_raw_default_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_get_raw_default_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_property_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check for static property with default value
     if let Some(static_prop) = class_def.static_properties.get(&data.property_name) {
         return Ok(vm.arena.alloc(static_prop.value.clone()));
     }
-    
+
     // Instance properties don't have default values tracked
     Ok(vm.arena.alloc(Val::Null))
 }
@@ -4879,7 +5413,10 @@ pub fn reflection_property_get_hooks(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 
 /// ReflectionProperty::getSettableType(): ?ReflectionType
 /// Get the settable type (may differ from declared type with asymmetric visibility).
-pub fn reflection_property_get_settable_type(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_property_get_settable_type(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Asymmetric visibility (PHP 8.4): public private(set) int $x
     // Requires separate set_type: Option<TypeHint> in property metadata
     Ok(vm.arena.alloc(Val::Null))
@@ -4969,7 +5506,9 @@ fn get_reflection_class_constant_data(vm: &mut VM) -> Result<ReflectionClassCons
 /// ReflectionClassConstant::__construct(object|string $class, string $constant)
 pub fn reflection_class_constant_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() < 2 {
-        return Err("ReflectionClassConstant::__construct() expects exactly 2 arguments".to_string());
+        return Err(
+            "ReflectionClassConstant::__construct() expects exactly 2 arguments".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -4979,17 +5518,21 @@ pub fn reflection_class_constant_construct(vm: &mut VM, args: &[Handle]) -> Resu
         .ok_or("ReflectionClassConstant::__construct() called outside object context")?;
 
     // Get class name (from string or object)
-    let class_name_bytes = match vm.arena.get(args[0]).value.clone() {
-        Val::String(ref s) => s.as_ref().to_vec(),
-        Val::Object(obj_h) => {
-            if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_h).value {
-                lookup_symbol(vm, obj_data.class).to_vec()
-            } else {
-                return Err("Invalid object".to_string());
+    let class_name_bytes =
+        match vm.arena.get(args[0]).value.clone() {
+            Val::String(ref s) => s.as_ref().to_vec(),
+            Val::Object(obj_h) => {
+                if let Val::ObjPayload(obj_data) = &vm.arena.get(obj_h).value {
+                    lookup_symbol(vm, obj_data.class).to_vec()
+                } else {
+                    return Err("Invalid object".to_string());
+                }
             }
-        }
-        _ => return Err("ReflectionClassConstant::__construct() expects parameter 1 to be string or object".to_string()),
-    };
+            _ => return Err(
+                "ReflectionClassConstant::__construct() expects parameter 1 to be string or object"
+                    .to_string(),
+            ),
+        };
 
     let class_sym = vm.context.interner.intern(&class_name_bytes);
 
@@ -4997,7 +5540,12 @@ pub fn reflection_class_constant_construct(vm: &mut VM, args: &[Handle]) -> Resu
     let const_name_val = vm.arena.get(args[1]).value.clone();
     let const_name_bytes = match const_name_val {
         Val::String(ref s) => s.as_ref().to_vec(),
-        _ => return Err("ReflectionClassConstant::__construct() expects parameter 2 to be string".to_string()),
+        _ => {
+            return Err(
+                "ReflectionClassConstant::__construct() expects parameter 2 to be string"
+                    .to_string(),
+            );
+        }
     };
 
     let const_sym = vm.context.interner.intern(&const_name_bytes);
@@ -5009,7 +5557,10 @@ pub fn reflection_class_constant_construct(vm: &mut VM, args: &[Handle]) -> Resu
     if !class_def.constants.contains_key(&const_sym) {
         let class_name_str = String::from_utf8_lossy(&class_name_bytes);
         let const_name_str = String::from_utf8_lossy(&const_name_bytes);
-        return Err(format!("Constant {}::{} does not exist", class_name_str, const_name_str));
+        return Err(format!(
+            "Constant {}::{} does not exist",
+            class_name_str, const_name_str
+        ));
     }
 
     // Store in object properties
@@ -5041,7 +5592,10 @@ pub fn reflection_class_constant_get_name(vm: &mut VM, _args: &[Handle]) -> Resu
 }
 
 /// ReflectionClassConstant::getValue(): mixed
-pub fn reflection_class_constant_get_value(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_get_value(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
@@ -5053,43 +5607,61 @@ pub fn reflection_class_constant_get_value(vm: &mut VM, _args: &[Handle]) -> Res
 }
 
 /// ReflectionClassConstant::isPublic(): bool
-pub fn reflection_class_constant_is_public(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_is_public(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
     if let Some((_val, visibility)) = class_def.constants.get(&data.constant_name) {
-        Ok(vm.arena.alloc(Val::Bool(matches!(visibility, Visibility::Public))))
+        Ok(vm
+            .arena
+            .alloc(Val::Bool(matches!(visibility, Visibility::Public))))
     } else {
         Err("Constant not found".to_string())
     }
 }
 
 /// ReflectionClassConstant::isPrivate(): bool
-pub fn reflection_class_constant_is_private(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_is_private(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
     if let Some((_val, visibility)) = class_def.constants.get(&data.constant_name) {
-        Ok(vm.arena.alloc(Val::Bool(matches!(visibility, Visibility::Private))))
+        Ok(vm
+            .arena
+            .alloc(Val::Bool(matches!(visibility, Visibility::Private))))
     } else {
         Err("Constant not found".to_string())
     }
 }
 
 /// ReflectionClassConstant::isProtected(): bool
-pub fn reflection_class_constant_is_protected(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_is_protected(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
     if let Some((_val, visibility)) = class_def.constants.get(&data.constant_name) {
-        Ok(vm.arena.alloc(Val::Bool(matches!(visibility, Visibility::Protected))))
+        Ok(vm
+            .arena
+            .alloc(Val::Bool(matches!(visibility, Visibility::Protected))))
     } else {
         Err("Constant not found".to_string())
     }
 }
 
 /// ReflectionClassConstant::getModifiers(): int
-pub fn reflection_class_constant_get_modifiers(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_get_modifiers(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
@@ -5106,7 +5678,10 @@ pub fn reflection_class_constant_get_modifiers(vm: &mut VM, _args: &[Handle]) ->
 }
 
 /// ReflectionClassConstant::getDeclaringClass(): ReflectionClass
-pub fn reflection_class_constant_get_declaring_class(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_get_declaring_class(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
 
     // Create ReflectionClass object
@@ -5138,7 +5713,10 @@ pub fn reflection_class_constant_get_declaring_class(vm: &mut VM, _args: &[Handl
 }
 
 /// ReflectionClassConstant::__toString(): string
-pub fn reflection_class_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_to_string(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
@@ -5154,10 +5732,7 @@ pub fn reflection_class_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Res
 
         let result = format!(
             "Constant [ {} {} {}::{} ]",
-            visibility_str,
-            const_name,
-            class_name,
-            const_name
+            visibility_str, const_name, class_name, const_name
         );
 
         Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
@@ -5167,7 +5742,10 @@ pub fn reflection_class_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Res
 }
 
 /// ReflectionClassConstant::getAttributes(): array
-pub fn reflection_class_constant_get_attributes(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_get_attributes(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
     if let Some(attrs) = class_def.constant_attributes.get(&data.constant_name) {
@@ -5179,7 +5757,10 @@ pub fn reflection_class_constant_get_attributes(vm: &mut VM, _args: &[Handle]) -
 
 /// ReflectionClassConstant::getDocComment(): string|false
 /// Get doc comment for the constant.
-pub fn reflection_class_constant_get_doc_comment(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_get_doc_comment(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
 
@@ -5207,10 +5788,13 @@ pub fn reflection_class_constant_get_type(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionClassConstant::isEnumCase(): bool
 /// Check if the constant is an enum case.
-pub fn reflection_class_constant_is_enum_case(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_is_enum_case(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_class_constant_data(vm)?;
     let class_def = get_class_def(vm, data.class_name)?;
-    
+
     // Check if the declaring class is an enum
     Ok(vm.arena.alloc(Val::Bool(class_def.is_enum)))
 }
@@ -5225,7 +5809,10 @@ pub fn reflection_class_constant_is_final(vm: &mut VM, _args: &[Handle]) -> Resu
 
 /// ReflectionClassConstant::isDeprecated(): bool
 /// Check if the constant is deprecated.
-pub fn reflection_class_constant_is_deprecated(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_class_constant_is_deprecated(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // NOTE: Deprecation tracking requires:
     // 1. Add is_deprecated: bool or #[Deprecated] attribute
     // 2. Parse deprecation markers
@@ -5311,7 +5898,9 @@ pub fn reflection_constant_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
     let symbol_handle = vm.arena.alloc(Val::Int(constant_sym.0 as i64));
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
-        obj_data.properties.insert(constant_name_sym_key, symbol_handle);
+        obj_data
+            .properties
+            .insert(constant_name_sym_key, symbol_handle);
     }
 
     Ok(vm.arena.alloc(Val::Null))
@@ -5320,7 +5909,10 @@ pub fn reflection_constant_construct(vm: &mut VM, args: &[Handle]) -> Result<Han
 /// ReflectionConstant::getName(): string
 pub fn reflection_constant_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_constant_data(vm)?;
-    let name = vm.context.interner.lookup(data.constant_name)
+    let name = vm
+        .context
+        .interner
+        .lookup(data.constant_name)
         .ok_or("Symbol not found")?;
     Ok(vm.arena.alloc(Val::String(Rc::new(name.to_vec()))))
 }
@@ -5337,15 +5929,23 @@ pub fn reflection_constant_get_value(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 }
 
 /// ReflectionConstant::getNamespaceName(): string
-pub fn reflection_constant_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_constant_get_namespace_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let data = get_reflection_constant_data(vm)?;
-    let name = vm.context.interner.lookup(data.constant_name)
+    let name = vm
+        .context
+        .interner
+        .lookup(data.constant_name)
         .ok_or("Symbol not found")?;
     let name_str = String::from_utf8_lossy(name);
 
     if let Some(pos) = name_str.rfind('\\') {
         let namespace = &name_str[..pos];
-        Ok(vm.arena.alloc(Val::String(Rc::new(namespace.as_bytes().to_vec()))))
+        Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(namespace.as_bytes().to_vec()))))
     } else {
         Ok(vm.arena.alloc(Val::String(Rc::new(Vec::new()))))
     }
@@ -5354,13 +5954,18 @@ pub fn reflection_constant_get_namespace_name(vm: &mut VM, _args: &[Handle]) -> 
 /// ReflectionConstant::getShortName(): string
 pub fn reflection_constant_get_short_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_constant_data(vm)?;
-    let name = vm.context.interner.lookup(data.constant_name)
+    let name = vm
+        .context
+        .interner
+        .lookup(data.constant_name)
         .ok_or("Symbol not found")?;
     let name_str = String::from_utf8_lossy(name);
 
     if let Some(pos) = name_str.rfind('\\') {
         let short_name = &name_str[pos + 1..];
-        Ok(vm.arena.alloc(Val::String(Rc::new(short_name.as_bytes().to_vec()))))
+        Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(short_name.as_bytes().to_vec()))))
     } else {
         Ok(vm.arena.alloc(Val::String(Rc::new(name.to_vec()))))
     }
@@ -5376,7 +5981,7 @@ pub fn reflection_constant_is_deprecated(_vm: &mut VM, _args: &[Handle]) -> Resu
 /// ReflectionConstant::getExtension(): ?ReflectionExtension
 pub fn reflection_constant_get_extension(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_constant_data(vm)?;
-    
+
     // For now, return null as we don't track which extension defined a constant
     // In a full implementation, we would:
     // 1. Check if constant is internal (defined by core or an extension)
@@ -5386,9 +5991,12 @@ pub fn reflection_constant_get_extension(vm: &mut VM, _args: &[Handle]) -> Resul
 }
 
 /// ReflectionConstant::getExtensionName(): ?string
-pub fn reflection_constant_get_extension_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_constant_get_extension_name(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let _data = get_reflection_constant_data(vm)?;
-    
+
     // For now, return null as we don't track which extension defined a constant
     // In a full implementation, we would return the extension name (e.g., "Core", "standard", etc.)
     Ok(vm.arena.alloc(Val::Null))
@@ -5397,7 +6005,7 @@ pub fn reflection_constant_get_extension_name(vm: &mut VM, _args: &[Handle]) -> 
 /// ReflectionConstant::getFileName(): ?string
 pub fn reflection_constant_get_file_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let _data = get_reflection_constant_data(vm)?;
-    
+
     // For now, return null as we don't track file locations for constants
     // In a full implementation, we would:
     // 1. Track the file where each user-defined constant was defined
@@ -5409,7 +6017,10 @@ pub fn reflection_constant_get_file_name(vm: &mut VM, _args: &[Handle]) -> Resul
 /// ReflectionConstant::__toString(): string
 pub fn reflection_constant_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_constant_data(vm)?;
-    let name = vm.context.interner.lookup(data.constant_name)
+    let name = vm
+        .context
+        .interner
+        .lookup(data.constant_name)
         .ok_or("Symbol not found")?;
     let name_str = String::from_utf8_lossy(name);
 
@@ -5525,7 +6136,10 @@ pub fn reflection_attribute_construct(_vm: &mut VM, _args: &[Handle]) -> Result<
 /// ReflectionAttribute::getName(): string
 pub fn reflection_attribute_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_attribute_data(vm)?;
-    let name_bytes = vm.context.interner.lookup(data.name)
+    let name_bytes = vm
+        .context
+        .interner
+        .lookup(data.name)
         .ok_or("Attribute name not found")?;
     Ok(vm.arena.alloc(Val::String(Rc::new(name_bytes.to_vec()))))
 }
@@ -5533,7 +6147,7 @@ pub fn reflection_attribute_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Ha
 /// ReflectionAttribute::getArguments(): array
 pub fn reflection_attribute_get_arguments(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_attribute_data(vm)?;
-    
+
     let mut arr = ArrayData::new();
     for (i, arg) in data.arguments.iter().enumerate() {
         let arg_handle = vm.arena.alloc(arg.clone());
@@ -5541,7 +6155,7 @@ pub fn reflection_attribute_get_arguments(vm: &mut VM, _args: &[Handle]) -> Resu
         arr.map.insert(key, arg_handle);
     }
     arr.next_free = data.arguments.len() as i64;
-    
+
     Ok(vm.arena.alloc(Val::Array(Rc::new(arr))))
 }
 
@@ -5569,11 +6183,12 @@ pub fn reflection_attribute_new_instance(vm: &mut VM, _args: &[Handle]) -> Resul
             .map_err(|e| format!("{:?}", e))?;
     }
 
-    let class_def = vm
-        .context
-        .classes
-        .get(&class_sym)
-        .ok_or_else(|| format!("Attribute class \"{}\" not found", String::from_utf8_lossy(&name_bytes)))?;
+    let class_def = vm.context.classes.get(&class_sym).ok_or_else(|| {
+        format!(
+            "Attribute class \"{}\" not found",
+            String::from_utf8_lossy(&name_bytes)
+        )
+    })?;
 
     let attribute_marker = class_def.attributes.iter().find(|attr| {
         let attr_name = lookup_symbol(vm, attr.lc_name);
@@ -5704,12 +6319,12 @@ pub fn reflection_type_get_name(vm: &mut VM, _args: &[Handle]) -> Result<Handle,
 /// ReflectionType::__toString(): string
 pub fn reflection_type_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     let data = get_reflection_type_data(vm)?;
-    
+
     let mut result = String::from_utf8_lossy(&data.type_name).to_string();
     if data.allows_null {
         result = format!("?{}", result);
     }
-    
+
     Ok(vm.arena.alloc(Val::String(Rc::new(result.into_bytes()))))
 }
 
@@ -5762,8 +6377,12 @@ pub fn reflection_named_type_construct(vm: &mut VM, args: &[Handle]) -> Result<H
 
     if let Val::ObjPayload(obj_data) = &mut vm.arena.get_mut(this_obj_handle).value {
         obj_data.properties.insert(type_name_sym, type_name_handle);
-        obj_data.properties.insert(allows_null_sym, allows_null_handle);
-        obj_data.properties.insert(is_builtin_sym, is_builtin_handle);
+        obj_data
+            .properties
+            .insert(allows_null_sym, allows_null_handle);
+        obj_data
+            .properties
+            .insert(is_builtin_sym, is_builtin_handle);
     }
 
     Ok(vm.arena.alloc(Val::Null))
@@ -5827,13 +6446,13 @@ pub fn reflection_union_type_get_types(vm: &mut VM, _args: &[Handle]) -> Result<
         .ok_or("ReflectionUnionType::getTypes() called outside object context")?;
 
     let types_sym = vm.context.interner.intern(b"types");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionUnionType object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&types_handle) = obj_data.properties.get(&types_sym) {
             return Ok(types_handle);
@@ -5853,13 +6472,13 @@ pub fn reflection_union_type_allows_null(vm: &mut VM, _args: &[Handle]) -> Resul
         .ok_or("ReflectionUnionType::allowsNull() called outside object context")?;
 
     let types_sym = vm.context.interner.intern(b"types");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionUnionType object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&types_handle) = obj_data.properties.get(&types_sym) {
             // Check if any type in the union allows null
@@ -5886,9 +6505,14 @@ pub fn reflection_union_type_to_string(vm: &mut VM, _args: &[Handle]) -> Result<
 
 /// ReflectionIntersectionType::__construct(array $types)
 /// Internal constructor - typically created by other Reflection classes
-pub fn reflection_intersection_type_construct(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_intersection_type_construct(
+    vm: &mut VM,
+    args: &[Handle],
+) -> Result<Handle, String> {
     if args.is_empty() {
-        return Err("ReflectionIntersectionType::__construct() expects an array of types".to_string());
+        return Err(
+            "ReflectionIntersectionType::__construct() expects an array of types".to_string(),
+        );
     }
 
     let this_handle = vm
@@ -5918,7 +6542,10 @@ pub fn reflection_intersection_type_construct(vm: &mut VM, args: &[Handle]) -> R
 }
 
 /// ReflectionIntersectionType::getTypes(): array
-pub fn reflection_intersection_type_get_types(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_intersection_type_get_types(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     let this_handle = vm
         .frames
         .last()
@@ -5926,13 +6553,13 @@ pub fn reflection_intersection_type_get_types(vm: &mut VM, _args: &[Handle]) -> 
         .ok_or("ReflectionIntersectionType::getTypes() called outside object context")?;
 
     let types_sym = vm.context.interner.intern(b"types");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionIntersectionType object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&types_handle) = obj_data.properties.get(&types_sym) {
             return Ok(types_handle);
@@ -5944,15 +6571,23 @@ pub fn reflection_intersection_type_get_types(vm: &mut VM, _args: &[Handle]) -> 
 
 /// ReflectionIntersectionType::allowsNull(): bool
 /// Intersection types typically don't allow null (all types must be satisfied)
-pub fn reflection_intersection_type_allows_null(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_intersection_type_allows_null(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // Intersection types don't allow null by default
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 /// ReflectionIntersectionType::__toString(): string
-pub fn reflection_intersection_type_to_string(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+pub fn reflection_intersection_type_to_string(
+    vm: &mut VM,
+    _args: &[Handle],
+) -> Result<Handle, String> {
     // For intersection types, return a simplified representation
-    Ok(vm.arena.alloc(Val::String(Rc::new(b"intersection".to_vec()))))
+    Ok(vm
+        .arena
+        .alloc(Val::String(Rc::new(b"intersection".to_vec()))))
 }
 
 //=============================================================================
@@ -5968,13 +6603,13 @@ fn get_reflection_class_name(vm: &mut VM) -> Result<Symbol, String> {
         .ok_or("Reflection method called outside object context")?;
 
     let name_sym = vm.context.interner.intern(b"name");
-    
+
     let this_obj_handle = if let Val::Object(h) = vm.arena.get(this_handle).value {
         h
     } else {
         return Err("Invalid ReflectionClass object".to_string());
     };
-    
+
     if let Val::ObjPayload(obj_data) = &vm.arena.get(this_obj_handle).value {
         if let Some(&name_handle) = obj_data.properties.get(&name_sym) {
             let name_val = vm.arena.get(name_handle).value.clone();
@@ -6008,7 +6643,7 @@ impl Extension for ReflectionExtension {
     fn module_init(&self, registry: &mut ExtensionRegistry) -> ExtensionResult {
         // Register ReflectionClass
         let mut reflection_class_methods = HashMap::new();
-        
+
         reflection_class_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6017,7 +6652,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -6026,7 +6661,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isAbstract".to_vec(),
             NativeMethodEntry {
@@ -6035,7 +6670,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isFinal".to_vec(),
             NativeMethodEntry {
@@ -6044,7 +6679,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isInterface".to_vec(),
             NativeMethodEntry {
@@ -6053,7 +6688,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isTrait".to_vec(),
             NativeMethodEntry {
@@ -6062,7 +6697,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isEnum".to_vec(),
             NativeMethodEntry {
@@ -6071,7 +6706,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isInstantiable".to_vec(),
             NativeMethodEntry {
@@ -6080,7 +6715,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"hasMethod".to_vec(),
             NativeMethodEntry {
@@ -6089,7 +6724,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"hasProperty".to_vec(),
             NativeMethodEntry {
@@ -6098,7 +6733,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"hasConstant".to_vec(),
             NativeMethodEntry {
@@ -6107,7 +6742,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getMethods".to_vec(),
             NativeMethodEntry {
@@ -6116,7 +6751,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getProperties".to_vec(),
             NativeMethodEntry {
@@ -6125,7 +6760,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getConstants".to_vec(),
             NativeMethodEntry {
@@ -6134,7 +6769,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getConstant".to_vec(),
             NativeMethodEntry {
@@ -6143,7 +6778,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getParentClass".to_vec(),
             NativeMethodEntry {
@@ -6152,7 +6787,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getInterfaceNames".to_vec(),
             NativeMethodEntry {
@@ -6161,7 +6796,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"implementsInterface".to_vec(),
             NativeMethodEntry {
@@ -6170,7 +6805,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getNamespaceName".to_vec(),
             NativeMethodEntry {
@@ -6179,7 +6814,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getShortName".to_vec(),
             NativeMethodEntry {
@@ -6188,7 +6823,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"inNamespace".to_vec(),
             NativeMethodEntry {
@@ -6197,7 +6832,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -6206,7 +6841,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getConstructor".to_vec(),
             NativeMethodEntry {
@@ -6215,7 +6850,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getMethod".to_vec(),
             NativeMethodEntry {
@@ -6224,7 +6859,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getProperty".to_vec(),
             NativeMethodEntry {
@@ -6233,7 +6868,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getModifiers".to_vec(),
             NativeMethodEntry {
@@ -6242,7 +6877,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isInstance".to_vec(),
             NativeMethodEntry {
@@ -6251,7 +6886,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isSubclassOf".to_vec(),
             NativeMethodEntry {
@@ -6260,7 +6895,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"newInstance".to_vec(),
             NativeMethodEntry {
@@ -6269,7 +6904,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"newInstanceArgs".to_vec(),
             NativeMethodEntry {
@@ -6278,7 +6913,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"newInstanceWithoutConstructor".to_vec(),
             NativeMethodEntry {
@@ -6287,7 +6922,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isAnonymous".to_vec(),
             NativeMethodEntry {
@@ -6296,7 +6931,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isCloneable".to_vec(),
             NativeMethodEntry {
@@ -6305,7 +6940,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isInternal".to_vec(),
             NativeMethodEntry {
@@ -6314,7 +6949,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isUserDefined".to_vec(),
             NativeMethodEntry {
@@ -6323,7 +6958,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isIterable".to_vec(),
             NativeMethodEntry {
@@ -6332,7 +6967,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getAttributes".to_vec(),
             NativeMethodEntry {
@@ -6341,7 +6976,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getDefaultProperties".to_vec(),
             NativeMethodEntry {
@@ -6350,7 +6985,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getDocComment".to_vec(),
             NativeMethodEntry {
@@ -6359,7 +6994,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getFileName".to_vec(),
             NativeMethodEntry {
@@ -6368,7 +7003,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getStartLine".to_vec(),
             NativeMethodEntry {
@@ -6377,7 +7012,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getEndLine".to_vec(),
             NativeMethodEntry {
@@ -6386,7 +7021,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getInterfaces".to_vec(),
             NativeMethodEntry {
@@ -6395,7 +7030,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getStaticProperties".to_vec(),
             NativeMethodEntry {
@@ -6404,7 +7039,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getStaticPropertyValue".to_vec(),
             NativeMethodEntry {
@@ -6413,7 +7048,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"setStaticPropertyValue".to_vec(),
             NativeMethodEntry {
@@ -6422,7 +7057,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getTraitNames".to_vec(),
             NativeMethodEntry {
@@ -6431,7 +7066,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getTraits".to_vec(),
             NativeMethodEntry {
@@ -6440,7 +7075,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getTraitAliases".to_vec(),
             NativeMethodEntry {
@@ -6449,7 +7084,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isReadOnly".to_vec(),
             NativeMethodEntry {
@@ -6458,7 +7093,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getReflectionConstant".to_vec(),
             NativeMethodEntry {
@@ -6467,7 +7102,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getReflectionConstants".to_vec(),
             NativeMethodEntry {
@@ -6476,7 +7111,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getExtension".to_vec(),
             NativeMethodEntry {
@@ -6485,7 +7120,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getExtensionName".to_vec(),
             NativeMethodEntry {
@@ -6494,7 +7129,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isIterateable".to_vec(),
             NativeMethodEntry {
@@ -6503,7 +7138,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"getLazyInitializer".to_vec(),
             NativeMethodEntry {
@@ -6512,7 +7147,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"initializeLazyObject".to_vec(),
             NativeMethodEntry {
@@ -6521,7 +7156,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"isUninitializedLazyObject".to_vec(),
             NativeMethodEntry {
@@ -6530,7 +7165,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"markLazyObjectAsInitialized".to_vec(),
             NativeMethodEntry {
@@ -6539,7 +7174,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"newLazyGhost".to_vec(),
             NativeMethodEntry {
@@ -6548,7 +7183,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"newLazyProxy".to_vec(),
             NativeMethodEntry {
@@ -6557,7 +7192,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"resetAsLazyGhost".to_vec(),
             NativeMethodEntry {
@@ -6566,7 +7201,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_methods.insert(
             b"resetAsLazyProxy".to_vec(),
             NativeMethodEntry {
@@ -6592,7 +7227,7 @@ impl Extension for ReflectionExtension {
         // Register ReflectionObject (extends ReflectionClass)
         // ReflectionObject inherits all methods from ReflectionClass
         let mut reflection_object_methods = HashMap::new();
-        
+
         reflection_object_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6617,7 +7252,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionEnum (extends ReflectionClass)
         let mut reflection_enum_methods = HashMap::new();
-        
+
         reflection_enum_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6626,7 +7261,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_methods.insert(
             b"isBacked".to_vec(),
             NativeMethodEntry {
@@ -6635,7 +7270,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_methods.insert(
             b"getBackingType".to_vec(),
             NativeMethodEntry {
@@ -6644,7 +7279,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_methods.insert(
             b"hasCase".to_vec(),
             NativeMethodEntry {
@@ -6653,7 +7288,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_methods.insert(
             b"getCase".to_vec(),
             NativeMethodEntry {
@@ -6662,7 +7297,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_methods.insert(
             b"getCases".to_vec(),
             NativeMethodEntry {
@@ -6687,7 +7322,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionEnumUnitCase (extends ReflectionClassConstant)
         let mut reflection_enum_unit_case_methods = HashMap::new();
-        
+
         reflection_enum_unit_case_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6696,7 +7331,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_unit_case_methods.insert(
             b"getEnum".to_vec(),
             NativeMethodEntry {
@@ -6705,7 +7340,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_enum_unit_case_methods.insert(
             b"getValue".to_vec(),
             NativeMethodEntry {
@@ -6730,7 +7365,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionEnumBackedCase (extends ReflectionEnumUnitCase)
         let mut reflection_enum_backed_case_methods = HashMap::new();
-        
+
         reflection_enum_backed_case_methods.insert(
             b"getBackingValue".to_vec(),
             NativeMethodEntry {
@@ -6755,7 +7390,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionExtension
         let mut reflection_extension_methods = HashMap::new();
-        
+
         reflection_extension_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6764,7 +7399,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -6773,7 +7408,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getVersion".to_vec(),
             NativeMethodEntry {
@@ -6782,7 +7417,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getFunctions".to_vec(),
             NativeMethodEntry {
@@ -6791,7 +7426,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getConstants".to_vec(),
             NativeMethodEntry {
@@ -6800,7 +7435,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getINIEntries".to_vec(),
             NativeMethodEntry {
@@ -6809,7 +7444,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getClasses".to_vec(),
             NativeMethodEntry {
@@ -6818,7 +7453,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getClassNames".to_vec(),
             NativeMethodEntry {
@@ -6827,7 +7462,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"getDependencies".to_vec(),
             NativeMethodEntry {
@@ -6836,7 +7471,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"info".to_vec(),
             NativeMethodEntry {
@@ -6845,7 +7480,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"isPersistent".to_vec(),
             NativeMethodEntry {
@@ -6854,7 +7489,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_extension_methods.insert(
             b"isTemporary".to_vec(),
             NativeMethodEntry {
@@ -6879,7 +7514,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionZendExtension
         let mut reflection_zend_extension_methods = HashMap::new();
-        
+
         reflection_zend_extension_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6888,7 +7523,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_zend_extension_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -6897,7 +7532,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_zend_extension_methods.insert(
             b"getVersion".to_vec(),
             NativeMethodEntry {
@@ -6906,7 +7541,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_zend_extension_methods.insert(
             b"getAuthor".to_vec(),
             NativeMethodEntry {
@@ -6915,7 +7550,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_zend_extension_methods.insert(
             b"getURL".to_vec(),
             NativeMethodEntry {
@@ -6924,7 +7559,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_zend_extension_methods.insert(
             b"getCopyright".to_vec(),
             NativeMethodEntry {
@@ -6949,7 +7584,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionGenerator
         let mut reflection_generator_methods = HashMap::new();
-        
+
         reflection_generator_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -6958,7 +7593,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getExecutingFile".to_vec(),
             NativeMethodEntry {
@@ -6967,7 +7602,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getExecutingLine".to_vec(),
             NativeMethodEntry {
@@ -6976,7 +7611,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getExecutingGenerator".to_vec(),
             NativeMethodEntry {
@@ -6985,7 +7620,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getFunction".to_vec(),
             NativeMethodEntry {
@@ -6994,7 +7629,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getThis".to_vec(),
             NativeMethodEntry {
@@ -7003,7 +7638,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"getTrace".to_vec(),
             NativeMethodEntry {
@@ -7012,7 +7647,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_generator_methods.insert(
             b"isClosed".to_vec(),
             NativeMethodEntry {
@@ -7037,7 +7672,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionFiber
         let mut reflection_fiber_methods = HashMap::new();
-        
+
         reflection_fiber_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -7046,7 +7681,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_fiber_methods.insert(
             b"getFiber".to_vec(),
             NativeMethodEntry {
@@ -7055,7 +7690,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_fiber_methods.insert(
             b"getCallable".to_vec(),
             NativeMethodEntry {
@@ -7064,7 +7699,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_fiber_methods.insert(
             b"getExecutingFile".to_vec(),
             NativeMethodEntry {
@@ -7073,7 +7708,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_fiber_methods.insert(
             b"getExecutingLine".to_vec(),
             NativeMethodEntry {
@@ -7082,7 +7717,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_fiber_methods.insert(
             b"getTrace".to_vec(),
             NativeMethodEntry {
@@ -7107,7 +7742,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionFunctionAbstract (abstract class)
         let mut reflection_function_abstract_methods = HashMap::new();
-        
+
         reflection_function_abstract_methods.insert(
             b"getClosureScopeClass".to_vec(),
             NativeMethodEntry {
@@ -7116,7 +7751,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getClosureThis".to_vec(),
             NativeMethodEntry {
@@ -7125,7 +7760,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getClosureUsedVariables".to_vec(),
             NativeMethodEntry {
@@ -7134,7 +7769,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getDocComment".to_vec(),
             NativeMethodEntry {
@@ -7143,7 +7778,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getEndLine".to_vec(),
             NativeMethodEntry {
@@ -7152,7 +7787,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getExtension".to_vec(),
             NativeMethodEntry {
@@ -7161,7 +7796,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getExtensionName".to_vec(),
             NativeMethodEntry {
@@ -7170,7 +7805,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getReturnType".to_vec(),
             NativeMethodEntry {
@@ -7179,7 +7814,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getStartLine".to_vec(),
             NativeMethodEntry {
@@ -7188,7 +7823,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getStaticVariables".to_vec(),
             NativeMethodEntry {
@@ -7197,7 +7832,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"hasReturnType".to_vec(),
             NativeMethodEntry {
@@ -7206,7 +7841,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"isDeprecated".to_vec(),
             NativeMethodEntry {
@@ -7215,7 +7850,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"hasTentativeReturnType".to_vec(),
             NativeMethodEntry {
@@ -7224,7 +7859,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_abstract_methods.insert(
             b"getTentativeReturnType".to_vec(),
             NativeMethodEntry {
@@ -7243,13 +7878,13 @@ impl Extension for ReflectionExtension {
             interfaces: vec![],
             methods: reflection_function_abstract_methods,
             constants: HashMap::new(),
-            constructor: None,  // Abstract class - cannot be instantiated
+            constructor: None, // Abstract class - cannot be instantiated
             extension_name: None,
         });
 
         // Register Reflection (static utility class)
         let mut reflection_methods = HashMap::new();
-        
+
         reflection_methods.insert(
             b"export".to_vec(),
             NativeMethodEntry {
@@ -7258,7 +7893,7 @@ impl Extension for ReflectionExtension {
                 is_static: true,
             },
         );
-        
+
         reflection_methods.insert(
             b"getModifierNames".to_vec(),
             NativeMethodEntry {
@@ -7277,7 +7912,7 @@ impl Extension for ReflectionExtension {
             interfaces: vec![],
             methods: reflection_methods,
             constants: HashMap::new(),
-            constructor: None,  // No constructor for static class
+            constructor: None, // No constructor for static class
             extension_name: None,
         });
 
@@ -7289,9 +7924,9 @@ impl Extension for ReflectionExtension {
             is_trait: false,
             is_final: false,
             interfaces: vec![],
-            methods: HashMap::new(),  // Inherits all methods from Exception
+            methods: HashMap::new(), // Inherits all methods from Exception
             constants: HashMap::new(),
-            constructor: None,  // Uses Exception's constructor
+            constructor: None, // Uses Exception's constructor
             extension_name: None,
         });
 
@@ -7299,11 +7934,11 @@ impl Extension for ReflectionExtension {
         registry.register_class(NativeClassDef {
             name: b"Reflector".to_vec(),
             parent: None,
-            is_interface: true,  // This is an interface
+            is_interface: true, // This is an interface
             is_trait: false,
             is_final: false,
             interfaces: vec![],
-            methods: HashMap::new(),  // Interface methods are abstract
+            methods: HashMap::new(), // Interface methods are abstract
             constants: HashMap::new(),
             constructor: None,
             extension_name: None,
@@ -7311,16 +7946,16 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionReference
         let mut reflection_reference_methods = HashMap::new();
-        
+
         reflection_reference_methods.insert(
             b"fromArrayElement".to_vec(),
             NativeMethodEntry {
                 handler: reflection_reference_from_array_element,
                 visibility: Visibility::Public,
-                is_static: true,  // Static method
+                is_static: true, // Static method
             },
         );
-        
+
         reflection_reference_methods.insert(
             b"getId".to_vec(),
             NativeMethodEntry {
@@ -7339,13 +7974,13 @@ impl Extension for ReflectionExtension {
             interfaces: vec![],
             methods: reflection_reference_methods,
             constants: HashMap::new(),
-            constructor: None,  // No explicit constructor, uses default
+            constructor: None, // No explicit constructor, uses default
             extension_name: None,
         });
 
         // Register ReflectionMethod
         let mut reflection_method_methods = HashMap::new();
-        
+
         reflection_method_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -7354,7 +7989,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -7363,7 +7998,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"getDeclaringClass".to_vec(),
             NativeMethodEntry {
@@ -7372,7 +8007,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"getModifiers".to_vec(),
             NativeMethodEntry {
@@ -7390,7 +8025,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isPublic".to_vec(),
             NativeMethodEntry {
@@ -7399,7 +8034,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isPrivate".to_vec(),
             NativeMethodEntry {
@@ -7408,7 +8043,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isProtected".to_vec(),
             NativeMethodEntry {
@@ -7417,7 +8052,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isAbstract".to_vec(),
             NativeMethodEntry {
@@ -7426,7 +8061,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isFinal".to_vec(),
             NativeMethodEntry {
@@ -7435,7 +8070,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isStatic".to_vec(),
             NativeMethodEntry {
@@ -7444,7 +8079,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isConstructor".to_vec(),
             NativeMethodEntry {
@@ -7453,7 +8088,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"isDestructor".to_vec(),
             NativeMethodEntry {
@@ -7462,7 +8097,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -7471,7 +8106,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"invoke".to_vec(),
             NativeMethodEntry {
@@ -7480,7 +8115,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_method_methods.insert(
             b"invokeArgs".to_vec(),
             NativeMethodEntry {
@@ -7505,7 +8140,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionParameter
         let mut reflection_parameter_methods = HashMap::new();
-        
+
         reflection_parameter_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -7514,7 +8149,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -7523,7 +8158,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isOptional".to_vec(),
             NativeMethodEntry {
@@ -7532,7 +8167,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isVariadic".to_vec(),
             NativeMethodEntry {
@@ -7541,7 +8176,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isPassedByReference".to_vec(),
             NativeMethodEntry {
@@ -7550,7 +8185,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"hasType".to_vec(),
             NativeMethodEntry {
@@ -7559,7 +8194,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"allowsNull".to_vec(),
             NativeMethodEntry {
@@ -7568,7 +8203,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getDefaultValue".to_vec(),
             NativeMethodEntry {
@@ -7577,7 +8212,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isDefaultValueAvailable".to_vec(),
             NativeMethodEntry {
@@ -7586,7 +8221,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getPosition".to_vec(),
             NativeMethodEntry {
@@ -7595,7 +8230,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getDeclaringFunction".to_vec(),
             NativeMethodEntry {
@@ -7604,7 +8239,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getDeclaringClass".to_vec(),
             NativeMethodEntry {
@@ -7613,7 +8248,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getType".to_vec(),
             NativeMethodEntry {
@@ -7622,7 +8257,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"canBePassedByValue".to_vec(),
             NativeMethodEntry {
@@ -7631,7 +8266,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isDefaultValueConstant".to_vec(),
             NativeMethodEntry {
@@ -7640,7 +8275,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getDefaultValueConstantName".to_vec(),
             NativeMethodEntry {
@@ -7649,7 +8284,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"isPromoted".to_vec(),
             NativeMethodEntry {
@@ -7658,7 +8293,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"getAttributes".to_vec(),
             NativeMethodEntry {
@@ -7667,7 +8302,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_parameter_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -7692,7 +8327,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionFunction
         let mut reflection_function_methods = HashMap::new();
-        
+
         reflection_function_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -7701,7 +8336,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -7710,7 +8345,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getNumberOfParameters".to_vec(),
             NativeMethodEntry {
@@ -7719,7 +8354,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getNumberOfRequiredParameters".to_vec(),
             NativeMethodEntry {
@@ -7728,7 +8363,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getParameters".to_vec(),
             NativeMethodEntry {
@@ -7746,7 +8381,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isUserDefined".to_vec(),
             NativeMethodEntry {
@@ -7755,7 +8390,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isInternal".to_vec(),
             NativeMethodEntry {
@@ -7764,7 +8399,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isVariadic".to_vec(),
             NativeMethodEntry {
@@ -7773,7 +8408,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"returnsReference".to_vec(),
             NativeMethodEntry {
@@ -7782,7 +8417,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getNamespaceName".to_vec(),
             NativeMethodEntry {
@@ -7791,7 +8426,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getShortName".to_vec(),
             NativeMethodEntry {
@@ -7800,7 +8435,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"inNamespace".to_vec(),
             NativeMethodEntry {
@@ -7809,7 +8444,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isClosure".to_vec(),
             NativeMethodEntry {
@@ -7818,7 +8453,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isGenerator".to_vec(),
             NativeMethodEntry {
@@ -7827,7 +8462,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"invoke".to_vec(),
             NativeMethodEntry {
@@ -7836,7 +8471,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"invokeArgs".to_vec(),
             NativeMethodEntry {
@@ -7845,7 +8480,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isAnonymous".to_vec(),
             NativeMethodEntry {
@@ -7854,7 +8489,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"isDisabled".to_vec(),
             NativeMethodEntry {
@@ -7863,7 +8498,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -7872,7 +8507,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getClosure".to_vec(),
             NativeMethodEntry {
@@ -7881,7 +8516,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_function_methods.insert(
             b"getFileName".to_vec(),
             NativeMethodEntry {
@@ -7906,7 +8541,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionProperty
         let mut reflection_property_methods = HashMap::new();
-        
+
         reflection_property_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -7915,7 +8550,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -7924,7 +8559,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getValue".to_vec(),
             NativeMethodEntry {
@@ -7933,7 +8568,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"setValue".to_vec(),
             NativeMethodEntry {
@@ -7942,7 +8577,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isPublic".to_vec(),
             NativeMethodEntry {
@@ -7951,7 +8586,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isPrivate".to_vec(),
             NativeMethodEntry {
@@ -7960,7 +8595,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isProtected".to_vec(),
             NativeMethodEntry {
@@ -7969,7 +8604,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isStatic".to_vec(),
             NativeMethodEntry {
@@ -7978,7 +8613,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isDefault".to_vec(),
             NativeMethodEntry {
@@ -7987,7 +8622,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getModifiers".to_vec(),
             NativeMethodEntry {
@@ -7996,7 +8631,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getDeclaringClass".to_vec(),
             NativeMethodEntry {
@@ -8005,7 +8640,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8014,7 +8649,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getAttributes".to_vec(),
             NativeMethodEntry {
@@ -8023,7 +8658,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getDefaultValue".to_vec(),
             NativeMethodEntry {
@@ -8032,7 +8667,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getDocComment".to_vec(),
             NativeMethodEntry {
@@ -8041,7 +8676,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getType".to_vec(),
             NativeMethodEntry {
@@ -8050,7 +8685,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"hasDefaultValue".to_vec(),
             NativeMethodEntry {
@@ -8059,7 +8694,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"hasType".to_vec(),
             NativeMethodEntry {
@@ -8068,7 +8703,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isPromoted".to_vec(),
             NativeMethodEntry {
@@ -8077,7 +8712,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isReadOnly".to_vec(),
             NativeMethodEntry {
@@ -8086,7 +8721,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isInitialized".to_vec(),
             NativeMethodEntry {
@@ -8095,7 +8730,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"setAccessible".to_vec(),
             NativeMethodEntry {
@@ -8104,7 +8739,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getRawDefaultValue".to_vec(),
             NativeMethodEntry {
@@ -8113,7 +8748,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"hasHooks".to_vec(),
             NativeMethodEntry {
@@ -8122,7 +8757,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getHooks".to_vec(),
             NativeMethodEntry {
@@ -8131,7 +8766,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"getSettableType".to_vec(),
             NativeMethodEntry {
@@ -8140,7 +8775,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isFinal".to_vec(),
             NativeMethodEntry {
@@ -8149,7 +8784,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isLazy".to_vec(),
             NativeMethodEntry {
@@ -8158,7 +8793,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_property_methods.insert(
             b"isVirtual".to_vec(),
             NativeMethodEntry {
@@ -8183,7 +8818,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionClassConstant
         let mut reflection_class_constant_methods = HashMap::new();
-        
+
         reflection_class_constant_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8192,7 +8827,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -8201,7 +8836,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getValue".to_vec(),
             NativeMethodEntry {
@@ -8210,7 +8845,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isPublic".to_vec(),
             NativeMethodEntry {
@@ -8219,7 +8854,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isPrivate".to_vec(),
             NativeMethodEntry {
@@ -8228,7 +8863,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isProtected".to_vec(),
             NativeMethodEntry {
@@ -8237,7 +8872,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getModifiers".to_vec(),
             NativeMethodEntry {
@@ -8246,7 +8881,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getDeclaringClass".to_vec(),
             NativeMethodEntry {
@@ -8255,7 +8890,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8264,7 +8899,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getAttributes".to_vec(),
             NativeMethodEntry {
@@ -8273,7 +8908,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getDocComment".to_vec(),
             NativeMethodEntry {
@@ -8282,7 +8917,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"hasType".to_vec(),
             NativeMethodEntry {
@@ -8291,7 +8926,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"getType".to_vec(),
             NativeMethodEntry {
@@ -8300,7 +8935,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isEnumCase".to_vec(),
             NativeMethodEntry {
@@ -8309,7 +8944,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isFinal".to_vec(),
             NativeMethodEntry {
@@ -8318,7 +8953,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_class_constant_methods.insert(
             b"isDeprecated".to_vec(),
             NativeMethodEntry {
@@ -8343,7 +8978,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionConstant
         let mut reflection_constant_methods = HashMap::new();
-        
+
         reflection_constant_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8352,7 +8987,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -8361,7 +8996,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getValue".to_vec(),
             NativeMethodEntry {
@@ -8370,7 +9005,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getNamespaceName".to_vec(),
             NativeMethodEntry {
@@ -8379,7 +9014,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getShortName".to_vec(),
             NativeMethodEntry {
@@ -8388,7 +9023,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"isDeprecated".to_vec(),
             NativeMethodEntry {
@@ -8397,7 +9032,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getExtension".to_vec(),
             NativeMethodEntry {
@@ -8406,7 +9041,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getExtensionName".to_vec(),
             NativeMethodEntry {
@@ -8415,7 +9050,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"getFileName".to_vec(),
             NativeMethodEntry {
@@ -8424,7 +9059,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_constant_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8449,7 +9084,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionAttribute
         let mut reflection_attribute_methods = HashMap::new();
-        
+
         reflection_attribute_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8458,7 +9093,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_attribute_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -8467,7 +9102,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_attribute_methods.insert(
             b"getArguments".to_vec(),
             NativeMethodEntry {
@@ -8476,7 +9111,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_attribute_methods.insert(
             b"getTarget".to_vec(),
             NativeMethodEntry {
@@ -8485,7 +9120,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_attribute_methods.insert(
             b"isRepeated".to_vec(),
             NativeMethodEntry {
@@ -8494,7 +9129,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_attribute_methods.insert(
             b"newInstance".to_vec(),
             NativeMethodEntry {
@@ -8505,10 +9140,8 @@ impl Extension for ReflectionExtension {
         );
 
         let mut reflection_attribute_constants = HashMap::new();
-        reflection_attribute_constants.insert(
-            b"IS_INSTANCEOF".to_vec(),
-            (Val::Int(2), Visibility::Public),
-        );
+        reflection_attribute_constants
+            .insert(b"IS_INSTANCEOF".to_vec(), (Val::Int(2), Visibility::Public));
 
         registry.register_class(NativeClassDef {
             name: b"ReflectionAttribute".to_vec(),
@@ -8525,7 +9158,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionType (base class)
         let mut reflection_type_methods = HashMap::new();
-        
+
         reflection_type_methods.insert(
             b"allowsNull".to_vec(),
             NativeMethodEntry {
@@ -8534,7 +9167,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_type_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -8543,7 +9176,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_type_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8568,7 +9201,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionNamedType (extends ReflectionType)
         let mut reflection_named_type_methods = HashMap::new();
-        
+
         reflection_named_type_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8577,7 +9210,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_named_type_methods.insert(
             b"getName".to_vec(),
             NativeMethodEntry {
@@ -8586,7 +9219,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_named_type_methods.insert(
             b"isBuiltin".to_vec(),
             NativeMethodEntry {
@@ -8595,7 +9228,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_named_type_methods.insert(
             b"allowsNull".to_vec(),
             NativeMethodEntry {
@@ -8604,7 +9237,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_named_type_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8629,7 +9262,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionUnionType (extends ReflectionType)
         let mut reflection_union_type_methods = HashMap::new();
-        
+
         reflection_union_type_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8638,7 +9271,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_union_type_methods.insert(
             b"getTypes".to_vec(),
             NativeMethodEntry {
@@ -8647,7 +9280,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_union_type_methods.insert(
             b"allowsNull".to_vec(),
             NativeMethodEntry {
@@ -8656,7 +9289,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_union_type_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {
@@ -8681,7 +9314,7 @@ impl Extension for ReflectionExtension {
 
         // Register ReflectionIntersectionType (extends ReflectionType)
         let mut reflection_intersection_type_methods = HashMap::new();
-        
+
         reflection_intersection_type_methods.insert(
             b"__construct".to_vec(),
             NativeMethodEntry {
@@ -8690,7 +9323,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_intersection_type_methods.insert(
             b"getTypes".to_vec(),
             NativeMethodEntry {
@@ -8699,7 +9332,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_intersection_type_methods.insert(
             b"allowsNull".to_vec(),
             NativeMethodEntry {
@@ -8708,7 +9341,7 @@ impl Extension for ReflectionExtension {
                 is_static: false,
             },
         );
-        
+
         reflection_intersection_type_methods.insert(
             b"__toString".to_vec(),
             NativeMethodEntry {

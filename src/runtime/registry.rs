@@ -1,5 +1,5 @@
 use super::context::{NativeHandler, RequestContext};
-use super::extension::{Extension, ExtensionResult};
+use super::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::core::value::{Val, Visibility};
 use std::collections::HashMap;
 
@@ -149,6 +149,18 @@ impl ExtensionRegistry {
     /// Get list of all loaded extension names
     pub fn get_extensions(&self) -> Vec<&str> {
         self.extension_map.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get extension metadata by name (case-insensitive).
+    pub fn get_extension_info_by_name_ci(&self, name: &str) -> Option<ExtensionInfo> {
+        for (ext_name, &index) in &self.extension_map {
+            if ext_name.eq_ignore_ascii_case(name) {
+                if let Some(ext) = self.extensions.get(index) {
+                    return Some(ext.info());
+                }
+            }
+        }
+        None
     }
 
     /// Register an extension and call its MINIT hook
