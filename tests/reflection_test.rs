@@ -1998,14 +1998,47 @@ fn test_reflection_class_get_doc_comment() {
 
 #[test]
 fn test_reflection_class_get_file_name() {
-    let result = run_php(r#"<?php
+    use php_rs::compiler::emitter::Emitter;
+    use php_rs::runtime::context::{EngineBuilder, RequestContext};
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("TestClass.php");
+    let file_path_str = file_path.to_string_lossy().into_owned();
+
+    let source = r#"<?php
         class TestClass {}
-        
         $rc = new ReflectionClass('TestClass');
         return $rc->getFileName();
-    "#);
-    
-    assert_eq!(result, Val::Bool(false));
+    "#;
+
+    let arena = bumpalo::Bump::new();
+    let lexer = php_rs::parser::lexer::Lexer::new(source.as_bytes());
+    let mut parser = php_rs::parser::parser::Parser::new(lexer, &arena);
+    let program = parser.parse_program();
+    assert!(program.errors.is_empty());
+
+    let context = EngineBuilder::new()
+        .with_core_extensions()
+        .build()
+        .expect("Failed to build engine");
+    let mut request_context = RequestContext::new(context);
+    let emitter = Emitter::new(source.as_bytes(), &mut request_context.interner)
+        .with_file_path(file_path_str.clone());
+    let (chunk, _) = emitter.compile(&program.statements);
+
+    let mut vm = VM::new_with_context(request_context);
+    vm.run(Rc::new(chunk)).expect("execution failed");
+
+    let value = match vm.last_return_value {
+        Some(handle) => vm.arena.get(handle).value.clone(),
+        None => Val::Null,
+    };
+
+    assert_eq!(
+        value,
+        Val::String(Rc::new(file_path_str.into_bytes()))
+    );
 }
 
 #[test]
