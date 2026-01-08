@@ -1,6 +1,7 @@
 # php-rs
+**⚠️ In Experimental State**
 
-A PHP interpreter written in Rust. This project is currently in an experimental state.
+A PHP interpreter written in Rust.
 
 ## Features
 
