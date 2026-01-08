@@ -30,6 +30,7 @@ pub struct NativeMethodEntry {
 /// Native function entry for extension-provided functions
 #[derive(Debug, Clone)]
 pub struct NativeFunctionEntry {
+    pub name: Vec<u8>,
     pub handler: NativeHandler,
     pub by_ref: Vec<usize>,
     pub extension_name: Option<Vec<u8>>,
@@ -76,11 +77,15 @@ impl ExtensionRegistry {
 
     /// Register a native function handler
     ///
-    /// Function names are stored as-is (case-sensitive in storage, but PHP lookups are case-insensitive)
+    /// Function names are stored with lowercase keys for case-insensitive O(1) lookup,
+    /// while the original name is preserved in the entry.
     pub fn register_function(&mut self, name: &[u8], handler: NativeHandler) {
+        let name_vec = name.to_vec();
+        let lower_name = name_vec.to_ascii_lowercase();
         self.functions.insert(
-            name.to_vec(),
+            lower_name,
             NativeFunctionEntry {
+                name: name_vec,
                 handler,
                 by_ref: Vec::new(),
                 extension_name: self.current_extension_name.clone(),
@@ -95,9 +100,12 @@ impl ExtensionRegistry {
         handler: NativeHandler,
         by_ref: Vec<usize>,
     ) {
+        let name_vec = name.to_vec();
+        let lower_name = name_vec.to_ascii_lowercase();
         self.functions.insert(
-            name.to_vec(),
+            lower_name,
             NativeFunctionEntry {
+                name: name_vec,
                 handler,
                 by_ref,
                 extension_name: self.current_extension_name.clone(),
@@ -129,20 +137,14 @@ impl ExtensionRegistry {
 
     /// Get a function handler by name (case-insensitive lookup)
     pub fn get_function(&self, name: &[u8]) -> Option<NativeHandler> {
-        // Try exact match first
+        // Try exact match first (useful if name is already lowercased by caller)
         if let Some(entry) = self.functions.get(name) {
             return Some(entry.handler);
         }
 
-        // Fallback to case-insensitive search
-        let lower_name: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
-        for (key, entry) in &self.functions {
-            let lower_key: Vec<u8> = key.iter().map(|b| b.to_ascii_lowercase()).collect();
-            if lower_key == lower_name {
-                return Some(entry.handler);
-            }
-        }
-        None
+        // Fallback to case-insensitive lookup
+        let lower_name = name.to_ascii_lowercase();
+        self.functions.get(&lower_name).map(|entry| entry.handler)
     }
 
     /// Get by-ref argument indexes for a function (case-insensitive lookup)
@@ -151,14 +153,10 @@ impl ExtensionRegistry {
             return Some(entry.by_ref.as_slice());
         }
 
-        let lower_name: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
-        for (key, entry) in &self.functions {
-            let lower_key: Vec<u8> = key.iter().map(|b| b.to_ascii_lowercase()).collect();
-            if lower_key == lower_name {
-                return Some(entry.by_ref.as_slice());
-            }
-        }
-        None
+        let lower_name = name.to_ascii_lowercase();
+        self.functions
+            .get(&lower_name)
+            .map(|entry| entry.by_ref.as_slice())
     }
 
     /// Get a class definition by name
@@ -359,7 +357,7 @@ impl ExtensionRegistry {
                     .map(|n| n.as_slice() == extension_name)
                     .unwrap_or(false)
             })
-            .map(|(name, entry)| (name.as_slice(), entry))
+            .map(|(_, entry)| (entry.name.as_slice(), entry))
             .collect()
     }
 
