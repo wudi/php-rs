@@ -1,6 +1,7 @@
-use crate::core::value::{ArrayKey, Handle, Val};
+use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::runtime::context::ShutdownFunction;
 use crate::vm::engine::{ErrorLevel, VM};
+use indexmap::IndexMap;
 use std::rc::Rc;
 
 /// func_get_args() - Returns an array comprising a function's argument list
@@ -134,6 +135,56 @@ pub fn php_is_callable(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 function_exists_case_insensitive(vm, name.as_slice())
             }
         }
+        Val::Array(map) => {
+            let first = map.map.get(&ArrayKey::Int(0));
+            let second = map.map.get(&ArrayKey::Int(1));
+            match (first, second) {
+                (Some(&target_handle), Some(&method_handle)) => {
+                    let method_name = match &vm.arena.get(method_handle).value {
+                        Val::String(s) => s.as_slice(),
+                        _ => return Ok(vm.arena.alloc(Val::Bool(false))),
+                    };
+                    if syntax_only {
+                        return Ok(vm.arena.alloc(Val::Bool(true)));
+                    }
+
+                    let method_sym = vm.context.interner.intern(method_name);
+                    match &vm.arena.get(target_handle).value {
+                        Val::Object(obj_handle) => {
+                            if let Val::ObjPayload(obj_data) =
+                                &vm.arena.get(*obj_handle).value
+                            {
+                                vm.find_method(obj_data.class, method_sym).is_some()
+                                    || vm.find_native_method(obj_data.class, method_sym).is_some()
+                            } else {
+                                false
+                            }
+                        }
+                        Val::String(class_name) => {
+                            let class_sym = vm.context.interner.intern(class_name.as_slice());
+                            let class_sym = vm.lookup_class_symbol(class_sym);
+                            if let Some(class_sym) = class_sym {
+                                vm.find_method(class_sym, method_sym).is_some()
+                                    || vm.find_native_method(class_sym, method_sym).is_some()
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
+        Val::Object(obj_handle) => {
+            let method_sym = vm.context.interner.intern(b"__invoke");
+            if let Val::ObjPayload(obj_data) = &vm.arena.get(*obj_handle).value {
+                vm.find_method(obj_data.class, method_sym).is_some()
+                    || vm.find_native_method(obj_data.class, method_sym).is_some()
+            } else {
+                false
+            }
+        }
         _ => false,
     };
 
@@ -206,6 +257,125 @@ pub fn php_extension_loaded(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
     Ok(vm.arena.alloc(Val::Bool(is_loaded)))
 }
 
+/// debug_backtrace() - Generate a backtrace
+pub fn php_debug_backtrace(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() > 2 {
+        return Err(format!(
+            "debug_backtrace() expects at most 2 parameters, {} given",
+            args.len()
+        ));
+    }
+
+    let options = if let Some(handle) = args.get(0) {
+        vm.value_to_int(*handle)
+    } else {
+        1 // DEBUG_BACKTRACE_PROVIDE_OBJECT
+    };
+    let limit = if let Some(handle) = args.get(1) {
+        vm.value_to_int(*handle)
+    } else {
+        0
+    };
+
+    let ignore_args = (options & (1 << 1)) != 0; // DEBUG_BACKTRACE_IGNORE_ARGS
+    let provide_object = (options & (1 << 0)) != 0; // DEBUG_BACKTRACE_PROVIDE_OBJECT
+
+    let mut frames_array = IndexMap::new();
+    let mut idx = 0_i64;
+
+    for frame in vm.frames.iter().rev() {
+        if limit > 0 && idx >= limit {
+            break;
+        }
+
+        let mut frame_map = IndexMap::new();
+
+        if let Some(file_path) = &frame.chunk.file_path {
+            let file_handle = vm.arena.alloc(Val::String(file_path.clone().into_bytes().into()));
+            frame_map.insert(
+                ArrayKey::Str(Rc::new(b"file".to_vec())),
+                file_handle,
+            );
+        }
+
+        let line = if frame.ip > 0 && frame.ip <= frame.chunk.lines.len() {
+            frame.chunk.lines[frame.ip - 1] as i64
+        } else {
+            0
+        };
+        let line_handle = vm.arena.alloc(Val::Int(line));
+        frame_map.insert(
+            ArrayKey::Str(Rc::new(b"line".to_vec())),
+            line_handle,
+        );
+
+        let class_sym = frame.called_scope.or(frame.class_scope);
+
+        if let Some(func_bytes) = vm.context.interner.lookup(frame.chunk.name) {
+            let func_name = if class_sym.is_some() {
+                func_bytes
+                    .windows(2)
+                    .rposition(|w| w == b"::")
+                    .map(|idx| &func_bytes[(idx + 2)..])
+                    .unwrap_or(func_bytes)
+                    .to_vec()
+            } else {
+                func_bytes.to_vec()
+            };
+            let func_handle = vm.arena.alloc(Val::String(func_name.into()));
+            frame_map.insert(
+                ArrayKey::Str(Rc::new(b"function".to_vec())),
+                func_handle,
+            );
+        }
+        if let Some(class_sym) = class_sym {
+            if let Some(class_bytes) = vm.context.interner.lookup(class_sym) {
+                let class_handle = vm.arena.alloc(Val::String(class_bytes.to_vec().into()));
+                frame_map.insert(
+                    ArrayKey::Str(Rc::new(b"class".to_vec())),
+                    class_handle,
+                );
+            }
+
+            let call_type = if frame.this.is_some() { b"->" } else { b"::" };
+            let type_handle = vm.arena.alloc(Val::String(call_type.to_vec().into()));
+            frame_map.insert(
+                ArrayKey::Str(Rc::new(b"type".to_vec())),
+                type_handle,
+            );
+        }
+
+        if provide_object {
+            if let Some(this_handle) = frame.this {
+                frame_map.insert(
+                    ArrayKey::Str(Rc::new(b"object".to_vec())),
+                    this_handle,
+                );
+            }
+        }
+
+        if !ignore_args {
+            let mut args_map = IndexMap::new();
+            for (arg_idx, arg_handle) in frame.args.iter().enumerate() {
+                args_map.insert(ArrayKey::Int(arg_idx as i64), *arg_handle);
+            }
+            let args_handle = vm.arena.alloc(Val::Array(ArrayData::from(args_map).into()));
+            frame_map.insert(
+                ArrayKey::Str(Rc::new(b"args".to_vec())),
+                args_handle,
+            );
+        }
+
+        let frame_handle = vm.arena.alloc(Val::Array(ArrayData::from(frame_map).into()));
+        frames_array.insert(ArrayKey::Int(idx), frame_handle);
+        idx += 1;
+    }
+
+    Ok(vm
+        .arena
+        .alloc(Val::Array(ArrayData::from(frames_array).into())))
+}
+
 /// assert() - Checks an assertion and reports a warning when it fails
 pub fn php_assert(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
@@ -260,8 +430,13 @@ pub fn php_call_user_func_array(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
         _ => return Err("call_user_func_array() expects parameter 2 to be array".to_string()),
     };
 
-    vm.call_callable(callback_handle, func_args)
-        .map_err(|e| format!("call_user_func_array error: {:?}", e))
+    let callback_desc = vm.describe_handle(callback_handle);
+    vm.call_callable(callback_handle, func_args).map_err(|e| {
+        format!(
+            "call_user_func_array error: {:?} (callback: {})",
+            e, callback_desc
+        )
+    })
 }
 
 /// register_shutdown_function() - Register a function to be called on shutdown

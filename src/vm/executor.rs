@@ -222,6 +222,9 @@ pub fn execute_code_with_config(
     // Execute (timeout checking happens inside run_loop)
     vm.run(std::rc::Rc::new(chunk))?;
 
+    crate::builtins::output_control::flush_all_output_buffers(&mut vm)
+        .map_err(VmError::RuntimeError)?;
+
     // Extract result
     let value = match vm.last_return_value {
         Some(handle) => vm.arena.get(handle).value.clone(),

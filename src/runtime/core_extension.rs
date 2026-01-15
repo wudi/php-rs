@@ -56,6 +56,8 @@ impl Extension for CoreExtension {
         registry.register_function(b"bin2hex", string::php_bin2hex);
         registry.register_function(b"hex2bin", string::php_hex2bin);
         registry.register_function(b"crc32", string::php_crc32);
+        registry.register_function(b"md5", string::php_md5);
+        registry.register_function(b"uniqid", string::php_uniqid);
         registry.register_function(
             b"quoted_printable_decode",
             string::php_quoted_printable_decode,
@@ -143,6 +145,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"array_keys", array::php_array_keys);
         registry.register_function(b"array_values", array::php_array_values);
         registry.register_function(b"in_array", array::php_in_array);
+        registry.register_function(b"array_search", array::php_array_search);
         registry.register_function_with_by_ref(b"ksort", array::php_ksort, vec![0]);
         registry.register_function_with_by_ref(b"array_push", array::php_array_push, vec![0]);
         registry.register_function_with_by_ref(b"array_pop", array::php_array_pop, vec![0]);
@@ -178,6 +181,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"array_unique", array::php_array_unique);
         registry.register_function(b"array_diff", array::php_array_diff);
         registry.register_function(b"array_intersect", array::php_array_intersect);
+        registry.register_function(b"array_intersect_key", array::php_array_intersect_key);
         registry.register_function_with_by_ref(b"sort", array::php_sort, vec![0]);
         registry.register_function_with_by_ref(b"rsort", array::php_rsort, vec![0]);
         registry.register_function_with_by_ref(b"asort", array::php_asort, vec![0]);
@@ -271,9 +275,20 @@ impl Extension for CoreExtension {
 
         // PCRE functions
         registry.register_function_with_by_ref(b"preg_match", pcre::preg_match, vec![2]);
+        registry.register_function_with_by_ref(b"preg_match_all", pcre::preg_match_all, vec![2]);
         registry.register_function_with_by_ref(b"preg_replace", pcre::preg_replace, vec![4]);
+        registry.register_function(b"preg_replace_callback", pcre::preg_replace_callback);
         registry.register_function(b"preg_split", pcre::preg_split);
         registry.register_function(b"preg_quote", pcre::preg_quote);
+        registry.register_constant(b"PREG_PATTERN_ORDER", Val::Int(1));
+        registry.register_constant(b"PREG_SET_ORDER", Val::Int(2));
+        registry.register_constant(b"PREG_OFFSET_CAPTURE", Val::Int(1 << 8));
+        registry.register_constant(b"PREG_UNMATCHED_AS_NULL", Val::Int(1 << 9));
+        registry.register_constant(b"PREG_SPLIT_NO_EMPTY", Val::Int(1 << 0));
+        registry.register_constant(b"PREG_SPLIT_DELIM_CAPTURE", Val::Int(1 << 1));
+        registry.register_constant(b"PREG_SPLIT_OFFSET_CAPTURE", Val::Int(1 << 2));
+        registry.register_constant(b"DEBUG_BACKTRACE_PROVIDE_OBJECT", Val::Int(1 << 0));
+        registry.register_constant(b"DEBUG_BACKTRACE_IGNORE_ARGS", Val::Int(1 << 1));
 
         // Function handling functions
         registry.register_function(b"func_get_args", function::php_func_get_args);
@@ -283,6 +298,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"is_callable", function::php_is_callable);
         registry.register_function(b"call_user_func", function::php_call_user_func);
         registry.register_function(b"call_user_func_array", function::php_call_user_func_array);
+        registry.register_function(b"debug_backtrace", function::php_debug_backtrace);
         registry.register_function(
             b"register_shutdown_function",
             function::php_register_shutdown_function,
@@ -348,6 +364,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"mkdir", filesystem::php_mkdir);
         registry.register_function(b"rmdir", filesystem::php_rmdir);
         registry.register_function(b"scandir", filesystem::php_scandir);
+        registry.register_function(b"glob", filesystem::php_glob);
         registry.register_function(b"getcwd", filesystem::php_getcwd);
         registry.register_function(b"chdir", filesystem::php_chdir);
 
@@ -1161,6 +1178,20 @@ impl Extension for CoreExtension {
             extension_name: None,
         });
 
+        // InvalidArgumentException
+        registry.register_class(NativeClassDef {
+            name: b"InvalidArgumentException".to_vec(),
+            parent: Some(b"LogicException".to_vec()),
+            is_interface: false,
+            is_trait: false,
+            is_final: false,
+            interfaces: vec![],
+            methods: HashMap::new(),
+            constants: HashMap::new(),
+            constructor: Some(exception::exception_construct),
+            extension_name: None,
+        });
+
         // Error class (PHP 7+)
         registry.register_class(NativeClassDef {
             name: b"Error".to_vec(),
@@ -1324,6 +1355,13 @@ impl Extension for CoreExtension {
         registry.register_constant(b"ENT_XML1", Val::Int(string::ENT_XML1));
         registry.register_constant(b"ENT_XHTML", Val::Int(string::ENT_XHTML));
         registry.register_constant(b"ENT_HTML5", Val::Int(string::ENT_HTML5));
+        registry.register_constant(b"GLOB_MARK", Val::Int(libc::GLOB_MARK as i64));
+        registry.register_constant(b"GLOB_NOSORT", Val::Int(libc::GLOB_NOSORT as i64));
+        registry.register_constant(b"GLOB_NOCHECK", Val::Int(libc::GLOB_NOCHECK as i64));
+        registry.register_constant(b"GLOB_NOESCAPE", Val::Int(libc::GLOB_NOESCAPE as i64));
+        registry.register_constant(b"GLOB_BRACE", Val::Int(libc::GLOB_BRACE as i64));
+        registry.register_constant(b"GLOB_ONLYDIR", Val::Int(libc::GLOB_ONLYDIR as i64));
+        registry.register_constant(b"GLOB_ERR", Val::Int(libc::GLOB_ERR as i64));
 
         // Register core sort constants
         registry.register_constant(b"SORT_REGULAR", Val::Int(0));

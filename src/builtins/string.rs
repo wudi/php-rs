@@ -1,7 +1,10 @@
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
 use crc32fast::Hasher;
+use digest::Digest;
 use libc;
+use md5::Md5;
+use rand::random;
 use rphonetic::{Encoder, Metaphone};
 use rust_decimal::{Decimal, RoundingStrategy};
 use std::cmp::Ordering;
@@ -10,6 +13,7 @@ use std::ffi::{CStr, CString};
 use std::rc::Rc;
 use std::str;
 use std::str::FromStr;
+use chrono::Utc;
 
 #[cfg(unix)]
 unsafe extern "C" {
@@ -715,6 +719,67 @@ pub fn php_crc32(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     hasher.update(&input);
     let checksum = hasher.finalize();
     Ok(vm.arena.alloc(Val::Int(checksum as i64)))
+}
+
+pub fn php_md5(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err("md5() expects 1 or 2 parameters".into());
+    }
+
+    let input = vm.value_to_string(args[0])?;
+    let raw_output = if args.len() == 2 {
+        match vm.arena.get(args[1]).value {
+            Val::Bool(value) => value,
+            Val::Int(value) => value != 0,
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    let mut hasher = Md5::new();
+    hasher.update(&input);
+    let digest = hasher.finalize();
+    if raw_output {
+        Ok(vm.arena.alloc(Val::String(digest.to_vec().into())))
+    } else {
+        Ok(vm
+            .arena
+            .alloc(Val::String(hex::encode(digest).into_bytes().into())))
+    }
+}
+
+pub fn php_uniqid(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() > 2 {
+        return Err("uniqid() expects at most 2 parameters".into());
+    }
+
+    let mut prefix = if args.is_empty() {
+        Vec::new()
+    } else {
+        vm.value_to_string(args[0])?
+    };
+
+    let more_entropy = if args.len() == 2 {
+        vm.arena.get(args[1]).value.to_bool()
+    } else {
+        false
+    };
+
+    let now = Utc::now();
+    let secs = now.timestamp() as u64;
+    let usec = now.timestamp_subsec_micros() as u64;
+
+    let id = if more_entropy {
+        let rand_val: u32 = random();
+        let seed = (rand_val as f64 / u32::MAX as f64) * 10.0;
+        format!("{:08x}{:05x}{:.8}", secs, usec, seed)
+    } else {
+        format!("{:08x}{:05x}", secs, usec)
+    };
+
+    prefix.extend_from_slice(id.as_bytes());
+    Ok(vm.arena.alloc(Val::String(prefix.into())))
 }
 
 fn hex_upper(nibble: u8) -> u8 {

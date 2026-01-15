@@ -372,16 +372,20 @@ impl VM {
         class_name: Symbol,
         args: &[Handle],
     ) -> Result<Handle, String> {
-        let resolved_class = self
+        let mut resolved_class = self
             .resolve_class_name(class_name)
             .map_err(|e| format!("{:?}", e))?;
 
-        if !self.context.classes.contains_key(&resolved_class) {
+        if !self.class_exists(resolved_class) {
             self.trigger_autoload(resolved_class)
                 .map_err(|e| format!("{:?}", e))?;
         }
 
-        if let Some(_class_def) = self.context.classes.get(&resolved_class) {
+        if let Some(found_class) = self.lookup_class_symbol(resolved_class) {
+            resolved_class = found_class;
+        }
+
+        if let Some(_class_def) = self.get_class_def(resolved_class) {
             let properties = self.collect_properties(resolved_class, PropertyCollectionMode::All);
 
             let obj_data = ObjectData {
@@ -981,8 +985,15 @@ impl VM {
     /// Also stores the error in context.last_error for error_get_last()
     pub(crate) fn report_error(&mut self, level: ErrorLevel, message: &str) {
         let level_bitmask = level.to_bitmask();
-        let error_file = "Unknown".to_string();
-        let error_line = 0i64;
+        let (error_file, error_line) = self
+            .current_location()
+            .unwrap_or_else(|| ("Unknown".to_string(), 0));
+        let error_line = error_line as i64;
+        let formatted_message = if error_line > 0 {
+            format!("{} in {} on line {}", message, error_file, error_line)
+        } else {
+            message.to_string()
+        };
 
         // Store this as the last error regardless of error_reporting level
         self.context.last_error = Some(crate::runtime::context::ErrorInfo {
@@ -1024,7 +1035,7 @@ impl VM {
 
         // Only report if the error level is enabled in error_reporting
         if !handled && (self.context.config.error_reporting & level_bitmask) != 0 {
-            self.error_handler.report(level, message);
+            self.error_handler.report(level, &formatted_message);
         }
     }
 
@@ -1061,11 +1072,18 @@ impl VM {
         }
     }
 
+    pub(crate) fn write_output_direct(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        self.output_writer.write(bytes)
+    }
+
     pub fn flush_output(&mut self) -> Result<(), VmError> {
         self.output_writer.flush()
     }
 
     pub fn finish_request(&mut self) -> Result<(), VmError> {
+        crate::builtins::output_control::flush_all_output_buffers(self)
+            .map_err(VmError::RuntimeError)?;
+
         // Send headers and flush content
         // This is typically called by fastcgi_finish_request()
         let status = self.context.http_status.unwrap_or(200) as u16;
@@ -1297,7 +1315,7 @@ impl VM {
                 }
 
                 // Check if the class was loaded
-                if self.context.classes.contains_key(&class_name) {
+                if self.class_exists(class_name) {
                     return Ok(());
                 }
             }
@@ -1316,7 +1334,7 @@ impl VM {
     where
         F: FnMut(&ClassDef, Symbol) -> Option<T>,
     {
-        let mut current = Some(start_class);
+        let mut current = self.lookup_class_symbol(start_class);
         while let Some(class_sym) = current {
             if let Some(class_def) = self.context.classes.get(&class_sym) {
                 if let Some(result) = predicate(class_def, class_sym) {
@@ -2124,6 +2142,9 @@ impl VM {
             return frame.called_scope.ok_or(VmError::RuntimeError(
                 "Cannot access static:: when no called scope is active".into(),
             ));
+        }
+        if let Some(resolved) = self.lookup_class_symbol(class_name) {
+            return Ok(resolved);
         }
         Ok(class_name)
     }
@@ -4093,14 +4114,14 @@ impl VM {
 
                 let mut methods = HashMap::new();
 
+                let mut resolved_parent = None;
                 if let Some(parent) = parent_sym {
-                    if let Some(parent_def) = self.context.classes.get(&parent) {
-                        // Inherit methods, excluding private ones.
-                        for (key, entry) in &parent_def.methods {
-                            if entry.visibility != Visibility::Private {
-                                methods.insert(*key, entry.clone());
-                            }
-                        }
+                    if !self.class_exists(parent) {
+                        self.trigger_autoload(parent)?;
+                    }
+                    let parent_sym = self.lookup_class_symbol(parent);
+                    if let Some(parent_sym) = parent_sym {
+                        resolved_parent = Some(parent_sym);
                     } else {
                         let parent_name = self
                             .context
@@ -4113,6 +4134,16 @@ impl VM {
                             parent_name
                         )));
                     }
+                    if let Some(parent_sym) = resolved_parent {
+                        if let Some(parent_def) = self.get_class_def(parent_sym) {
+                            // Inherit methods, excluding private ones.
+                            for (key, entry) in &parent_def.methods {
+                                if entry.visibility != Visibility::Private {
+                                    methods.insert(*key, entry.clone());
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let file_name = self
@@ -4123,7 +4154,7 @@ impl VM {
 
                 let class_def = ClassDef {
                     name: name_sym,
-                    parent: parent_sym,
+                    parent: resolved_parent,
                     is_interface: false,
                     is_trait: false,
                     is_abstract: false,
@@ -5112,7 +5143,7 @@ impl VM {
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
 
-                let array_val = &self.arena.get(array_handle).value;
+                let array_val = self.arena.get(array_handle).value.clone();
                 match array_val {
                     Val::Array(map) => {
                         let key_val = &self.arena.get(key_handle).value;
@@ -5125,6 +5156,32 @@ impl VM {
                             let key_str = match &key {
                                 ArrayKey::Int(i) => i.to_string(),
                                 ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
+                            };
+                            self.report_error(
+                                ErrorLevel::Notice,
+                                &format!("Undefined array key \"{}\"", key_str),
+                            );
+                            let null_handle = self.arena.alloc(Val::Null);
+                            self.operand_stack.push(null_handle);
+                        }
+                    }
+                    Val::ConstArray(map) => {
+                        let key_val = &self.arena.get(key_handle).value;
+                        let key = self.array_key_from_value(key_val)?;
+                        let const_key = match key {
+                            ArrayKey::Int(i) => crate::core::value::ConstArrayKey::Int(i),
+                            ArrayKey::Str(s) => crate::core::value::ConstArrayKey::Str(s),
+                        };
+
+                        if let Some(val) = map.get(&const_key) {
+                            let handle = self.deep_clone_val(val);
+                            self.operand_stack.push(handle);
+                        } else {
+                            let key_str = match &const_key {
+                                crate::core::value::ConstArrayKey::Int(i) => i.to_string(),
+                                crate::core::value::ConstArrayKey::Str(s) => {
+                                    String::from_utf8_lossy(s).to_string()
+                                }
                             };
                             self.report_error(
                                 ErrorLevel::Notice,
@@ -5178,7 +5235,7 @@ impl VM {
                     }
                     Val::Object(payload_handle) => {
                         // Check if object implements ArrayAccess
-                        let payload_val = self.arena.get(*payload_handle);
+                        let payload_val = self.arena.get(payload_handle);
                         if let Val::ObjPayload(obj_data) = &payload_val.value {
                             let class_name = obj_data.class;
 
@@ -5691,10 +5748,13 @@ impl VM {
                     }
                     _ => {
                         let type_str = iterable_val.type_name();
-                        return Err(VmError::RuntimeError(format!(
-                            "Foreach expects array or object, got {}",
-                            type_str
-                        )));
+                        self.report_error(
+                            ErrorLevel::Warning,
+                            &format!("Foreach expects array or object, got {}", type_str),
+                        );
+                        self.operand_stack.pop(); // Pop iterable
+                        let frame = self.frames.last_mut().unwrap();
+                        frame.ip = target as usize;
                     }
                 }
             }
@@ -5787,10 +5847,14 @@ impl VM {
                     }
                     _ => {
                         let type_str = self.arena.get(iterable_handle).value.type_name();
-                        return Err(VmError::RuntimeError(format!(
-                            "Foreach expects array or object, got {}",
-                            type_str
-                        )));
+                        self.report_error(
+                            ErrorLevel::Warning,
+                            &format!("Foreach expects array or object, got {}", type_str),
+                        );
+                        self.operand_stack.pop(); // Pop Index
+                        self.operand_stack.pop(); // Pop Iterable
+                        let frame = self.frames.last_mut().unwrap();
+                        frame.ip = target as usize;
                     }
                 }
             }
@@ -5883,10 +5947,11 @@ impl VM {
                     }
                     _ => {
                         let type_str = self.arena.get(iterable_handle).value.type_name();
-                        return Err(VmError::RuntimeError(format!(
-                            "Foreach expects array or object, got {}",
-                            type_str
-                        )));
+                        self.report_error(
+                            ErrorLevel::Warning,
+                            &format!("Foreach expects array or object, got {}", type_str),
+                        );
+                        self.operand_stack.push(idx_handle);
                     }
                 }
             }
@@ -5971,10 +6036,14 @@ impl VM {
                     }
                     _ => {
                         let type_str = self.arena.get(iterable_handle).value.type_name();
-                        return Err(VmError::RuntimeError(format!(
-                            "Foreach expects array or object, got {}",
-                            type_str
-                        )));
+                        self.report_error(
+                            ErrorLevel::Warning,
+                            &format!("Foreach expects array or object, got {}", type_str),
+                        );
+                        let frame = self.frames.last_mut().unwrap();
+                        frame
+                            .locals
+                            .insert(sym, self.arena.alloc(Val::Null));
                     }
                 }
             }
@@ -6229,38 +6298,47 @@ impl VM {
                 let mut methods = HashMap::new();
                 let mut abstract_methods = HashSet::new();
 
-                if let Some(parent_sym) = parent {
-                    if !self.context.classes.contains_key(&parent_sym) {
-                        self.trigger_autoload(parent_sym)?;
+                let mut resolved_parent = None;
+                if let Some(parent_sym_raw) = parent {
+                    if !self.class_exists(parent_sym_raw) {
+                        self.trigger_autoload(parent_sym_raw)?;
                     }
 
-                    if let Some(parent_def) = self.context.classes.get(&parent_sym) {
-                        // Inherit methods, excluding private ones.
-                        for (key, entry) in &parent_def.methods {
-                            if entry.visibility != Visibility::Private {
-                                methods.insert(*key, entry.clone());
-                            }
-                        }
-
-                        // Inherit abstract methods (excluding private ones)
-                        for &abstract_method in &parent_def.abstract_methods {
-                            if let Some(method_entry) = parent_def.methods.get(&abstract_method) {
-                                if method_entry.visibility != Visibility::Private {
-                                    abstract_methods.insert(abstract_method);
-                                }
-                            }
-                        }
+                    let parent_sym = self.lookup_class_symbol(parent_sym_raw);
+                    if let Some(parent_sym) = parent_sym {
+                        resolved_parent = Some(parent_sym);
                     } else {
                         let parent_name = self
                             .context
                             .interner
-                            .lookup(parent_sym)
+                            .lookup(parent_sym_raw)
                             .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-                            .unwrap_or_else(|| format!("{:?}", parent_sym));
+                            .unwrap_or_else(|| format!("{:?}", parent_sym_raw));
                         return Err(VmError::RuntimeError(format!(
                             "Parent class {} not found",
                             parent_name
                         )));
+                    }
+
+                    if let Some(parent_sym) = resolved_parent {
+                        if let Some(parent_def) = self.get_class_def(parent_sym) {
+                            // Inherit methods, excluding private ones.
+                            for (key, entry) in &parent_def.methods {
+                                if entry.visibility != Visibility::Private {
+                                    methods.insert(*key, entry.clone());
+                                }
+                            }
+
+                            // Inherit abstract methods (excluding private ones)
+                            for &abstract_method in &parent_def.abstract_methods {
+                                if let Some(method_entry) = parent_def.methods.get(&abstract_method)
+                                {
+                                    if method_entry.visibility != Visibility::Private {
+                                        abstract_methods.insert(abstract_method);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -6272,7 +6350,7 @@ impl VM {
 
                 let class_def = ClassDef {
                     name,
-                    parent,
+                    parent: resolved_parent,
                     is_interface: false,
                     is_trait: false,
                     is_abstract: false,
@@ -6495,22 +6573,22 @@ impl VM {
                 }
             }
             OpCode::FinalizeClass(class_name) => {
-                let interfaces = if let Some(class_def) = self.context.classes.get(&class_name) {
+                let interfaces = if let Some(class_def) = self.get_class_def(class_name) {
                     class_def.interfaces.clone()
                 } else {
                     Vec::new()
                 };
 
                 for interface_name in interfaces.iter() {
-                    if !self.context.classes.contains_key(interface_name) {
+                    if !self.class_exists(*interface_name) {
                         self.trigger_autoload(*interface_name)?;
                     }
                 }
 
                 // Validate interface implementation after all methods are defined
-                if let Some(class_def) = self.context.classes.get(&class_name) {
+                if let Some(class_def) = self.get_class_def(class_name) {
                     if let Some(parent_sym) = class_def.parent {
-                        if let Some(parent_def) = self.context.classes.get(&parent_sym) {
+                        if let Some(parent_def) = self.get_class_def(parent_sym) {
                             if parent_def.is_final {
                                 let class_name_str = self
                                     .context
@@ -6844,7 +6922,11 @@ impl VM {
             }
             OpCode::FetchGlobalConst(name) => {
                 if let Some(val) = self.context.constants.get(&name) {
-                    let handle = self.arena.alloc(val.clone());
+                    let val = val.clone();
+                    let handle = match &val {
+                        Val::ConstArray(_) => self.deep_clone_val(&val),
+                        _ => self.arena.alloc(val),
+                    };
                     self.operand_stack.push(handle);
                 } else {
                     // PHP 8.x: Undefined constant throws Error (not Warning)
@@ -6902,11 +6984,20 @@ impl VM {
                 }
             }
             OpCode::FetchClassConst(class_name, const_name) => {
-                let resolved_class = self.resolve_class_name(class_name)?;
+                let mut resolved_class = self.resolve_class_name(class_name)?;
+                if !self.class_exists(resolved_class) {
+                    self.trigger_autoload(resolved_class)?;
+                }
+                if let Some(found_class) = self.lookup_class_symbol(resolved_class) {
+                    resolved_class = found_class;
+                }
                 let (val, visibility, defining_class) =
                     self.find_class_constant(resolved_class, const_name)?;
                 self.check_const_visibility(defining_class, visibility)?;
-                let handle = self.arena.alloc(val);
+                let handle = match &val {
+                    Val::ConstArray(_) => self.deep_clone_val(&val),
+                    _ => self.arena.alloc(val),
+                };
                 self.operand_stack.push(handle);
             }
             OpCode::FetchClassConstDynamic(const_name) => {
@@ -6932,11 +7023,20 @@ impl VM {
                     }
                 };
 
-                let resolved_class = self.resolve_class_name(class_name_sym)?;
+                let mut resolved_class = self.resolve_class_name(class_name_sym)?;
+                if !self.class_exists(resolved_class) {
+                    self.trigger_autoload(resolved_class)?;
+                }
+                if let Some(found_class) = self.lookup_class_symbol(resolved_class) {
+                    resolved_class = found_class;
+                }
                 let (val, visibility, defining_class) =
                     self.find_class_constant(resolved_class, const_name)?;
                 self.check_const_visibility(defining_class, visibility)?;
-                let handle = self.arena.alloc(val);
+                let handle = match &val {
+                    Val::ConstArray(_) => self.deep_clone_val(&val),
+                    _ => self.arena.alloc(val),
+                };
                 self.operand_stack.push(handle);
             }
             OpCode::FetchStaticProp(class_name, prop_name) => {
@@ -7049,15 +7149,19 @@ impl VM {
             }
             OpCode::New(class_name, arg_count) => {
                 // Resolve special class names (self, parent, static)
-                let resolved_class = self.resolve_class_name(class_name)?;
+                let mut resolved_class = self.resolve_class_name(class_name)?;
 
                 // Try autoloading if class doesn't exist
-                if !self.context.classes.contains_key(&resolved_class) {
+                if !self.class_exists(resolved_class) {
                     self.trigger_autoload(resolved_class)?;
                 }
 
                 // Check if class is abstract or interface
-                if let Some(class_def) = self.context.classes.get(&resolved_class) {
+                if let Some(found_class) = self.lookup_class_symbol(resolved_class) {
+                    resolved_class = found_class;
+                }
+
+                if let Some(class_def) = self.get_class_def(resolved_class) {
                     if class_def.is_abstract && !class_def.is_interface {
                         let class_name_str = self
                             .context
@@ -7084,7 +7188,7 @@ impl VM {
                     }
                 }
 
-                if self.context.classes.contains_key(&resolved_class) {
+                if self.class_exists(resolved_class) {
                     let properties =
                         self.collect_properties(resolved_class, PropertyCollectionMode::All);
 
@@ -7233,7 +7337,11 @@ impl VM {
                     _ => return Err(VmError::RuntimeError("Class name must be string".into())),
                 };
 
-                if self.context.classes.contains_key(&class_name) {
+                if !self.class_exists(class_name) {
+                    self.trigger_autoload(class_name)?;
+                }
+
+                if let Some(class_name) = self.lookup_class_symbol(class_name) {
                     let properties =
                         self.collect_properties(class_name, PropertyCollectionMode::All);
 
@@ -7985,6 +8093,16 @@ impl VM {
                             ));
                         }
                     }
+                    Val::Array(_) => {
+                        self.pending_calls.push(PendingCall {
+                            func_name: None,
+                            func_handle: Some(callable_handle),
+                            args: ArgList::new(),
+                            is_static: false,
+                            class_name: None,
+                            this_handle: None,
+                        });
+                    }
                     _ => {
                         return Err(VmError::RuntimeError(
                             "Dynamic call expects string or object".into(),
@@ -8067,7 +8185,7 @@ impl VM {
                 // In PHP, list(&$a) = $arr;
                 // The element in $arr must be referenceable.
 
-                let container = &self.arena.get(container_handle).value;
+                let container = self.arena.get(container_handle).value.clone();
 
                 match container {
                     Val::Array(map) => {
@@ -8079,6 +8197,21 @@ impl VM {
 
                         if let Some(val_handle) = map.map.get(&key) {
                             self.operand_stack.push(*val_handle);
+                        } else {
+                            let null = self.arena.alloc(Val::Null);
+                            self.operand_stack.push(null);
+                        }
+                    }
+                    Val::ConstArray(map) => {
+                        let key = match &self.arena.get(dim).value {
+                            Val::Int(i) => crate::core::value::ConstArrayKey::Int(*i),
+                            Val::String(s) => crate::core::value::ConstArrayKey::Str(s.clone()),
+                            _ => crate::core::value::ConstArrayKey::Str(Rc::new(Vec::<u8>::new())),
+                        };
+
+                        if let Some(val) = map.get(&key) {
+                            let handle = self.deep_clone_val(val);
+                            self.operand_stack.push(handle);
                         } else {
                             let null = self.arena.alloc(Val::Null);
                             self.operand_stack.push(null);
@@ -8100,7 +8233,7 @@ impl VM {
                     .peek()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?; // Peek container
 
-                let container = &self.arena.get(container_handle).value;
+                let container = self.arena.get(container_handle).value.clone();
 
                 match container {
                     Val::Array(map) => {
@@ -8133,7 +8266,7 @@ impl VM {
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
 
-                let container = &self.arena.get(container_handle).value;
+                let container = self.arena.get(container_handle).value.clone();
                 let is_fetch_r = matches!(op, OpCode::FetchDimR);
                 let _is_unset = matches!(op, OpCode::FetchDimUnset);
 
@@ -8152,6 +8285,34 @@ impl VM {
                                 let key_str = match &key {
                                     ArrayKey::Int(i) => i.to_string(),
                                     ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
+                                };
+                                self.report_error(
+                                    ErrorLevel::Notice,
+                                    &format!("Undefined array key \"{}\"", key_str),
+                                );
+                            }
+                            let null = self.arena.alloc(Val::Null);
+                            self.operand_stack.push(null);
+                        }
+                    }
+                    Val::ConstArray(map) => {
+                        let dim_val = &self.arena.get(dim).value;
+                        let key = self.array_key_from_value(dim_val)?;
+                        let const_key = match key {
+                            ArrayKey::Int(i) => crate::core::value::ConstArrayKey::Int(i),
+                            ArrayKey::Str(s) => crate::core::value::ConstArrayKey::Str(s),
+                        };
+
+                        if let Some(val) = map.get(&const_key) {
+                            let handle = self.deep_clone_val(val);
+                            self.operand_stack.push(handle);
+                        } else {
+                            if is_fetch_r {
+                                let key_str = match &const_key {
+                                    crate::core::value::ConstArrayKey::Int(i) => i.to_string(),
+                                    crate::core::value::ConstArrayKey::Str(s) => {
+                                        String::from_utf8_lossy(s).to_string()
+                                    }
                                 };
                                 self.report_error(
                                     ErrorLevel::Notice,
@@ -8235,11 +8396,11 @@ impl VM {
                         let null = self.arena.alloc(Val::Null);
                         self.operand_stack.push(null);
                     }
-                    &Val::Object(_) | &Val::ObjPayload(_) => {
+                    Val::Object(_) | Val::ObjPayload(_) => {
                         // Check if object implements ArrayAccess interface
                         // Reference: $PHP_SRC_PATH/Zend/zend_execute.c - ZEND_FETCH_DIM_R_SPEC
                         let class_name = match container {
-                            &Val::Object(payload_handle) => {
+                            Val::Object(payload_handle) => {
                                 let payload = self.arena.get(payload_handle);
                                 if let Val::ObjPayload(obj_data) = &payload.value {
                                     Some(obj_data.class)
@@ -8247,7 +8408,7 @@ impl VM {
                                     None
                                 }
                             }
-                            &Val::ObjPayload(ref obj_data) => Some(obj_data.class),
+                            Val::ObjPayload(ref obj_data) => Some(obj_data.class),
                             _ => None,
                         };
 
@@ -10450,7 +10611,7 @@ impl VM {
                 };
 
                 let resolved_sym = self.resolve_class_name(name_sym)?;
-                if !self.context.classes.contains_key(&resolved_sym) {
+                if !self.class_exists(resolved_sym) {
                     let name_str = String::from_utf8_lossy(
                         self.context.interner.lookup(resolved_sym).unwrap_or(b"???"),
                     );
@@ -10460,6 +10621,8 @@ impl VM {
                     )));
                 }
 
+                let resolved_sym =
+                    self.lookup_class_symbol(resolved_sym).unwrap_or(resolved_sym);
                 let resolved_name_bytes =
                     self.context.interner.lookup(resolved_sym).unwrap().to_vec();
                 let res_handle = self.arena.alloc(Val::String(resolved_name_bytes.into()));
@@ -10568,7 +10731,14 @@ impl VM {
     }
 
     fn clone_value_for_assignment(&mut self, target_sym: Symbol, val_handle: Handle) -> Val {
-        let mut cloned = self.arena.get(val_handle).value.clone();
+        let src_val = self.arena.get(val_handle).value.clone();
+        let mut cloned = match src_val {
+            Val::ConstArray(_) => {
+                let handle = self.deep_clone_val(&src_val);
+                self.arena.get(handle).value.clone()
+            }
+            _ => src_val,
+        };
 
         if !self.is_globals_symbol(target_sym) {
             let globals_sym = self.context.interner.intern(b"GLOBALS");
@@ -12287,23 +12457,38 @@ impl VM {
         arg_count: u8,
         is_dynamic: bool,
     ) -> Result<(), VmError> {
-        let resolved_class = if is_dynamic {
+        let mut resolved_class = if is_dynamic {
             class_name
         } else {
             self.resolve_class_name(class_name)?
         };
 
-        if !self.context.classes.contains_key(&resolved_class) {
+        if !self.class_exists(resolved_class) {
             self.trigger_autoload(resolved_class)?;
+        }
+
+        if let Some(found_class) = self.lookup_class_symbol(resolved_class) {
+            resolved_class = found_class;
         }
 
         // Check for native method first
         let native_method = self.find_native_method(resolved_class, method_name);
         if let Some(native_entry) = native_method {
+            let mut this_handle = None;
             if !native_entry.is_static {
-                return Err(VmError::RuntimeError(
-                    "Non-static method called statically".into(),
-                ));
+                if let Some(current_frame) = self.frames.last() {
+                    if let Some(th) = current_frame.this {
+                        if self.is_instance_of(th, native_entry.declaring_class) {
+                            this_handle = Some(th);
+                        }
+                    }
+                }
+
+                if this_handle.is_none() {
+                    return Err(VmError::RuntimeError(
+                        "Non-static method called statically".into(),
+                    ));
+                }
             }
 
             self.check_method_visibility(
@@ -12321,8 +12506,19 @@ impl VM {
                 self.operand_stack.pop(); // class name
             }
 
-            // Call native handler (no $this for static methods)
+            // Call native handler (bind $this when calling non-static methods)
+            let saved_this = self.frames.last().and_then(|f| f.this);
+            if let Some(th) = this_handle {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.this = Some(th);
+                }
+            }
+
             let result = (native_entry.handler)(self, &args).map_err(VmError::RuntimeError)?;
+
+            if let Some(frame) = self.frames.last_mut() {
+                frame.this = saved_this;
+            }
 
             self.operand_stack.push(result);
             return Ok(());

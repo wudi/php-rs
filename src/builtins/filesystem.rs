@@ -1,11 +1,15 @@
 use crate::builtins::exec::{PipeKind, PipeResource};
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
+use glob::{glob_with, MatchOptions, Pattern};
 use indexmap::IndexMap;
 use std::cell::RefCell;
+use std::ffi::CString;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// File handle resource for fopen/fread/fwrite/fclose
@@ -434,6 +438,139 @@ pub fn php_file_put_contents(vm: &mut VM, args: &[Handle]) -> Result<Handle, Str
     Ok(vm.arena.alloc(Val::Int(written as i64)))
 }
 
+/// glob(pattern, flags = 0) - Find pathnames matching a pattern
+/// Reference: $PHP_SRC_PATH/ext/standard/dir.c - PHP_FUNCTION(glob)
+pub fn php_glob(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err("glob() expects 1 or 2 parameters".into());
+    }
+
+    let pattern_bytes = vm.value_to_string(args[0])?;
+    let pattern = String::from_utf8_lossy(&pattern_bytes).to_string();
+    let flags = if args.len() == 2 {
+        vm.check_builtin_param_int(args[1], 2, "glob")?
+    } else {
+        0
+    };
+
+    let options = MatchOptions {
+        case_sensitive: true,
+        require_literal_separator: false,
+        require_literal_leading_dot: false,
+    };
+
+    let only_dir = (flags & libc::GLOB_ONLYDIR as i64) != 0;
+    let no_sort = (flags & libc::GLOB_NOSORT as i64) != 0;
+    let no_check = (flags & libc::GLOB_NOCHECK as i64) != 0;
+
+    let mut paths: Vec<PathBuf> = Vec::new();
+    match glob_with(&pattern, options) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = match entry {
+                    Ok(path) => path,
+                    Err(_) => return Ok(vm.arena.alloc(Val::Bool(false))),
+                };
+                if only_dir && !path.is_dir() {
+                    continue;
+                }
+                paths.push(path);
+            }
+        }
+        Err(_) => {
+            let fallback = glob_fallback(&pattern, options).ok_or_else(|| {
+                vm.arena.alloc(Val::Bool(false))
+            });
+            match fallback {
+                Ok(fallback_paths) => {
+                    for path in fallback_paths {
+                        if only_dir && !path.is_dir() {
+                            continue;
+                        }
+                        paths.push(path);
+                    }
+                }
+                Err(handle) => return Ok(handle),
+            }
+        }
+    }
+
+    if paths.is_empty() && no_check {
+        let mut result = ArrayData::new();
+        result.insert(
+            ArrayKey::Int(0),
+            vm.arena.alloc(Val::String(pattern_bytes.into())),
+        );
+        return Ok(vm.arena.alloc(Val::Array(Rc::new(result))));
+    }
+
+    if !no_sort {
+        paths.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    }
+
+    let mut result = ArrayData::new();
+    for (index, path) in paths.into_iter().enumerate() {
+        #[cfg(unix)]
+        let bytes = {
+            use std::os::unix::ffi::OsStrExt;
+            path.as_os_str().as_bytes().to_vec()
+        };
+
+        #[cfg(not(unix))]
+        let bytes = path.to_string_lossy().into_owned().into_bytes();
+
+        result.insert(
+            ArrayKey::Int(index as i64),
+            vm.arena.alloc(Val::String(bytes.into())),
+        );
+    }
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(result))))
+}
+
+fn glob_fallback(pattern: &str, options: MatchOptions) -> Option<Vec<PathBuf>> {
+    let sanitized = if pattern.contains("**") {
+        pattern.replace("**", "*")
+    } else {
+        pattern.to_string()
+    };
+
+    let matcher = Pattern::new(&sanitized).ok()?;
+    let base = glob_base_path(&sanitized);
+    let mut matches = Vec::new();
+
+    fn walk_dir(path: &PathBuf, matches: &mut Vec<PathBuf>, matcher: &Pattern, options: MatchOptions) {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                let entry_str = entry_path.to_string_lossy();
+                if matcher.matches_with(&entry_str, options) {
+                    matches.push(entry_path.clone());
+                }
+                if entry_path.is_dir() {
+                    walk_dir(&entry_path, matches, matcher, options);
+                }
+            }
+        }
+    }
+
+    walk_dir(&base, &mut matches, &matcher, options);
+    Some(matches)
+}
+
+fn glob_base_path(pattern: &str) -> PathBuf {
+    let mut end = 0;
+    for (idx, ch) in pattern.char_indices() {
+        if matches!(ch, '*' | '?' | '[' | '{') {
+            break;
+        }
+        end = idx + ch.len_utf8();
+    }
+
+    let base = if end == 0 { "." } else { &pattern[..end] };
+    PathBuf::from(base)
+}
+
 /// file_exists(filename) - Check if file or directory exists
 /// Reference: $PHP_SRC_PATH/ext/standard/filestat.c - PHP_FUNCTION(file_exists)
 pub fn php_file_exists(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
@@ -522,19 +659,30 @@ pub fn php_is_writable(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let path_bytes = handle_to_path(vm, args[0])?;
     let path = bytes_to_path(&path_bytes)?;
 
-    // Check if we can open for writing
     let writable = if path.exists() {
-        OpenOptions::new().write(true).open(&path).is_ok()
+        can_write(&path)
+    } else if let Some(parent) = path.parent() {
+        can_write(parent)
     } else {
-        // Check parent directory
-        if let Some(parent) = path.parent() {
-            parent.exists() && parent.is_dir()
-        } else {
-            false
-        }
+        false
     };
 
     Ok(vm.arena.alloc(Val::Bool(writable)))
+}
+
+#[cfg(unix)]
+fn can_write(path: &Path) -> bool {
+    let c_path = match CString::new(path.as_os_str().as_bytes()) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+
+    unsafe { libc::access(c_path.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn can_write(path: &Path) -> bool {
+    OpenOptions::new().write(true).open(path).is_ok()
 }
 
 /// unlink(filename) - Delete a file

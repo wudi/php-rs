@@ -110,7 +110,9 @@ fn run_workers(
         };
         let metrics = metrics.clone();
 
-        let handle = thread::spawn(move || {
+        let handle = thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -168,7 +170,8 @@ fn run_workers(
                 }
                 eprintln!("[php-fpm] Worker {} stopping", id);
             });
-        });
+        })
+        .expect("Failed to spawn php-fpm worker thread");
         handles.push(handle);
     }
 
@@ -538,6 +541,10 @@ async fn execute_php<W: Write + 'static>(
 
     // Run VM
     let _ = vm.run(Rc::new(bytecode));
+    if let Err(err) = php_rs::builtins::output_control::flush_all_output_buffers(&mut vm) {
+        let mut buffer = error_buffer.lock().unwrap();
+        buffer.extend_from_slice(format!("Warning: {}\n", err).as_bytes());
+    }
 
     // Finish request if not already done
     let errors = error_buffer.lock().unwrap().clone();

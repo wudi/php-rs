@@ -47,3 +47,31 @@ fn test_preg_replace_backref() {
     let (_val, output) = run_code_capture_output(code).expect("Execution failed");
     assert!(output.contains(r#"string(13) "April 1, 2003""#));
 }
+
+#[test]
+fn test_preg_match_all_basic() {
+    let code = r#"<?php
+        $subject = "foo bar baz";
+        $count = preg_match_all('/[a-z]+/', $subject, $matches);
+        var_dump($count);
+        var_dump($matches);
+    "#;
+    let (_val, output) = run_code_capture_output(code).expect("Execution failed");
+    assert!(output.contains("int(3)"));
+    assert!(output.contains(r#"string(3) "foo""#));
+    assert!(output.contains(r#"string(3) "bar""#));
+    assert!(output.contains(r#"string(3) "baz""#));
+}
+
+#[test]
+fn test_preg_replace_callback_basic() {
+    let code = r#"<?php
+        $subject = "foo 123 bar";
+        $result = preg_replace_callback('/\d+/', function ($matches) {
+            return '[' . $matches[0] . ']';
+        }, $subject);
+        var_dump($result);
+    "#;
+    let (_val, output) = run_code_capture_output(code).expect("Execution failed");
+    assert!(output.contains(r#"string(13) "foo [123] bar""#));
+}

@@ -588,12 +588,11 @@ pub fn php_class_exists(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
 
     let val = vm.arena.get(args[0]);
     if let Val::String(s) = &val.value {
-        if let Some(sym) = vm.context.interner.find(s) {
-            if let Some(def) = vm.context.classes.get(&sym) {
-                return Ok(vm
-                    .arena
-                    .alloc(Val::Bool(!def.is_interface && !def.is_trait)));
-            }
+        let sym = vm.context.interner.intern(s);
+        if let Some(def) = vm.get_class_def(sym) {
+            return Ok(vm
+                .arena
+                .alloc(Val::Bool(!def.is_interface && !def.is_trait)));
         }
     }
 
@@ -607,10 +606,9 @@ pub fn php_interface_exists(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
 
     let val = vm.arena.get(args[0]);
     if let Val::String(s) = &val.value {
-        if let Some(sym) = vm.context.interner.find(s) {
-            if let Some(def) = vm.context.classes.get(&sym) {
-                return Ok(vm.arena.alloc(Val::Bool(def.is_interface)));
-            }
+        let sym = vm.context.interner.intern(s);
+        if let Some(def) = vm.get_class_def(sym) {
+            return Ok(vm.arena.alloc(Val::Bool(def.is_interface)));
         }
     }
 
@@ -624,10 +622,9 @@ pub fn php_trait_exists(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
 
     let val = vm.arena.get(args[0]);
     if let Val::String(s) = &val.value {
-        if let Some(sym) = vm.context.interner.find(s) {
-            if let Some(def) = vm.context.classes.get(&sym) {
-                return Ok(vm.arena.alloc(Val::Bool(def.is_trait)));
-            }
+        let sym = vm.context.interner.intern(s);
+        if let Some(def) = vm.get_class_def(sym) {
+            return Ok(vm.arena.alloc(Val::Bool(def.is_trait)));
         }
     }
 

@@ -34,6 +34,21 @@ pub use connection::MysqliConnection;
 pub use error::MysqliError;
 pub use result::MysqliResult;
 
+/// mysqli_report(int $flags): bool
+///
+/// Sets the MySQLi report mode.
+///
+/// Reference: $PHP_SRC_PATH/ext/mysqli/mysqli_api.c - mysqli_report
+pub fn php_mysqli_report(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("mysqli_report() expects exactly 1 parameter".into());
+    }
+
+    let _flags = vm.arena.get(args[0]).value.to_int();
+
+    Ok(vm.arena.alloc(Val::Bool(true)))
+}
+
 /// mysqli_connect(string $host, string $username, string $password, string $database, int $port = 3306): resource|false
 ///
 /// Opens a connection to a MySQL server.

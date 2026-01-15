@@ -1,4 +1,5 @@
 use crate::builtins::mysqli;
+use crate::core::value::Val;
 use crate::runtime::context::RequestContext;
 use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
 use crate::runtime::registry::ExtensionRegistry;
@@ -22,6 +23,7 @@ impl Extension for MysqliExtension {
         // Register MySQLi functions
         registry.register_function(b"mysqli_connect", mysqli::php_mysqli_connect);
         registry.register_function(b"mysqli_close", mysqli::php_mysqli_close);
+        registry.register_function(b"mysqli_report", mysqli::php_mysqli_report);
         registry.register_function(b"mysqli_query", mysqli::php_mysqli_query);
         registry.register_function(b"mysqli_fetch_assoc", mysqli::php_mysqli_fetch_assoc);
         registry.register_function(b"mysqli_fetch_row", mysqli::php_mysqli_fetch_row);
@@ -29,6 +31,13 @@ impl Extension for MysqliExtension {
         registry.register_function(b"mysqli_affected_rows", mysqli::php_mysqli_affected_rows);
         registry.register_function(b"mysqli_error", mysqli::php_mysqli_error);
         registry.register_function(b"mysqli_errno", mysqli::php_mysqli_errno);
+
+        registry.register_constant(b"MYSQLI_REPORT_OFF", Val::Int(0));
+        registry.register_constant(b"MYSQLI_REPORT_ERROR", Val::Int(1));
+        registry.register_constant(b"MYSQLI_REPORT_STRICT", Val::Int(2));
+        registry.register_constant(b"MYSQLI_REPORT_INDEX", Val::Int(4));
+        registry.register_constant(b"MYSQLI_REPORT_CLOSE", Val::Int(8));
+        registry.register_constant(b"MYSQLI_REPORT_ALL", Val::Int(255));
 
         ExtensionResult::Success
     }

@@ -96,6 +96,7 @@ pub struct Emitter<'src> {
     loop_stack: Vec<LoopInfo>,
     try_finally_stack: Vec<TryFinallyInfo>,
     is_generator: bool,
+    current_line: u32,
     // Context for magic constants
     file_path: Option<String>,
     current_class: Option<Symbol>,
@@ -118,6 +119,7 @@ impl<'src> Emitter<'src> {
             loop_stack: Vec::new(),
             try_finally_stack: Vec::new(),
             is_generator: false,
+            current_line: 1,
             file_path: None,
             current_class: None,
             current_trait: None,
@@ -188,15 +190,15 @@ impl<'src> Emitter<'src> {
 
         // Handle modifiers (abstract, final, readonly)
         if modifiers.iter().any(|m| m.kind == TokenKind::Abstract) {
-            self.chunk.code.push(OpCode::MarkAbstract(class_sym));
+            self.push_op(OpCode::MarkAbstract(class_sym));
         }
 
         if modifiers.iter().any(|m| m.kind == TokenKind::Final) {
-            self.chunk.code.push(OpCode::MarkFinal(class_sym));
+            self.push_op(OpCode::MarkFinal(class_sym));
         }
 
         if modifiers.iter().any(|m| m.kind == TokenKind::Readonly) {
-            self.chunk.code.push(OpCode::MarkReadonly(class_sym));
+            self.push_op(OpCode::MarkReadonly(class_sym));
         }
 
         // Handle interfaces
@@ -435,6 +437,17 @@ impl<'src> Emitter<'src> {
         }
     }
 
+    fn set_current_line(&mut self, span: Span) {
+        if let Some(info) = span.line_info(self.source) {
+            self.current_line = info.line as u32;
+        }
+    }
+
+    fn push_op(&mut self, op: OpCode) {
+        self.chunk.code.push(op);
+        self.chunk.lines.push(self.current_line);
+    }
+
     pub fn compile(mut self, stmts: &[StmtId]) -> (CodeChunk, bool) {
         // Process declare(strict_types=...) FIRST before anything else
         // This ensures functions inherit the correct strict_types setting
@@ -462,8 +475,8 @@ impl<'src> Emitter<'src> {
         if self.current_function.is_some() {
             // Inside a function - add implicit return null
             let null_idx = self.add_constant(Val::Null);
-            self.chunk.code.push(OpCode::Const(null_idx as u16));
-            self.chunk.code.push(OpCode::Return);
+            self.push_op(OpCode::Const(null_idx as u16));
+            self.push_op(OpCode::Return);
         }
         // Note: Top-level scripts don't get implicit return null
 
@@ -546,9 +559,12 @@ impl<'src> Emitter<'src> {
                         if p_name.starts_with(b"$") {
                             let sym = method_emitter.interner.intern(&p_name[1..]);
                             let param_type = info.ty.and_then(|ty| method_emitter.convert_type(ty));
-                            let default_value = info
-                                .default
-                                .map(|expr| method_emitter.eval_constant_expr(expr));
+                        let default_value = if info.variadic {
+                            None
+                        } else {
+                            info.default
+                                .map(|expr| method_emitter.eval_constant_expr(expr))
+                        };
 
                             param_syms.push(FuncParam {
                                 name: sym,
@@ -558,16 +574,21 @@ impl<'src> Emitter<'src> {
                                 default_value,
                             });
 
-                            if let Some(default_expr) = info.default {
-                                let val = method_emitter.eval_constant_expr(default_expr);
-                                let idx = method_emitter.add_constant(val);
-                                method_emitter
-                                    .chunk
-                                    .code
-                                    .push(OpCode::RecvInit(i as u32, idx as u16));
-                            } else {
-                                method_emitter.chunk.code.push(OpCode::Recv(i as u32));
-                            }
+                        if info.variadic {
+                            method_emitter
+                                .chunk
+                                .code
+                                .push(OpCode::RecvVariadic(i as u32));
+                        } else if let Some(default_expr) = info.default {
+                            let val = method_emitter.eval_constant_expr(default_expr);
+                            let idx = method_emitter.add_constant(val);
+                            method_emitter
+                                .chunk
+                                .code
+                                .push(OpCode::RecvInit(i as u32, idx as u16));
+                        } else {
+                            method_emitter.push_op(OpCode::Recv(i as u32));
+                        }
                         }
                     }
 
@@ -596,7 +617,7 @@ impl<'src> Emitter<'src> {
                     let func_res = Val::Resource(Rc::new(user_func));
                     let const_idx = self.add_constant(func_res);
 
-                    self.chunk.code.push(OpCode::DefMethod(
+                    self.push_op(OpCode::DefMethod(
                         class_sym,
                         method_sym,
                         const_idx as u32,
@@ -609,7 +630,7 @@ impl<'src> Emitter<'src> {
                     if !attributes.is_empty() {
                         let attr_val = self.build_attribute_list(attributes);
                         let idx = self.add_constant(attr_val);
-                        self.chunk.code.push(OpCode::SetMethodAttributes(
+                        self.push_op(OpCode::SetMethodAttributes(
                             class_sym, method_sym, idx as u16,
                         ));
                     }
@@ -665,7 +686,7 @@ impl<'src> Emitter<'src> {
                         };
 
                         if is_static {
-                            self.chunk.code.push(OpCode::DefStaticProp(
+                            self.push_op(OpCode::DefStaticProp(
                                 class_sym,
                                 prop_sym,
                                 default_idx as u16,
@@ -673,7 +694,7 @@ impl<'src> Emitter<'src> {
                                 type_hint_idx as u32,
                             ));
                         } else {
-                            self.chunk.code.push(OpCode::DefProp(
+                            self.push_op(OpCode::DefProp(
                                 class_sym,
                                 prop_sym,
                                 default_idx as u16,
@@ -684,7 +705,7 @@ impl<'src> Emitter<'src> {
                         }
 
                         if let Some(doc_comment_idx) = doc_comment_idx {
-                            self.chunk.code.push(OpCode::SetPropertyDocComment(
+                            self.push_op(OpCode::SetPropertyDocComment(
                                 class_sym,
                                 prop_sym,
                                 doc_comment_idx as u16,
@@ -692,7 +713,7 @@ impl<'src> Emitter<'src> {
                         }
 
                         if let Some(attr_idx) = attr_idx {
-                            self.chunk.code.push(OpCode::SetPropertyAttributes(
+                            self.push_op(OpCode::SetPropertyAttributes(
                                 class_sym,
                                 prop_sym,
                                 attr_idx as u16,
@@ -726,7 +747,7 @@ impl<'src> Emitter<'src> {
                             .get_literal_value(entry.value)
                             .unwrap_or_else(|| Val::Null);
                         let val_idx = self.add_constant(val);
-                        self.chunk.code.push(OpCode::DefClassConst(
+                        self.push_op(OpCode::DefClassConst(
                             class_sym,
                             const_sym,
                             val_idx as u16,
@@ -734,7 +755,7 @@ impl<'src> Emitter<'src> {
                         ));
 
                         if let Some(doc_comment_idx) = doc_comment_idx {
-                            self.chunk.code.push(OpCode::SetClassConstDocComment(
+                            self.push_op(OpCode::SetClassConstDocComment(
                                 class_sym,
                                 const_sym,
                                 doc_comment_idx as u16,
@@ -742,7 +763,7 @@ impl<'src> Emitter<'src> {
                         }
 
                         if let Some(attr_idx) = attr_idx {
-                            self.chunk.code.push(OpCode::SetClassConstAttributes(
+                            self.push_op(OpCode::SetClassConstAttributes(
                                 class_sym,
                                 const_sym,
                                 attr_idx as u16,
@@ -758,7 +779,7 @@ impl<'src> Emitter<'src> {
                     for trait_name in *traits {
                         let trait_str = self.get_text(trait_name.span);
                         let trait_sym = self.interner.intern(trait_str);
-                        self.chunk.code.push(OpCode::UseTrait(class_sym, trait_sym));
+                        self.push_op(OpCode::UseTrait(class_sym, trait_sym));
                     }
                     for adaptation in *adaptations {
                         if let TraitAdaptation::Alias {
@@ -789,7 +810,7 @@ impl<'src> Emitter<'src> {
                                 _ => None,
                             });
 
-                            self.chunk.code.push(OpCode::SetTraitAlias(
+                            self.push_op(OpCode::SetTraitAlias(
                                 class_sym, alias_sym, trait_sym, method_sym, vis,
                             ));
                         }
@@ -801,6 +822,7 @@ impl<'src> Emitter<'src> {
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt) {
+        self.set_current_line(stmt.span());
         match stmt {
             Stmt::Declare { declares, body, .. } => {
                 // PHP: declare(strict_types=1) is per-file and affects calls made from this file.
@@ -865,29 +887,29 @@ impl<'src> Emitter<'src> {
             Stmt::Echo { exprs, .. } => {
                 for expr in *exprs {
                     self.emit_expr(expr);
-                    self.chunk.code.push(OpCode::Echo);
+                    self.push_op(OpCode::Echo);
                 }
             }
             Stmt::InlineHtml { value, .. } => {
                 // Output inline HTML/text that appears outside PHP tags
                 // Convert the raw bytes to a string constant and echo it
                 let idx = self.add_constant(Val::String(value.to_vec().into()));
-                self.chunk.code.push(OpCode::Const(idx as u16));
-                self.chunk.code.push(OpCode::Echo);
+                self.push_op(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Echo);
             }
             Stmt::Expression { expr, .. } => {
                 self.emit_expr(expr);
-                self.chunk.code.push(OpCode::Pop);
+                self.push_op(OpCode::Pop);
             }
             Stmt::Return { expr, .. } => {
                 if let Some(e) = expr {
                     self.emit_expr(e);
                 } else {
                     let idx = self.add_constant(Val::Null);
-                    self.chunk.code.push(OpCode::Const(idx as u16));
+                    self.push_op(OpCode::Const(idx as u16));
                 }
                 // Return type checking is now done in the Return handler
-                self.chunk.code.push(OpCode::Return);
+                self.push_op(OpCode::Return);
             }
             Stmt::Const { consts, .. } => {
                 for c in *consts {
@@ -917,7 +939,7 @@ impl<'src> Emitter<'src> {
                         if name.starts_with(b"$") {
                             let var_name = &name[1..];
                             let sym = self.interner.intern(var_name);
-                            self.chunk.code.push(OpCode::BindGlobal(sym));
+                            self.push_op(OpCode::BindGlobal(sym));
                         }
                     }
                 }
@@ -954,7 +976,7 @@ impl<'src> Emitter<'src> {
                     };
 
                     let idx = self.add_constant(val);
-                    self.chunk.code.push(OpCode::BindStatic(name, idx as u16));
+                    self.push_op(OpCode::BindStatic(name, idx as u16));
                 }
             }
             Stmt::Unset { vars, .. } => {
@@ -964,30 +986,30 @@ impl<'src> Emitter<'src> {
                             let name = self.get_text(*span);
                             if name.starts_with(b"$") {
                                 let sym = self.interner.intern(&name[1..]);
-                                self.chunk.code.push(OpCode::UnsetVar(sym));
+                                self.push_op(OpCode::UnsetVar(sym));
                             }
                         }
                         Expr::IndirectVariable { name, .. } => {
                             self.emit_expr(name);
-                            self.chunk.code.push(OpCode::UnsetVarDynamic);
+                            self.push_op(OpCode::UnsetVarDynamic);
                         }
                         Expr::ArrayDimFetch { array, dim, .. } => {
                             if let Expr::Variable { span, .. } = array {
                                 let name = self.get_text(*span);
                                 if name.starts_with(b"$") {
                                     let sym = self.interner.intern(&name[1..]);
-                                    self.chunk.code.push(OpCode::LoadVar(sym));
-                                    self.chunk.code.push(OpCode::Dup);
+                                    self.push_op(OpCode::LoadVar(sym));
+                                    self.push_op(OpCode::Dup);
 
                                     if let Some(d) = dim {
                                         self.emit_expr(d);
                                     } else {
                                         let idx = self.add_constant(Val::Null);
-                                        self.chunk.code.push(OpCode::Const(idx as u16));
+                                        self.push_op(OpCode::Const(idx as u16));
                                     }
 
-                                    self.chunk.code.push(OpCode::UnsetDim);
-                                    self.chunk.code.push(OpCode::StoreVar(sym));
+                                    self.push_op(OpCode::UnsetDim);
+                                    self.push_op(OpCode::StoreVar(sym));
                                 }
                             } else {
                                 // Check if this is a property fetch (possibly nested): $obj->prop['key']['key2']...
@@ -1014,10 +1036,10 @@ impl<'src> Emitter<'src> {
 
                                     // Emit target (obj)
                                     self.emit_expr(target); // [obj]
-                                    self.chunk.code.push(OpCode::Dup); // [obj, obj]
+                                    self.push_op(OpCode::Dup); // [obj, obj]
 
                                     // Fetch the property
-                                    self.chunk.code.push(OpCode::FetchProp(prop_sym)); // [obj, array]
+                                    self.push_op(OpCode::FetchProp(prop_sym)); // [obj, array]
 
                                     // Emit all keys
                                     for key in &keys {
@@ -1025,7 +1047,7 @@ impl<'src> Emitter<'src> {
                                             self.emit_expr(k);
                                         } else {
                                             let idx = self.add_constant(Val::Null);
-                                            self.chunk.code.push(OpCode::Const(idx as u16));
+                                            self.push_op(OpCode::Const(idx as u16));
                                         }
                                     }
 
@@ -1035,8 +1057,8 @@ impl<'src> Emitter<'src> {
                                         .push(OpCode::UnsetNestedDim(keys.len() as u8)); // [obj, modified_array]
 
                                     // Assign back to property
-                                    self.chunk.code.push(OpCode::AssignProp(prop_sym)); // []
-                                    self.chunk.code.push(OpCode::Pop); // discard result
+                                    self.push_op(OpCode::AssignProp(prop_sym)); // []
+                                    self.push_op(OpCode::Pop); // discard result
                                 }
                             }
                         }
@@ -1047,8 +1069,8 @@ impl<'src> Emitter<'src> {
                             if let Expr::Variable { span, .. } = property {
                                 let name = self.get_text(*span);
                                 let idx = self.add_constant(Val::String(name.to_vec().into()));
-                                self.chunk.code.push(OpCode::Const(idx as u16));
-                                self.chunk.code.push(OpCode::UnsetObj);
+                                self.push_op(OpCode::Const(idx as u16));
+                                self.push_op(OpCode::UnsetObj);
                             }
                         }
                         Expr::ClassConstFetch {
@@ -1067,10 +1089,10 @@ impl<'src> Emitter<'src> {
                                     if !name.starts_with(b"$") {
                                         let idx =
                                             self.add_constant(Val::String(name.to_vec().into()));
-                                        self.chunk.code.push(OpCode::Const(idx as u16));
+                                        self.push_op(OpCode::Const(idx as u16));
                                     } else {
                                         let sym = self.interner.intern(&name[1..]);
-                                        self.chunk.code.push(OpCode::LoadVar(sym));
+                                        self.push_op(OpCode::LoadVar(sym));
                                     }
 
                                     if let Expr::Variable {
@@ -1081,8 +1103,8 @@ impl<'src> Emitter<'src> {
                                         let idx = self.add_constant(Val::String(
                                             prop_name[1..].to_vec().into(),
                                         ));
-                                        self.chunk.code.push(OpCode::Const(idx as u16));
-                                        self.chunk.code.push(OpCode::UnsetStaticProp);
+                                        self.push_op(OpCode::Const(idx as u16));
+                                        self.push_op(OpCode::UnsetStaticProp);
                                     }
                                 }
                             }
@@ -1115,10 +1137,10 @@ impl<'src> Emitter<'src> {
                     // Check if we're inside try-finally blocks
                     if !self.try_finally_stack.is_empty() {
                         // Use JmpFinally which will execute finally blocks at runtime
-                        self.chunk.code.push(OpCode::JmpFinally(0)); // Patch later
+                        self.push_op(OpCode::JmpFinally(0)); // Patch later
                     } else {
                         // Normal jump
-                        self.chunk.code.push(OpCode::Jmp(0)); // Patch later
+                        self.push_op(OpCode::Jmp(0)); // Patch later
                     }
 
                     // Register the jump with the target loop
@@ -1149,10 +1171,10 @@ impl<'src> Emitter<'src> {
                     // Check if we're inside try-finally blocks
                     if !self.try_finally_stack.is_empty() {
                         // Use JmpFinally which will execute finally blocks at runtime
-                        self.chunk.code.push(OpCode::JmpFinally(0)); // Patch later
+                        self.push_op(OpCode::JmpFinally(0)); // Patch later
                     } else {
                         // Normal jump
-                        self.chunk.code.push(OpCode::Jmp(0)); // Patch later
+                        self.push_op(OpCode::Jmp(0)); // Patch later
                     }
 
                     // Register the jump with the target loop
@@ -1168,14 +1190,14 @@ impl<'src> Emitter<'src> {
                 self.emit_expr(condition);
 
                 let jump_false_idx = self.chunk.code.len();
-                self.chunk.code.push(OpCode::JmpIfFalse(0));
+                self.push_op(OpCode::JmpIfFalse(0));
 
                 for stmt in *then_block {
                     self.emit_stmt(stmt);
                 }
 
                 let jump_end_idx = self.chunk.code.len();
-                self.chunk.code.push(OpCode::Jmp(0));
+                self.push_op(OpCode::Jmp(0));
 
                 let else_label = self.chunk.code.len();
                 self.patch_jump(jump_false_idx, else_label);
@@ -1239,9 +1261,12 @@ impl<'src> Emitter<'src> {
                     if p_name.starts_with(b"$") {
                         let sym = func_emitter.interner.intern(&p_name[1..]);
                         let param_type = info.ty.and_then(|ty| func_emitter.convert_type(ty));
-                        let default_value = info
-                            .default
-                            .map(|expr| func_emitter.eval_constant_expr(expr));
+                        let default_value = if info.variadic {
+                            None
+                        } else {
+                            info.default
+                                .map(|expr| func_emitter.eval_constant_expr(expr))
+                        };
 
                         param_syms.push(FuncParam {
                             name: sym,
@@ -1251,7 +1276,12 @@ impl<'src> Emitter<'src> {
                             default_value,
                         });
 
-                        if let Some(default_expr) = info.default {
+                        if info.variadic {
+                            func_emitter
+                                .chunk
+                                .code
+                                .push(OpCode::RecvVariadic(i as u32));
+                        } else if let Some(default_expr) = info.default {
                             let val = func_emitter.eval_constant_expr(default_expr);
                             let idx = func_emitter.add_constant(val);
                             func_emitter
@@ -1259,7 +1289,7 @@ impl<'src> Emitter<'src> {
                                 .code
                                 .push(OpCode::RecvInit(i as u32, idx as u16));
                         } else {
-                            func_emitter.chunk.code.push(OpCode::Recv(i as u32));
+                            func_emitter.push_op(OpCode::Recv(i as u32));
                         }
                     }
                 }
@@ -1368,7 +1398,7 @@ impl<'src> Emitter<'src> {
                 self.current_class = prev_class;
 
                 // Finalize class: validate interfaces, abstract methods, etc.
-                self.chunk.code.push(OpCode::FinalizeClass(class_sym));
+                self.push_op(OpCode::FinalizeClass(class_sym));
             }
             Stmt::Interface {
                 name,
@@ -1380,7 +1410,7 @@ impl<'src> Emitter<'src> {
             } => {
                 let sym = self.declare_class_sym_from_span(name.span);
 
-                self.chunk.code.push(OpCode::DefInterface(sym));
+                self.push_op(OpCode::DefInterface(sym));
 
                 let start_line = name
                     .span
@@ -1421,7 +1451,7 @@ impl<'src> Emitter<'src> {
             } => {
                 let sym = self.declare_class_sym_from_span(name.span);
 
-                self.chunk.code.push(OpCode::DefTrait(sym));
+                self.push_op(OpCode::DefTrait(sym));
 
                 let start_line = name
                     .span
@@ -1455,7 +1485,7 @@ impl<'src> Emitter<'src> {
                 self.emit_expr(condition);
 
                 let end_jump = self.chunk.code.len();
-                self.chunk.code.push(OpCode::JmpIfFalse(0)); // Patch later
+                self.push_op(OpCode::JmpIfFalse(0)); // Patch later
 
                 self.loop_stack.push(LoopInfo {
                     break_jumps: Vec::new(),
@@ -1466,7 +1496,7 @@ impl<'src> Emitter<'src> {
                     self.emit_stmt(stmt);
                 }
 
-                self.chunk.code.push(OpCode::Jmp(start_label as u32));
+                self.push_op(OpCode::Jmp(start_label as u32));
 
                 let end_label = self.chunk.code.len();
                 self.chunk.code[end_jump] = OpCode::JmpIfFalse(end_label as u32);
@@ -1495,7 +1525,7 @@ impl<'src> Emitter<'src> {
 
                 let continue_label = self.chunk.code.len();
                 self.emit_expr(condition);
-                self.chunk.code.push(OpCode::JmpIfTrue(start_label as u32));
+                self.push_op(OpCode::JmpIfTrue(start_label as u32));
 
                 let end_label = self.chunk.code.len();
 
@@ -1516,7 +1546,7 @@ impl<'src> Emitter<'src> {
             } => {
                 for expr in *init {
                     self.emit_expr(expr);
-                    self.chunk.code.push(OpCode::Pop); // Discard result
+                    self.push_op(OpCode::Pop); // Discard result
                 }
 
                 let start_label = self.chunk.code.len();
@@ -1526,11 +1556,11 @@ impl<'src> Emitter<'src> {
                     for (i, expr) in condition.iter().enumerate() {
                         self.emit_expr(expr);
                         if i < condition.len() - 1 {
-                            self.chunk.code.push(OpCode::Pop);
+                            self.push_op(OpCode::Pop);
                         }
                     }
                     end_jump = Some(self.chunk.code.len());
-                    self.chunk.code.push(OpCode::JmpIfFalse(0)); // Patch later
+                    self.push_op(OpCode::JmpIfFalse(0)); // Patch later
                 }
 
                 self.loop_stack.push(LoopInfo {
@@ -1545,10 +1575,10 @@ impl<'src> Emitter<'src> {
                 let continue_label = self.chunk.code.len();
                 for expr in *loop_expr {
                     self.emit_expr(expr);
-                    self.chunk.code.push(OpCode::Pop);
+                    self.push_op(OpCode::Pop);
                 }
 
-                self.chunk.code.push(OpCode::Jmp(start_label as u32));
+                self.push_op(OpCode::Jmp(start_label as u32));
 
                 let end_label = self.chunk.code.len();
                 if let Some(idx) = end_jump {
@@ -1584,7 +1614,7 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::MakeVarRef(sym));
+                            self.push_op(OpCode::MakeVarRef(sym));
                         } else {
                             self.emit_expr(expr);
                         }
@@ -1597,20 +1627,20 @@ impl<'src> Emitter<'src> {
 
                 // IterInit(End)
                 let init_idx = self.chunk.code.len();
-                self.chunk.code.push(OpCode::IterInit(0)); // Patch later
+                self.push_op(OpCode::IterInit(0)); // Patch later
 
                 let start_label = self.chunk.code.len();
 
                 // IterValid(End)
                 let valid_idx = self.chunk.code.len();
-                self.chunk.code.push(OpCode::IterValid(0)); // Patch later
+                self.push_op(OpCode::IterValid(0)); // Patch later
 
                 // IterGetVal
                 if let Expr::Variable { span, .. } = value_var {
                     let name = self.get_text(*span);
                     if name.starts_with(b"$") {
                         let sym = self.interner.intern(&name[1..]);
-                        self.chunk.code.push(OpCode::IterGetVal(sym));
+                        self.push_op(OpCode::IterGetVal(sym));
                     }
                 } else if let Expr::Unary {
                     op: UnaryOp::Reference,
@@ -1622,7 +1652,7 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::IterGetValRef(sym));
+                            self.push_op(OpCode::IterGetValRef(sym));
                         }
                     }
                 }
@@ -1633,7 +1663,7 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::IterGetKey(sym));
+                            self.push_op(OpCode::IterGetKey(sym));
                         }
                     }
                 }
@@ -1650,10 +1680,10 @@ impl<'src> Emitter<'src> {
 
                 let continue_label = self.chunk.code.len();
                 // IterNext
-                self.chunk.code.push(OpCode::IterNext);
+                self.push_op(OpCode::IterNext);
 
                 // Jump back to start
-                self.chunk.code.push(OpCode::Jmp(start_label as u32));
+                self.push_op(OpCode::Jmp(start_label as u32));
 
                 let end_label = self.chunk.code.len();
 
@@ -1671,7 +1701,7 @@ impl<'src> Emitter<'src> {
             }
             Stmt::Throw { expr, .. } => {
                 self.emit_expr(expr);
-                self.chunk.code.push(OpCode::Throw);
+                self.push_op(OpCode::Throw);
             }
             Stmt::Switch {
                 condition, cases, ..
@@ -1679,7 +1709,7 @@ impl<'src> Emitter<'src> {
                 self.emit_expr(condition);
 
                 let dispatch_jump = self.chunk.code.len();
-                self.chunk.code.push(OpCode::Jmp(0)); // Patch later
+                self.push_op(OpCode::Jmp(0)); // Patch later
 
                 let mut case_labels = Vec::new();
                 let mut default_label = None;
@@ -1703,7 +1733,7 @@ impl<'src> Emitter<'src> {
                 }
 
                 let jump_over_dispatch = self.chunk.code.len();
-                self.chunk.code.push(OpCode::Jmp(0)); // Patch to end_label
+                self.push_op(OpCode::Jmp(0)); // Patch to end_label
 
                 let dispatch_start = self.chunk.code.len();
                 self.patch_jump(dispatch_jump, dispatch_start);
@@ -1711,9 +1741,9 @@ impl<'src> Emitter<'src> {
                 // Dispatch logic
                 for (i, case) in cases.iter().enumerate() {
                     if let Some(cond) = case.condition {
-                        self.chunk.code.push(OpCode::Dup); // Dup switch cond
+                        self.push_op(OpCode::Dup); // Dup switch cond
                         self.emit_expr(cond);
-                        self.chunk.code.push(OpCode::IsEqual); // Loose comparison
+                        self.push_op(OpCode::IsEqual); // Loose comparison
                         self.chunk
                             .code
                             .push(OpCode::JmpIfTrue(case_labels[i] as u32));
@@ -1721,13 +1751,13 @@ impl<'src> Emitter<'src> {
                 }
 
                 // Pop switch cond
-                self.chunk.code.push(OpCode::Pop);
+                self.push_op(OpCode::Pop);
 
                 if let Some(def_lbl) = default_label {
-                    self.chunk.code.push(OpCode::Jmp(def_lbl as u32));
+                    self.push_op(OpCode::Jmp(def_lbl as u32));
                 } else {
                     // No default, jump to end
-                    self.chunk.code.push(OpCode::Jmp(jump_over_dispatch as u32));
+                    self.push_op(OpCode::Jmp(jump_over_dispatch as u32));
                     // Will be patched to end_label
                 }
 
@@ -1774,7 +1804,7 @@ impl<'src> Emitter<'src> {
 
                 // Jump from successful try to finally (or end if no finally)
                 let jump_from_try = self.chunk.code.len();
-                self.chunk.code.push(OpCode::Jmp(0)); // Will patch to finally or end
+                self.push_op(OpCode::Jmp(0)); // Will patch to finally or end
 
                 let mut catch_jumps = Vec::new();
                 let mut catch_ranges = Vec::new(); // Track catch block ranges for finally encoding
@@ -1800,10 +1830,10 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(var.span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::StoreVar(sym));
+                            self.push_op(OpCode::StoreVar(sym));
                         }
                     } else {
-                        self.chunk.code.push(OpCode::Pop);
+                        self.push_op(OpCode::Pop);
                     }
 
                     for stmt in catch.body {
@@ -1815,7 +1845,7 @@ impl<'src> Emitter<'src> {
 
                     // Jump from catch to finally (or end if no finally)
                     catch_jumps.push(self.chunk.code.len());
-                    self.chunk.code.push(OpCode::Jmp(0)); // Will patch to finally or end
+                    self.push_op(OpCode::Jmp(0)); // Will patch to finally or end
                 }
 
                 // Emit finally block if present
@@ -1964,29 +1994,102 @@ impl<'src> Emitter<'src> {
             Expr::Boolean { value, .. } => Some(Val::Bool(*value)),
             Expr::Null { .. } => Some(Val::Null),
             Expr::Array { items, .. } => {
-                if items.is_empty() {
-                    Some(Val::Array(Rc::new(crate::core::value::ArrayData::new())))
-                } else {
-                    None
+                use crate::core::value::ConstArrayKey;
+                use indexmap::IndexMap;
+
+                let mut const_array = IndexMap::new();
+                let mut next_index = 0i64;
+
+                for item in *items {
+                    if item.unpack {
+                        continue;
+                    }
+
+                    let val = self.get_literal_value(item.value).unwrap_or(Val::Null);
+                    if let Some(key_expr) = item.key {
+                        let key_val = self.get_literal_value(key_expr);
+                        let key = match key_val {
+                            Some(Val::Int(i)) => {
+                                if i >= next_index {
+                                    next_index = i + 1;
+                                }
+                                ConstArrayKey::Int(i)
+                            }
+                            Some(Val::String(s)) => ConstArrayKey::Str(s),
+                            Some(Val::Float(f)) => {
+                                let i = f as i64;
+                                if i >= next_index {
+                                    next_index = i + 1;
+                                }
+                                ConstArrayKey::Int(i)
+                            }
+                            Some(Val::Bool(b)) => {
+                                let i = if b { 1 } else { 0 };
+                                if i >= next_index {
+                                    next_index = i + 1;
+                                }
+                                ConstArrayKey::Int(i)
+                            }
+                            _ => {
+                                let key = ConstArrayKey::Int(next_index);
+                                next_index += 1;
+                                key
+                            }
+                        };
+                        const_array.insert(key, val);
+                    } else {
+                        const_array.insert(ConstArrayKey::Int(next_index), val);
+                        next_index += 1;
+                    }
                 }
+
+                Some(Val::ConstArray(Rc::new(const_array)))
+            }
+            Expr::ClassConstFetch { class, constant, .. } => {
+                if let Expr::Variable {
+                    span: const_span, ..
+                } = constant
+                {
+                    let const_name = self.get_text(*const_span);
+                    if const_name.eq_ignore_ascii_case(b"class") {
+                        if let Expr::Variable { span, .. } = class {
+                            let class_name = self.get_text(*span);
+                            if !class_name.starts_with(b"$") {
+                                if (class_name.eq_ignore_ascii_case(b"self")
+                                    || class_name.eq_ignore_ascii_case(b"static"))
+                                    && self.current_class.is_some()
+                                {
+                                    let class_sym = self.current_class.unwrap();
+                                    let name_bytes = self.interner.lookup(class_sym)?;
+                                    return Some(Val::String(name_bytes.to_vec().into()));
+                                }
+
+                                let resolved = self.resolve_class_name(class_name);
+                                return Some(Val::String(resolved.into()));
+                            }
+                        }
+                    }
+                }
+                None
             }
             _ => None,
         }
     }
 
     fn emit_expr(&mut self, expr: &Expr) {
+        self.set_current_line(expr.span());
         match expr {
             Expr::Integer { value, .. } => {
                 let s = std::str::from_utf8(value).unwrap_or("0");
                 let i: i64 = s.parse().unwrap_or(0);
                 let idx = self.add_constant(Val::Int(i));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::Float { value, .. } => {
                 let s = std::str::from_utf8(value).unwrap_or("0.0");
                 let f: f64 = s.parse().unwrap_or(0.0);
                 let idx = self.add_constant(Val::Float(f));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::String { value, .. } => {
                 let s = if value.len() >= 2 {
@@ -2028,28 +2131,28 @@ impl<'src> Emitter<'src> {
                     value.to_vec()
                 };
                 let idx = self.add_constant(Val::String(s.into()));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::InterpolatedString { parts, .. } => {
                 if parts.is_empty() {
                     let idx = self.add_constant(Val::String(Vec::<u8>::new().into()));
-                    self.chunk.code.push(OpCode::Const(idx as u16));
+                    self.push_op(OpCode::Const(idx as u16));
                 } else {
                     for (i, part) in parts.iter().enumerate() {
                         self.emit_expr(*part);
                         if i > 0 {
-                            self.chunk.code.push(OpCode::Concat);
+                            self.push_op(OpCode::Concat);
                         }
                     }
                 }
             }
             Expr::Boolean { value, .. } => {
                 let idx = self.add_constant(Val::Bool(*value));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::Null { .. } => {
                 let idx = self.add_constant(Val::Null);
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::Binary {
                 left, op, right, ..
@@ -2058,25 +2161,25 @@ impl<'src> Emitter<'src> {
                     BinaryOp::And | BinaryOp::LogicalAnd => {
                         self.emit_expr(left);
                         let end_jump = self.chunk.code.len();
-                        self.chunk.code.push(OpCode::JmpZEx(0));
+                        self.push_op(OpCode::JmpZEx(0));
                         self.emit_expr(right);
                         let end_label = self.chunk.code.len();
                         self.chunk.code[end_jump] = OpCode::JmpZEx(end_label as u32);
-                        self.chunk.code.push(OpCode::Cast(1)); // Bool
+                        self.push_op(OpCode::Cast(1)); // Bool
                     }
                     BinaryOp::Or | BinaryOp::LogicalOr => {
                         self.emit_expr(left);
                         let end_jump = self.chunk.code.len();
-                        self.chunk.code.push(OpCode::JmpNzEx(0));
+                        self.push_op(OpCode::JmpNzEx(0));
                         self.emit_expr(right);
                         let end_label = self.chunk.code.len();
                         self.chunk.code[end_jump] = OpCode::JmpNzEx(end_label as u32);
-                        self.chunk.code.push(OpCode::Cast(1)); // Bool
+                        self.push_op(OpCode::Cast(1)); // Bool
                     }
                     BinaryOp::Coalesce => {
                         self.emit_expr(left);
                         let end_jump = self.chunk.code.len();
-                        self.chunk.code.push(OpCode::Coalesce(0));
+                        self.push_op(OpCode::Coalesce(0));
                         self.emit_expr(right);
                         let end_label = self.chunk.code.len();
                         self.chunk.code[end_jump] = OpCode::Coalesce(end_label as u32);
@@ -2101,7 +2204,7 @@ impl<'src> Emitter<'src> {
                                     Val::String(resolved.into())
                                 };
                                 let const_idx = self.add_constant(class_name_str) as u16;
-                                self.chunk.code.push(OpCode::Const(const_idx));
+                                self.push_op(OpCode::Const(const_idx));
                             }
                             _ => {
                                 // Complex expression - evaluate normally
@@ -2109,34 +2212,34 @@ impl<'src> Emitter<'src> {
                             }
                         }
 
-                        self.chunk.code.push(OpCode::InstanceOf);
+                        self.push_op(OpCode::InstanceOf);
                     }
                     _ => {
                         self.emit_expr(left);
                         self.emit_expr(right);
                         match op {
-                            BinaryOp::Plus => self.chunk.code.push(OpCode::Add),
-                            BinaryOp::Minus => self.chunk.code.push(OpCode::Sub),
-                            BinaryOp::Mul => self.chunk.code.push(OpCode::Mul),
-                            BinaryOp::Div => self.chunk.code.push(OpCode::Div),
-                            BinaryOp::Mod => self.chunk.code.push(OpCode::Mod),
-                            BinaryOp::Concat => self.chunk.code.push(OpCode::Concat),
-                            BinaryOp::Pow => self.chunk.code.push(OpCode::Pow),
-                            BinaryOp::BitAnd => self.chunk.code.push(OpCode::BitwiseAnd),
-                            BinaryOp::BitOr => self.chunk.code.push(OpCode::BitwiseOr),
-                            BinaryOp::BitXor => self.chunk.code.push(OpCode::BitwiseXor),
-                            BinaryOp::ShiftLeft => self.chunk.code.push(OpCode::ShiftLeft),
-                            BinaryOp::ShiftRight => self.chunk.code.push(OpCode::ShiftRight),
-                            BinaryOp::EqEq => self.chunk.code.push(OpCode::IsEqual),
-                            BinaryOp::EqEqEq => self.chunk.code.push(OpCode::IsIdentical),
-                            BinaryOp::NotEq => self.chunk.code.push(OpCode::IsNotEqual),
-                            BinaryOp::NotEqEq => self.chunk.code.push(OpCode::IsNotIdentical),
-                            BinaryOp::Gt => self.chunk.code.push(OpCode::IsGreater),
-                            BinaryOp::Lt => self.chunk.code.push(OpCode::IsLess),
-                            BinaryOp::GtEq => self.chunk.code.push(OpCode::IsGreaterOrEqual),
-                            BinaryOp::LtEq => self.chunk.code.push(OpCode::IsLessOrEqual),
-                            BinaryOp::Spaceship => self.chunk.code.push(OpCode::Spaceship),
-                            BinaryOp::LogicalXor => self.chunk.code.push(OpCode::BoolXor),
+                            BinaryOp::Plus => self.push_op(OpCode::Add),
+                            BinaryOp::Minus => self.push_op(OpCode::Sub),
+                            BinaryOp::Mul => self.push_op(OpCode::Mul),
+                            BinaryOp::Div => self.push_op(OpCode::Div),
+                            BinaryOp::Mod => self.push_op(OpCode::Mod),
+                            BinaryOp::Concat => self.push_op(OpCode::Concat),
+                            BinaryOp::Pow => self.push_op(OpCode::Pow),
+                            BinaryOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                            BinaryOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                            BinaryOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                            BinaryOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
+                            BinaryOp::ShiftRight => self.push_op(OpCode::ShiftRight),
+                            BinaryOp::EqEq => self.push_op(OpCode::IsEqual),
+                            BinaryOp::EqEqEq => self.push_op(OpCode::IsIdentical),
+                            BinaryOp::NotEq => self.push_op(OpCode::IsNotEqual),
+                            BinaryOp::NotEqEq => self.push_op(OpCode::IsNotIdentical),
+                            BinaryOp::Gt => self.push_op(OpCode::IsGreater),
+                            BinaryOp::Lt => self.push_op(OpCode::IsLess),
+                            BinaryOp::GtEq => self.push_op(OpCode::IsGreaterOrEqual),
+                            BinaryOp::LtEq => self.push_op(OpCode::IsLessOrEqual),
+                            BinaryOp::Spaceship => self.push_op(OpCode::Spaceship),
+                            BinaryOp::LogicalXor => self.push_op(OpCode::BoolXor),
                             // Instanceof is handled above
                             BinaryOp::Instanceof => {}
                             _ => {}
@@ -2156,18 +2259,18 @@ impl<'src> Emitter<'src> {
                         let mut body_jump_indices = Vec::new();
 
                         for cond in conds {
-                            self.chunk.code.push(OpCode::Dup);
+                            self.push_op(OpCode::Dup);
                             self.emit_expr(cond);
-                            self.chunk.code.push(OpCode::IsIdentical); // Strict
+                            self.push_op(OpCode::IsIdentical); // Strict
 
                             let jump_idx = self.chunk.code.len();
-                            self.chunk.code.push(OpCode::JmpIfTrue(0)); // Jump to body
+                            self.push_op(OpCode::JmpIfTrue(0)); // Jump to body
                             body_jump_indices.push(jump_idx);
                         }
 
                         // If we are here, none matched. Jump to next arm.
                         let skip_body_idx = self.chunk.code.len();
-                        self.chunk.code.push(OpCode::Jmp(0));
+                        self.push_op(OpCode::Jmp(0));
 
                         // Body start
                         let body_start = self.chunk.code.len();
@@ -2176,26 +2279,26 @@ impl<'src> Emitter<'src> {
                         }
 
                         // Pop condition before body
-                        self.chunk.code.push(OpCode::Pop);
+                        self.push_op(OpCode::Pop);
                         self.emit_expr(arm.body);
 
                         // Jump to end
                         end_jumps.push(self.chunk.code.len());
-                        self.chunk.code.push(OpCode::Jmp(0));
+                        self.push_op(OpCode::Jmp(0));
 
                         // Patch skip_body_idx to here (next arm)
                         self.patch_jump(skip_body_idx, self.chunk.code.len());
                     } else {
                         // Default arm
-                        self.chunk.code.push(OpCode::Pop); // Pop condition
+                        self.push_op(OpCode::Pop); // Pop condition
                         self.emit_expr(arm.body);
                         end_jumps.push(self.chunk.code.len());
-                        self.chunk.code.push(OpCode::Jmp(0));
+                        self.push_op(OpCode::Jmp(0));
                     }
                 }
 
                 // No match found
-                self.chunk.code.push(OpCode::MatchError);
+                self.push_op(OpCode::MatchError);
 
                 let end_label = self.chunk.code.len();
                 for idx in end_jumps {
@@ -2204,9 +2307,9 @@ impl<'src> Emitter<'src> {
             }
             Expr::Print { expr, .. } => {
                 self.emit_expr(expr);
-                self.chunk.code.push(OpCode::Echo);
+                self.push_op(OpCode::Echo);
                 let idx = self.add_constant(Val::Int(1));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             Expr::Include { expr, kind, .. } => {
                 self.emit_expr(expr);
@@ -2217,8 +2320,8 @@ impl<'src> Emitter<'src> {
                     IncludeKind::RequireOnce => 5,
                 };
                 let idx = self.add_constant(Val::Int(include_type));
-                self.chunk.code.push(OpCode::Const(idx as u16));
-                self.chunk.code.push(OpCode::IncludeOrEval);
+                self.push_op(OpCode::Const(idx as u16));
+                self.push_op(OpCode::IncludeOrEval);
             }
             Expr::Unary { op, expr, .. } => {
                 match op {
@@ -2229,28 +2332,28 @@ impl<'src> Emitter<'src> {
                             if name.starts_with(b"$") {
                                 let var_name = &name[1..];
                                 let sym = self.interner.intern(var_name);
-                                self.chunk.code.push(OpCode::MakeVarRef(sym));
+                                self.push_op(OpCode::MakeVarRef(sym));
                             }
                         } else {
                             // Reference to something else?
                             self.emit_expr(expr);
-                            self.chunk.code.push(OpCode::MakeRef);
+                            self.push_op(OpCode::MakeRef);
                         }
                     }
                     UnaryOp::Minus => {
                         // 0 - expr
                         let idx = self.add_constant(Val::Int(0));
-                        self.chunk.code.push(OpCode::Const(idx as u16));
+                        self.push_op(OpCode::Const(idx as u16));
                         self.emit_expr(expr);
-                        self.chunk.code.push(OpCode::Sub);
+                        self.push_op(OpCode::Sub);
                     }
                     UnaryOp::Not => {
                         self.emit_expr(expr);
-                        self.chunk.code.push(OpCode::BoolNot);
+                        self.push_op(OpCode::BoolNot);
                     }
                     UnaryOp::BitNot => {
                         self.emit_expr(expr);
-                        self.chunk.code.push(OpCode::BitwiseNot);
+                        self.push_op(OpCode::BitwiseNot);
                     }
                     UnaryOp::PreInc => {
                         match expr {
@@ -2258,8 +2361,8 @@ impl<'src> Emitter<'src> {
                                 let name = self.get_text(*span);
                                 if name.starts_with(b"$") {
                                     let sym = self.interner.intern(&name[1..]);
-                                    self.chunk.code.push(OpCode::MakeVarRef(sym));
-                                    self.chunk.code.push(OpCode::PreInc);
+                                    self.push_op(OpCode::MakeVarRef(sym));
+                                    self.push_op(OpCode::PreInc);
                                 }
                             }
                             Expr::PropertyFetch {
@@ -2271,15 +2374,15 @@ impl<'src> Emitter<'src> {
                                 let prop_name = self.get_text(property.span());
                                 let const_idx =
                                     self.add_constant(Val::String(Rc::new(prop_name.to_vec())));
-                                self.chunk.code.push(OpCode::Const(const_idx as u16));
-                                self.chunk.code.push(OpCode::PreIncObj);
+                                self.push_op(OpCode::Const(const_idx as u16));
+                                self.push_op(OpCode::PreIncObj);
                             }
                             Expr::ClassConstFetch {
                                 class, constant, ..
                             } => {
                                 // ++Class::$property
                                 if self.emit_static_property_access(class, constant) {
-                                    self.chunk.code.push(OpCode::PreIncStaticProp);
+                                    self.push_op(OpCode::PreIncStaticProp);
                                 } else {
                                     self.emit_expr(expr);
                                 }
@@ -2295,8 +2398,8 @@ impl<'src> Emitter<'src> {
                                 let name = self.get_text(*span);
                                 if name.starts_with(b"$") {
                                     let sym = self.interner.intern(&name[1..]);
-                                    self.chunk.code.push(OpCode::MakeVarRef(sym));
-                                    self.chunk.code.push(OpCode::PreDec);
+                                    self.push_op(OpCode::MakeVarRef(sym));
+                                    self.push_op(OpCode::PreDec);
                                 }
                             }
                             Expr::PropertyFetch {
@@ -2307,15 +2410,15 @@ impl<'src> Emitter<'src> {
                                 let prop_name = self.get_text(property.span());
                                 let const_idx =
                                     self.add_constant(Val::String(Rc::new(prop_name.to_vec())));
-                                self.chunk.code.push(OpCode::Const(const_idx as u16));
-                                self.chunk.code.push(OpCode::PreDecObj);
+                                self.push_op(OpCode::Const(const_idx as u16));
+                                self.push_op(OpCode::PreDecObj);
                             }
                             Expr::ClassConstFetch {
                                 class, constant, ..
                             } => {
                                 // --Class::$property
                                 if self.emit_static_property_access(class, constant) {
-                                    self.chunk.code.push(OpCode::PreDecStaticProp);
+                                    self.push_op(OpCode::PreDecStaticProp);
                                 } else {
                                     self.emit_expr(expr);
                                 }
@@ -2327,9 +2430,9 @@ impl<'src> Emitter<'src> {
                     }
                     UnaryOp::ErrorSuppress => {
                         // @ operator: suppress errors for the expression
-                        self.chunk.code.push(OpCode::BeginSilence);
+                        self.push_op(OpCode::BeginSilence);
                         self.emit_expr(expr);
-                        self.chunk.code.push(OpCode::EndSilence);
+                        self.push_op(OpCode::EndSilence);
                     }
                     _ => {
                         self.emit_expr(expr);
@@ -2342,8 +2445,8 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::MakeVarRef(sym));
-                            self.chunk.code.push(OpCode::PostInc);
+                            self.push_op(OpCode::MakeVarRef(sym));
+                            self.push_op(OpCode::PostInc);
                         }
                     }
                     Expr::PropertyFetch {
@@ -2353,15 +2456,15 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(target);
                         let prop_name = self.get_text(property.span());
                         let const_idx = self.add_constant(Val::String(Rc::new(prop_name.to_vec())));
-                        self.chunk.code.push(OpCode::Const(const_idx as u16));
-                        self.chunk.code.push(OpCode::PostIncObj);
+                        self.push_op(OpCode::Const(const_idx as u16));
+                        self.push_op(OpCode::PostIncObj);
                     }
                     Expr::ClassConstFetch {
                         class, constant, ..
                     } => {
                         // Class::$property++
                         if self.emit_static_property_access(class, constant) {
-                            self.chunk.code.push(OpCode::PostIncStaticProp);
+                            self.push_op(OpCode::PostIncStaticProp);
                         } else {
                             self.emit_expr(var);
                         }
@@ -2378,8 +2481,8 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::MakeVarRef(sym));
-                            self.chunk.code.push(OpCode::PostDec);
+                            self.push_op(OpCode::MakeVarRef(sym));
+                            self.push_op(OpCode::PostDec);
                         }
                     }
                     Expr::PropertyFetch {
@@ -2389,15 +2492,15 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(target);
                         let prop_name = self.get_text(property.span());
                         let const_idx = self.add_constant(Val::String(Rc::new(prop_name.to_vec())));
-                        self.chunk.code.push(OpCode::Const(const_idx as u16));
-                        self.chunk.code.push(OpCode::PostDecObj);
+                        self.push_op(OpCode::Const(const_idx as u16));
+                        self.push_op(OpCode::PostDecObj);
                     }
                     Expr::ClassConstFetch {
                         class, constant, ..
                     } => {
                         // Class::$property--
                         if self.emit_static_property_access(class, constant) {
-                            self.chunk.code.push(OpCode::PostDecStaticProp);
+                            self.push_op(OpCode::PostDecStaticProp);
                         } else {
                             self.emit_expr(var);
                         }
@@ -2418,11 +2521,11 @@ impl<'src> Emitter<'src> {
                 if let Some(true_expr) = if_true {
                     // cond ? true : false
                     let else_jump = self.chunk.code.len();
-                    self.chunk.code.push(OpCode::JmpIfFalse(0)); // Placeholder
+                    self.push_op(OpCode::JmpIfFalse(0)); // Placeholder
 
                     self.emit_expr(true_expr);
                     let end_jump = self.chunk.code.len();
-                    self.chunk.code.push(OpCode::Jmp(0)); // Placeholder
+                    self.push_op(OpCode::Jmp(0)); // Placeholder
 
                     let else_label = self.chunk.code.len();
                     self.chunk.code[else_jump] = OpCode::JmpIfFalse(else_label as u32);
@@ -2433,7 +2536,7 @@ impl<'src> Emitter<'src> {
                 } else {
                     // cond ?: false (Elvis)
                     let end_jump = self.chunk.code.len();
-                    self.chunk.code.push(OpCode::JmpNzEx(0)); // Placeholder
+                    self.push_op(OpCode::JmpNzEx(0)); // Placeholder
                     self.emit_expr(if_false);
 
                     let end_label = self.chunk.code.len();
@@ -2454,25 +2557,25 @@ impl<'src> Emitter<'src> {
                     CastKind::Unset => 6,
                     _ => 0, // TODO
                 };
-                self.chunk.code.push(OpCode::Cast(cast_op));
+                self.push_op(OpCode::Cast(cast_op));
             }
             Expr::Clone { expr, .. } => {
                 self.emit_expr(expr);
-                self.chunk.code.push(OpCode::Clone);
+                self.push_op(OpCode::Clone);
             }
             Expr::Exit { expr, .. } | Expr::Die { expr, .. } => {
                 if let Some(e) = expr {
                     self.emit_expr(e);
                 } else {
                     let idx = self.add_constant(Val::Null);
-                    self.chunk.code.push(OpCode::Const(idx as u16));
+                    self.push_op(OpCode::Const(idx as u16));
                 }
-                self.chunk.code.push(OpCode::Exit);
+                self.push_op(OpCode::Exit);
             }
             Expr::Isset { vars, .. } => {
                 if vars.is_empty() {
                     let idx = self.add_constant(Val::Bool(false));
-                    self.chunk.code.push(OpCode::Const(idx as u16));
+                    self.push_op(OpCode::Const(idx as u16));
                 } else {
                     let mut end_jumps = Vec::new();
 
@@ -2482,24 +2585,24 @@ impl<'src> Emitter<'src> {
                                 let name = self.get_text(*span);
                                 if name.starts_with(b"$") {
                                     let sym = self.interner.intern(&name[1..]);
-                                    self.chunk.code.push(OpCode::IssetVar(sym));
+                                    self.push_op(OpCode::IssetVar(sym));
                                 } else {
                                     let idx = self.add_constant(Val::Bool(false));
-                                    self.chunk.code.push(OpCode::Const(idx as u16));
+                                    self.push_op(OpCode::Const(idx as u16));
                                 }
                             }
                             Expr::IndirectVariable { name, .. } => {
                                 self.emit_expr(name);
-                                self.chunk.code.push(OpCode::IssetVarDynamic);
+                                self.push_op(OpCode::IssetVarDynamic);
                             }
                             Expr::ArrayDimFetch { array, dim, .. } => {
                                 self.emit_expr(array);
                                 if let Some(d) = dim {
                                     self.emit_expr(d);
-                                    self.chunk.code.push(OpCode::IssetDim);
+                                    self.push_op(OpCode::IssetDim);
                                 } else {
                                     let idx = self.add_constant(Val::Bool(false));
-                                    self.chunk.code.push(OpCode::Const(idx as u16));
+                                    self.push_op(OpCode::Const(idx as u16));
                                 }
                             }
                             Expr::PropertyFetch {
@@ -2509,11 +2612,11 @@ impl<'src> Emitter<'src> {
                                 if let Expr::Variable { span, .. } = property {
                                     let name = self.get_text(*span);
                                     let sym = self.interner.intern(name);
-                                    self.chunk.code.push(OpCode::IssetProp(sym));
+                                    self.push_op(OpCode::IssetProp(sym));
                                 } else {
-                                    self.chunk.code.push(OpCode::Pop);
+                                    self.push_op(OpCode::Pop);
                                     let idx = self.add_constant(Val::Bool(false));
-                                    self.chunk.code.push(OpCode::Const(idx as u16));
+                                    self.push_op(OpCode::Const(idx as u16));
                                 }
                             }
                             Expr::ClassConstFetch {
@@ -2532,10 +2635,10 @@ impl<'src> Emitter<'src> {
                                         if !name.starts_with(b"$") {
                                             let idx = self
                                                 .add_constant(Val::String(name.to_vec().into()));
-                                            self.chunk.code.push(OpCode::Const(idx as u16));
+                                            self.push_op(OpCode::Const(idx as u16));
                                         } else {
                                             let sym = self.interner.intern(&name[1..]);
-                                            self.chunk.code.push(OpCode::LoadVar(sym));
+                                            self.push_op(OpCode::LoadVar(sym));
                                         }
 
                                         if let Expr::Variable {
@@ -2544,28 +2647,28 @@ impl<'src> Emitter<'src> {
                                         {
                                             let prop_name = self.get_text(*prop_span);
                                             let prop_sym = self.interner.intern(&prop_name[1..]);
-                                            self.chunk.code.push(OpCode::IssetStaticProp(prop_sym));
+                                            self.push_op(OpCode::IssetStaticProp(prop_sym));
                                         }
                                     } else {
                                         let idx = self.add_constant(Val::Bool(false));
-                                        self.chunk.code.push(OpCode::Const(idx as u16));
+                                        self.push_op(OpCode::Const(idx as u16));
                                     }
                                 } else {
                                     let idx = self.add_constant(Val::Bool(false));
-                                    self.chunk.code.push(OpCode::Const(idx as u16));
+                                    self.push_op(OpCode::Const(idx as u16));
                                 }
                             }
                             _ => {
                                 let idx = self.add_constant(Val::Bool(false));
-                                self.chunk.code.push(OpCode::Const(idx as u16));
+                                self.push_op(OpCode::Const(idx as u16));
                             }
                         }
 
                         if i < vars.len() - 1 {
-                            self.chunk.code.push(OpCode::Dup);
+                            self.push_op(OpCode::Dup);
                             let jump_idx = self.chunk.code.len();
-                            self.chunk.code.push(OpCode::JmpIfFalse(0));
-                            self.chunk.code.push(OpCode::Pop);
+                            self.push_op(OpCode::JmpIfFalse(0));
+                            self.push_op(OpCode::Pop);
                             end_jumps.push(jump_idx);
                         }
                     }
@@ -2582,20 +2685,20 @@ impl<'src> Emitter<'src> {
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let sym = self.interner.intern(&name[1..]);
-                            self.chunk.code.push(OpCode::IssetVar(sym));
+                            self.push_op(OpCode::IssetVar(sym));
                         } else {
                             let idx = self.add_constant(Val::Bool(false));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         }
                     }
                     Expr::ArrayDimFetch { array, dim, .. } => {
                         self.emit_expr(array);
                         if let Some(d) = dim {
                             self.emit_expr(d);
-                            self.chunk.code.push(OpCode::IssetDim);
+                            self.push_op(OpCode::IssetDim);
                         } else {
                             let idx = self.add_constant(Val::Bool(false));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         }
                     }
                     Expr::PropertyFetch {
@@ -2605,11 +2708,11 @@ impl<'src> Emitter<'src> {
                         if let Expr::Variable { span, .. } = property {
                             let name = self.get_text(*span);
                             let sym = self.interner.intern(name);
-                            self.chunk.code.push(OpCode::IssetProp(sym));
+                            self.push_op(OpCode::IssetProp(sym));
                         } else {
-                            self.chunk.code.push(OpCode::Pop);
+                            self.push_op(OpCode::Pop);
                             let idx = self.add_constant(Val::Bool(false));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         }
                     }
                     Expr::ClassConstFetch {
@@ -2627,10 +2730,10 @@ impl<'src> Emitter<'src> {
                                 let name = self.get_text(*span);
                                 if !name.starts_with(b"$") {
                                     let idx = self.add_constant(Val::String(name.to_vec().into()));
-                                    self.chunk.code.push(OpCode::Const(idx as u16));
+                                    self.push_op(OpCode::Const(idx as u16));
                                 } else {
                                     let sym = self.interner.intern(&name[1..]);
-                                    self.chunk.code.push(OpCode::LoadVar(sym));
+                                    self.push_op(OpCode::LoadVar(sym));
                                 }
 
                                 if let Expr::Variable {
@@ -2639,38 +2742,38 @@ impl<'src> Emitter<'src> {
                                 {
                                     let prop_name = self.get_text(*prop_span);
                                     let prop_sym = self.interner.intern(&prop_name[1..]);
-                                    self.chunk.code.push(OpCode::IssetStaticProp(prop_sym));
+                                    self.push_op(OpCode::IssetStaticProp(prop_sym));
                                 }
                             } else {
                                 let idx = self.add_constant(Val::Bool(false));
-                                self.chunk.code.push(OpCode::Const(idx as u16));
+                                self.push_op(OpCode::Const(idx as u16));
                             }
                         } else {
                             let idx = self.add_constant(Val::Bool(false));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         }
                     }
                     _ => {
                         self.emit_expr(expr);
-                        self.chunk.code.push(OpCode::BoolNot);
+                        self.push_op(OpCode::BoolNot);
                         return;
                     }
                 }
 
                 let jump_if_not_set = self.chunk.code.len();
-                self.chunk.code.push(OpCode::JmpIfFalse(0));
+                self.push_op(OpCode::JmpIfFalse(0));
 
                 self.emit_expr(expr);
-                self.chunk.code.push(OpCode::BoolNot);
+                self.push_op(OpCode::BoolNot);
 
                 let jump_end = self.chunk.code.len();
-                self.chunk.code.push(OpCode::Jmp(0));
+                self.push_op(OpCode::Jmp(0));
 
                 let label_true = self.chunk.code.len();
                 self.patch_jump(jump_if_not_set, label_true);
 
                 let idx = self.add_constant(Val::Bool(true));
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
 
                 let label_end = self.chunk.code.len();
                 self.patch_jump(jump_end, label_end);
@@ -2679,8 +2782,8 @@ impl<'src> Emitter<'src> {
                 self.emit_expr(expr);
                 // Emit ZEND_EVAL (type=1) for eval()
                 let idx = self.add_constant(Val::Int(1));
-                self.chunk.code.push(OpCode::Const(idx as u16));
-                self.chunk.code.push(OpCode::IncludeOrEval);
+                self.push_op(OpCode::Const(idx as u16));
+                self.push_op(OpCode::IncludeOrEval);
             }
             Expr::Yield {
                 key, value, from, ..
@@ -2691,9 +2794,9 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(v);
                     } else {
                         let idx = self.add_constant(Val::Null);
-                        self.chunk.code.push(OpCode::Const(idx as u16));
+                        self.push_op(OpCode::Const(idx as u16));
                     }
-                    self.chunk.code.push(OpCode::YieldFrom);
+                    self.push_op(OpCode::YieldFrom);
                 } else {
                     let has_key = key.is_some();
                     if let Some(k) = key {
@@ -2704,10 +2807,10 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(v);
                     } else {
                         let idx = self.add_constant(Val::Null);
-                        self.chunk.code.push(OpCode::Const(idx as u16));
+                        self.push_op(OpCode::Const(idx as u16));
                     }
-                    self.chunk.code.push(OpCode::Yield(has_key));
-                    self.chunk.code.push(OpCode::GetSentValue);
+                    self.push_op(OpCode::Yield(has_key));
+                    self.push_op(OpCode::GetSentValue);
                 }
             }
             Expr::Closure {
@@ -2759,9 +2862,12 @@ impl<'src> Emitter<'src> {
                     if p_name.starts_with(b"$") {
                         let sym = func_emitter.interner.intern(&p_name[1..]);
                         let param_type = info.ty.and_then(|ty| func_emitter.convert_type(ty));
-                        let default_value = info
-                            .default
-                            .map(|expr| func_emitter.eval_constant_expr(expr));
+                        let default_value = if info.variadic {
+                            None
+                        } else {
+                            info.default
+                                .map(|expr| func_emitter.eval_constant_expr(expr))
+                        };
 
                         param_syms.push(FuncParam {
                             name: sym,
@@ -2771,7 +2877,12 @@ impl<'src> Emitter<'src> {
                             default_value,
                         });
 
-                        if let Some(default_expr) = info.default {
+                        if info.variadic {
+                            func_emitter
+                                .chunk
+                                .code
+                                .push(OpCode::RecvVariadic(i as u32));
+                        } else if let Some(default_expr) = info.default {
                             let val = func_emitter.eval_constant_expr(default_expr);
                             let idx = func_emitter.add_constant(val);
                             func_emitter
@@ -2779,7 +2890,7 @@ impl<'src> Emitter<'src> {
                                 .code
                                 .push(OpCode::RecvInit(i as u32, idx as u16));
                         } else {
-                            func_emitter.chunk.code.push(OpCode::Recv(i as u32));
+                            func_emitter.push_op(OpCode::Recv(i as u32));
                         }
                     }
                 }
@@ -2796,11 +2907,11 @@ impl<'src> Emitter<'src> {
                         use_syms.push(sym);
 
                         if use_var.by_ref {
-                            self.chunk.code.push(OpCode::LoadRef(sym));
+                            self.push_op(OpCode::LoadRef(sym));
                         } else {
                             // Emit code to push the captured variable onto the stack
-                            self.chunk.code.push(OpCode::LoadVar(sym));
-                            self.chunk.code.push(OpCode::Copy);
+                            self.push_op(OpCode::LoadVar(sym));
+                            self.push_op(OpCode::Copy);
                         }
                     }
                 }
@@ -2832,6 +2943,8 @@ impl<'src> Emitter<'src> {
                     .push(OpCode::Closure(const_idx as u32, use_syms.len() as u32));
             }
             Expr::Call { func, args, .. } => {
+                let has_unpack = args.iter().any(|arg| arg.unpack);
+
                 match func {
                     Expr::Variable { span, .. } => {
                         let name = self.get_text(*span);
@@ -2839,49 +2952,62 @@ impl<'src> Emitter<'src> {
                             self.emit_expr(func);
                         } else {
                             let idx = self.add_constant(Val::String(name.to_vec().into()));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         }
                     }
                     _ => self.emit_expr(func),
                 }
 
-                for arg in *args {
-                    self.emit_expr(&arg.value);
-                }
+                if has_unpack {
+                    self.push_op(OpCode::InitDynamicCall);
+                    for arg in *args {
+                        self.emit_expr(&arg.value);
+                        if arg.unpack {
+                            self.push_op(OpCode::SendUnpack);
+                        } else {
+                            self.push_op(OpCode::SendValEx);
+                        }
+                    }
+                    self.push_op(OpCode::DoFcall);
+                } else {
+                    for arg in *args {
+                        self.emit_expr(&arg.value);
+                    }
 
-                self.chunk.code.push(OpCode::Call(args.len() as u8));
+                    self.push_op(OpCode::Call(args.len() as u8));
+                }
             }
             Expr::Variable { span, .. } => {
                 let name = self.get_text(*span);
                 if name.starts_with(b"$") {
                     let var_name = &name[1..];
                     let sym = self.interner.intern(var_name);
-                    self.chunk.code.push(OpCode::LoadVar(sym));
+                    self.push_op(OpCode::LoadVar(sym));
                 } else {
                     // Constant fetch
                     let sym = self.interner.intern(name);
-                    self.chunk.code.push(OpCode::FetchGlobalConst(sym));
+                    self.push_op(OpCode::FetchGlobalConst(sym));
                 }
             }
             Expr::IndirectVariable { name, .. } => {
                 self.emit_expr(name);
-                self.chunk.code.push(OpCode::LoadVarDynamic);
+                self.push_op(OpCode::LoadVarDynamic);
             }
             Expr::Array { items, .. } => {
-                self.chunk.code.push(OpCode::InitArray(items.len() as u32));
+                self.push_op(OpCode::InitArray(items.len() as u32));
                 for item in *items {
                     if item.unpack {
                         self.emit_expr(item.value);
-                        self.chunk.code.push(OpCode::AddArrayUnpack);
+                        self.push_op(OpCode::AddArrayUnpack);
                         continue;
                     }
                     if let Some(key) = item.key {
                         self.emit_expr(key);
                         self.emit_expr(item.value);
-                        self.chunk.code.push(OpCode::AssignDim);
+                        self.push_op(OpCode::AssignDim);
                     } else {
                         self.emit_expr(item.value);
-                        self.chunk.code.push(OpCode::AppendArray);
+                        self.push_op(OpCode::AppendArray);
                     }
                 }
             }
@@ -2889,7 +3015,7 @@ impl<'src> Emitter<'src> {
                 self.emit_expr(array);
                 if let Some(d) = dim {
                     self.emit_expr(d);
-                    self.chunk.code.push(OpCode::FetchDim);
+                    self.push_op(OpCode::FetchDim);
                 }
             }
             Expr::New { class, args, .. } => {
@@ -2940,7 +3066,7 @@ impl<'src> Emitter<'src> {
                     self.current_class = prev_class;
 
                     // Finalize and instantiate
-                    self.chunk.code.push(OpCode::FinalizeClass(class_sym));
+                    self.push_op(OpCode::FinalizeClass(class_sym));
 
                     // Emit constructor arguments and instantiate
                     for arg in *args {
@@ -2971,7 +3097,7 @@ impl<'src> Emitter<'src> {
                             self.emit_expr(arg.value);
                         }
 
-                        self.chunk.code.push(OpCode::NewDynamic(args.len() as u8));
+                        self.push_op(OpCode::NewDynamic(args.len() as u8));
                     }
                 } else {
                     // Complex expression for class name
@@ -2981,7 +3107,7 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(arg.value);
                     }
 
-                    self.chunk.code.push(OpCode::NewDynamic(args.len() as u8));
+                    self.push_op(OpCode::NewDynamic(args.len() as u8));
                 }
             }
             Expr::PropertyFetch {
@@ -2992,17 +3118,16 @@ impl<'src> Emitter<'src> {
                     let name = self.get_text(*span);
                     if !name.starts_with(b"$") {
                         let sym = self.interner.intern(name);
-                        self.chunk.code.push(OpCode::FetchProp(sym));
+                        self.push_op(OpCode::FetchProp(sym));
                     } else {
                         // Dynamic property fetch $this->$prop
                         self.emit_expr(property);
-                        self.chunk.code.push(OpCode::FetchPropDynamic);
+                        self.push_op(OpCode::FetchPropDynamic);
                     }
                 } else {
-                    eprintln!("Property is not Variable: {:?}", property);
                     // Handle dynamic property fetch with expression: $this->{$expr}
                     self.emit_expr(property);
-                    self.chunk.code.push(OpCode::FetchPropDynamic);
+                    self.push_op(OpCode::FetchPropDynamic);
                 }
             }
             Expr::MethodCall {
@@ -3065,7 +3190,7 @@ impl<'src> Emitter<'src> {
                                     self.emit_expr(arg.value);
                                 }
                                 let method_sym = self.interner.intern(method_name);
-                                self.chunk.code.push(OpCode::CallStaticMethod(
+                                self.push_op(OpCode::CallStaticMethod(
                                     class_sym,
                                     method_sym,
                                     args.len() as u8,
@@ -3078,7 +3203,7 @@ impl<'src> Emitter<'src> {
                             // Class is static, but method is dynamic: Class::$method()
                             let resolved_name = self.resolve_class_name(class_name);
                             let idx = self.add_constant(Val::String(resolved_name.into()));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                             self.emit_expr(method);
                             for arg in *args {
                                 self.emit_expr(arg.value);
@@ -3094,7 +3219,17 @@ impl<'src> Emitter<'src> {
                 if !class_emitted {
                     // Dynamic static call: $class::$method()
                     self.emit_expr(class);
-                    self.emit_expr(method);
+                    if let Expr::Variable { span, .. } = method {
+                        let name = self.get_text(*span);
+                        if !name.starts_with(b"$") {
+                            let idx = self.add_constant(Val::String(name.to_vec().into()));
+                            self.push_op(OpCode::Const(idx as u16));
+                        } else {
+                            self.emit_expr(method);
+                        }
+                    } else {
+                        self.emit_expr(method);
+                    }
                     for arg in *args {
                         self.emit_expr(arg.value);
                     }
@@ -3130,13 +3265,13 @@ impl<'src> Emitter<'src> {
                                     self.interner.lookup(class_sym).unwrap_or(b"");
                                 let idx =
                                     self.add_constant(Val::String(name_bytes.to_vec().into()));
-                                self.chunk.code.push(OpCode::Const(idx as u16));
+                                self.push_op(OpCode::Const(idx as u16));
                                 return;
                             }
 
                             let resolved = self.resolve_class_name(class_name);
                             let idx = self.add_constant(Val::String(resolved.into()));
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                             return;
                         }
 
@@ -3167,7 +3302,7 @@ impl<'src> Emitter<'src> {
                 // Dynamic class/object access
                 self.emit_expr(class);
                 if is_class_keyword {
-                    self.chunk.code.push(OpCode::GetClass);
+                    self.push_op(OpCode::GetClass);
                 } else {
                     if let Expr::Variable {
                         span: const_span, ..
@@ -3176,9 +3311,9 @@ impl<'src> Emitter<'src> {
                         let const_name = self.get_text(*const_span);
                         if const_name.starts_with(b"$") {
                             // TODO: Dynamic class, static property: $obj::$prop
-                            self.chunk.code.push(OpCode::Pop);
+                            self.push_op(OpCode::Pop);
                             let idx = self.add_constant(Val::Null);
-                            self.chunk.code.push(OpCode::Const(idx as u16));
+                            self.push_op(OpCode::Const(idx as u16));
                         } else {
                             let const_sym = self.interner.intern(const_name);
                             self.chunk
@@ -3186,9 +3321,9 @@ impl<'src> Emitter<'src> {
                                 .push(OpCode::FetchClassConstDynamic(const_sym));
                         }
                     } else {
-                        self.chunk.code.push(OpCode::Pop);
+                        self.push_op(OpCode::Pop);
                         let idx = self.add_constant(Val::Null);
-                        self.chunk.code.push(OpCode::Const(idx as u16));
+                        self.push_op(OpCode::Const(idx as u16));
                     }
                 }
             }
@@ -3199,14 +3334,14 @@ impl<'src> Emitter<'src> {
                     if name.starts_with(b"$") {
                         let var_name = &name[1..];
                         let sym = self.interner.intern(var_name);
-                        self.chunk.code.push(OpCode::StoreVar(sym));
-                        self.chunk.code.push(OpCode::LoadVar(sym));
+                        self.push_op(OpCode::StoreVar(sym));
+                        self.push_op(OpCode::LoadVar(sym));
                     }
                 }
                 Expr::IndirectVariable { name, .. } => {
                     self.emit_expr(name);
                     self.emit_expr(expr);
-                    self.chunk.code.push(OpCode::StoreVarDynamic);
+                    self.push_op(OpCode::StoreVarDynamic);
                 }
                 Expr::PropertyFetch {
                     target, property, ..
@@ -3218,17 +3353,17 @@ impl<'src> Emitter<'src> {
                             if name.starts_with(b"$") {
                                 self.emit_expr(property);
                                 self.emit_expr(expr);
-                                self.chunk.code.push(OpCode::AssignPropDynamic);
+                                self.push_op(OpCode::AssignPropDynamic);
                             } else {
                                 let sym = self.interner.intern(name);
                                 self.emit_expr(expr);
-                                self.chunk.code.push(OpCode::AssignProp(sym));
+                                self.push_op(OpCode::AssignProp(sym));
                             }
                         }
                         _ => {
                             self.emit_expr(property);
                             self.emit_expr(expr);
-                            self.chunk.code.push(OpCode::AssignPropDynamic);
+                            self.push_op(OpCode::AssignPropDynamic);
                         }
                     }
                 }
@@ -3260,25 +3395,71 @@ impl<'src> Emitter<'src> {
                 Expr::ArrayDimFetch { .. } => {
                     let (base, keys) = Self::flatten_dim_fetch(var);
 
+                    if let Expr::ClassConstFetch {
+                        class, constant, ..
+                    } = base
+                    {
+                        if let Expr::Variable { span, .. } = class {
+                            let class_name = self.get_text(*span);
+                            if !class_name.starts_with(b"$") {
+                                if let Expr::Variable {
+                                    span: const_span, ..
+                                } = constant
+                                {
+                                    let const_name = self.get_text(*const_span);
+                                    if const_name.starts_with(b"$") {
+                                        let prop_name = &const_name[1..];
+                                        let prop_sym = self.interner.intern(prop_name);
+                                        let class_sym = self.resolve_class_sym_from_span(*span);
+
+                                        self.chunk
+                                            .code
+                                            .push(OpCode::FetchStaticProp(class_sym, prop_sym));
+
+                                        for key in &keys {
+                                            if let Some(k) = key {
+                                                self.emit_expr(k);
+                                            } else {
+                                                let idx = self.add_constant(Val::AppendPlaceholder);
+                                                self.push_op(OpCode::Const(idx as u16));
+                                            }
+                                        }
+
+                                        self.emit_expr(expr);
+
+                                        self.push_op(OpCode::StoreNestedDim(
+                                            keys.len() as u8,
+                                        ));
+
+                                        self.chunk
+                                            .code
+                                            .push(OpCode::AssignStaticProp(class_sym, prop_sym));
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Expr::PropertyFetch {
                         target, property, ..
                     } = base
                     {
                         self.emit_expr(target);
-                        self.chunk.code.push(OpCode::Dup);
+                        self.push_op(OpCode::Dup);
 
                         if let Expr::Variable { span, .. } = property {
                             let name = self.get_text(*span);
                             if !name.starts_with(b"$") {
                                 let sym = self.interner.intern(name);
-                                self.chunk.code.push(OpCode::FetchProp(sym));
+                                self.push_op(OpCode::FetchProp(sym));
 
                                 for key in &keys {
                                     if let Some(k) = key {
                                         self.emit_expr(k);
                                     } else {
                                         let idx = self.add_constant(Val::AppendPlaceholder);
-                                        self.chunk.code.push(OpCode::Const(idx as u16));
+                                        self.push_op(OpCode::Const(idx as u16));
                                     }
                                 }
 
@@ -3288,7 +3469,7 @@ impl<'src> Emitter<'src> {
                                     .code
                                     .push(OpCode::StoreNestedDim(keys.len() as u8));
 
-                                self.chunk.code.push(OpCode::AssignProp(sym));
+                                self.push_op(OpCode::AssignProp(sym));
                             }
                         }
                     } else {
@@ -3298,7 +3479,7 @@ impl<'src> Emitter<'src> {
                                 self.emit_expr(k);
                             } else {
                                 let idx = self.add_constant(Val::AppendPlaceholder);
-                                self.chunk.code.push(OpCode::Const(idx as u16));
+                                self.push_op(OpCode::Const(idx as u16));
                             }
                         }
 
@@ -3313,8 +3494,8 @@ impl<'src> Emitter<'src> {
                             if name.starts_with(b"$") {
                                 let var_name = &name[1..];
                                 let sym = self.interner.intern(var_name);
-                                self.chunk.code.push(OpCode::StoreVar(sym));
-                                self.chunk.code.push(OpCode::LoadVar(sym));
+                                self.push_op(OpCode::StoreVar(sym));
+                                self.push_op(OpCode::LoadVar(sym));
                             }
                         }
                     }
@@ -3331,17 +3512,17 @@ impl<'src> Emitter<'src> {
                             let name = self.get_text(*span);
                             if name.starts_with(b"$") {
                                 // Duplicate the array on stack for next iteration
-                                self.chunk.code.push(OpCode::Dup);
+                                self.push_op(OpCode::Dup);
                                 // Push the index
                                 let idx_val = Val::Int(i as i64);
                                 let idx_const = self.add_constant(idx_val);
-                                self.chunk.code.push(OpCode::Const(idx_const as u16));
+                                self.push_op(OpCode::Const(idx_const as u16));
                                 // Fetch array[i] (pops index and duplicated array, pushes value, leaves original array)
-                                self.chunk.code.push(OpCode::FetchDim);
+                                self.push_op(OpCode::FetchDim);
                                 // Store to variable (pops value)
                                 let var_name = &name[1..];
                                 let sym = self.interner.intern(var_name);
-                                self.chunk.code.push(OpCode::StoreVar(sym));
+                                self.push_op(OpCode::StoreVar(sym));
                             }
                         }
                     }
@@ -3359,22 +3540,22 @@ impl<'src> Emitter<'src> {
                             let src_name = self.get_text(*src_span);
                             if src_name.starts_with(b"$") {
                                 let src_sym = self.interner.intern(&src_name[1..]);
-                                self.chunk.code.push(OpCode::MakeVarRef(src_sym));
+                                self.push_op(OpCode::MakeVarRef(src_sym));
                                 handled = true;
                             }
                         }
 
                         if !handled {
                             self.emit_expr(expr);
-                            self.chunk.code.push(OpCode::MakeRef);
+                            self.push_op(OpCode::MakeRef);
                         }
 
                         let name = self.get_text(*span);
                         if name.starts_with(b"$") {
                             let var_name = &name[1..];
                             let sym = self.interner.intern(var_name);
-                            self.chunk.code.push(OpCode::AssignRef(sym));
-                            self.chunk.code.push(OpCode::LoadVar(sym));
+                            self.push_op(OpCode::AssignRef(sym));
+                            self.push_op(OpCode::LoadVar(sym));
                         }
                     }
                     Expr::ArrayDimFetch {
@@ -3387,7 +3568,7 @@ impl<'src> Emitter<'src> {
                             self.emit_expr(d);
                         } else {
                             // TODO: Handle append
-                            self.chunk.code.push(OpCode::Const(0));
+                            self.push_op(OpCode::Const(0));
                         }
 
                         let mut handled = false;
@@ -3395,29 +3576,29 @@ impl<'src> Emitter<'src> {
                             let src_name = self.get_text(*src_span);
                             if src_name.starts_with(b"$") {
                                 let src_sym = self.interner.intern(&src_name[1..]);
-                                self.chunk.code.push(OpCode::MakeVarRef(src_sym));
+                                self.push_op(OpCode::MakeVarRef(src_sym));
                                 handled = true;
                             }
                         }
 
                         if !handled {
                             self.emit_expr(expr);
-                            self.chunk.code.push(OpCode::MakeRef);
+                            self.push_op(OpCode::MakeRef);
                         }
 
-                        self.chunk.code.push(OpCode::AssignDimRef);
+                        self.push_op(OpCode::AssignDimRef);
 
                         // Store back the updated array if target is a variable
                         if let Expr::Variable { span, .. } = array_var {
                             let name = self.get_text(*span);
                             if name.starts_with(b"$") {
                                 let sym = self.interner.intern(&name[1..]);
-                                self.chunk.code.push(OpCode::StoreVar(sym));
+                                self.push_op(OpCode::StoreVar(sym));
                             } else {
-                                self.chunk.code.push(OpCode::Pop);
+                                self.push_op(OpCode::Pop);
                             }
                         } else {
-                            self.chunk.code.push(OpCode::Pop);
+                            self.push_op(OpCode::Pop);
                         }
                     }
                     _ => {
@@ -3435,22 +3616,22 @@ impl<'src> Emitter<'src> {
 
                             if let AssignOp::Coalesce = op {
                                 // Check if set
-                                self.chunk.code.push(OpCode::IssetVar(sym));
+                                self.push_op(OpCode::IssetVar(sym));
                                 let jump_idx = self.chunk.code.len();
-                                self.chunk.code.push(OpCode::JmpIfTrue(0));
+                                self.push_op(OpCode::JmpIfTrue(0));
 
                                 // Not set: Evaluate expr, assign, load
                                 self.emit_expr(expr);
-                                self.chunk.code.push(OpCode::StoreVar(sym));
-                                self.chunk.code.push(OpCode::LoadVar(sym));
+                                self.push_op(OpCode::StoreVar(sym));
+                                self.push_op(OpCode::LoadVar(sym));
 
                                 let end_jump_idx = self.chunk.code.len();
-                                self.chunk.code.push(OpCode::Jmp(0));
+                                self.push_op(OpCode::Jmp(0));
 
                                 // Set: Load var
                                 let label_set = self.chunk.code.len();
                                 self.chunk.code[jump_idx] = OpCode::JmpIfTrue(label_set as u32);
-                                self.chunk.code.push(OpCode::LoadVar(sym));
+                                self.push_op(OpCode::LoadVar(sym));
 
                                 // End
                                 let label_end = self.chunk.code.len();
@@ -3459,83 +3640,83 @@ impl<'src> Emitter<'src> {
                             }
 
                             // Load var
-                            self.chunk.code.push(OpCode::LoadVar(sym));
+                            self.push_op(OpCode::LoadVar(sym));
 
                             // Evaluate expr
                             self.emit_expr(expr);
 
                             // Op
                             match op {
-                                AssignOp::Plus => self.chunk.code.push(OpCode::Add),
-                                AssignOp::Minus => self.chunk.code.push(OpCode::Sub),
-                                AssignOp::Mul => self.chunk.code.push(OpCode::Mul),
-                                AssignOp::Div => self.chunk.code.push(OpCode::Div),
-                                AssignOp::Mod => self.chunk.code.push(OpCode::Mod),
-                                AssignOp::Concat => self.chunk.code.push(OpCode::Concat),
-                                AssignOp::Pow => self.chunk.code.push(OpCode::Pow),
-                                AssignOp::BitAnd => self.chunk.code.push(OpCode::BitwiseAnd),
-                                AssignOp::BitOr => self.chunk.code.push(OpCode::BitwiseOr),
-                                AssignOp::BitXor => self.chunk.code.push(OpCode::BitwiseXor),
-                                AssignOp::ShiftLeft => self.chunk.code.push(OpCode::ShiftLeft),
-                                AssignOp::ShiftRight => self.chunk.code.push(OpCode::ShiftRight),
+                                AssignOp::Plus => self.push_op(OpCode::Add),
+                                AssignOp::Minus => self.push_op(OpCode::Sub),
+                                AssignOp::Mul => self.push_op(OpCode::Mul),
+                                AssignOp::Div => self.push_op(OpCode::Div),
+                                AssignOp::Mod => self.push_op(OpCode::Mod),
+                                AssignOp::Concat => self.push_op(OpCode::Concat),
+                                AssignOp::Pow => self.push_op(OpCode::Pow),
+                                AssignOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                                AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                                AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                                AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
+                                AssignOp::ShiftRight => self.push_op(OpCode::ShiftRight),
                                 _ => {} // TODO: Implement other ops
                             }
 
                             // Store
-                            self.chunk.code.push(OpCode::StoreVar(sym));
-                            self.chunk.code.push(OpCode::LoadVar(sym));
+                            self.push_op(OpCode::StoreVar(sym));
+                            self.push_op(OpCode::LoadVar(sym));
                         }
                     }
                     Expr::IndirectVariable { name, .. } => {
                         self.emit_expr(name);
-                        self.chunk.code.push(OpCode::Dup);
+                        self.push_op(OpCode::Dup);
 
                         if let AssignOp::Coalesce = op {
-                            self.chunk.code.push(OpCode::IssetVarDynamic);
+                            self.push_op(OpCode::IssetVarDynamic);
                             let jump_idx = self.chunk.code.len();
-                            self.chunk.code.push(OpCode::JmpIfTrue(0));
+                            self.push_op(OpCode::JmpIfTrue(0));
 
                             self.emit_expr(expr);
-                            self.chunk.code.push(OpCode::StoreVarDynamic);
+                            self.push_op(OpCode::StoreVarDynamic);
 
                             let end_jump_idx = self.chunk.code.len();
-                            self.chunk.code.push(OpCode::Jmp(0));
+                            self.push_op(OpCode::Jmp(0));
 
                             let label_set = self.chunk.code.len();
                             self.chunk.code[jump_idx] = OpCode::JmpIfTrue(label_set as u32);
-                            self.chunk.code.push(OpCode::LoadVarDynamic);
+                            self.push_op(OpCode::LoadVarDynamic);
 
                             let label_end = self.chunk.code.len();
                             self.chunk.code[end_jump_idx] = OpCode::Jmp(label_end as u32);
                             return;
                         }
 
-                        self.chunk.code.push(OpCode::LoadVarDynamic);
+                        self.push_op(OpCode::LoadVarDynamic);
                         self.emit_expr(expr);
 
                         match op {
-                            AssignOp::Plus => self.chunk.code.push(OpCode::Add),
-                            AssignOp::Minus => self.chunk.code.push(OpCode::Sub),
-                            AssignOp::Mul => self.chunk.code.push(OpCode::Mul),
-                            AssignOp::Div => self.chunk.code.push(OpCode::Div),
-                            AssignOp::Mod => self.chunk.code.push(OpCode::Mod),
-                            AssignOp::Concat => self.chunk.code.push(OpCode::Concat),
-                            AssignOp::Pow => self.chunk.code.push(OpCode::Pow),
-                            AssignOp::BitAnd => self.chunk.code.push(OpCode::BitwiseAnd),
-                            AssignOp::BitOr => self.chunk.code.push(OpCode::BitwiseOr),
-                            AssignOp::BitXor => self.chunk.code.push(OpCode::BitwiseXor),
-                            AssignOp::ShiftLeft => self.chunk.code.push(OpCode::ShiftLeft),
-                            AssignOp::ShiftRight => self.chunk.code.push(OpCode::ShiftRight),
+                            AssignOp::Plus => self.push_op(OpCode::Add),
+                            AssignOp::Minus => self.push_op(OpCode::Sub),
+                            AssignOp::Mul => self.push_op(OpCode::Mul),
+                            AssignOp::Div => self.push_op(OpCode::Div),
+                            AssignOp::Mod => self.push_op(OpCode::Mod),
+                            AssignOp::Concat => self.push_op(OpCode::Concat),
+                            AssignOp::Pow => self.push_op(OpCode::Pow),
+                            AssignOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                            AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                            AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                            AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
+                            AssignOp::ShiftRight => self.push_op(OpCode::ShiftRight),
                             _ => {}
                         }
 
-                        self.chunk.code.push(OpCode::StoreVarDynamic);
+                        self.push_op(OpCode::StoreVarDynamic);
                     }
                     Expr::PropertyFetch {
                         target, property, ..
                     } => {
                         self.emit_expr(target);
-                        self.chunk.code.push(OpCode::Dup);
+                        self.push_op(OpCode::Dup);
 
                         if let Expr::Variable { span, .. } = property {
                             let name = self.get_text(*span);
@@ -3543,49 +3724,49 @@ impl<'src> Emitter<'src> {
                                 let sym = self.interner.intern(name);
 
                                 if let AssignOp::Coalesce = op {
-                                    self.chunk.code.push(OpCode::Dup);
-                                    self.chunk.code.push(OpCode::IssetProp(sym));
+                                    self.push_op(OpCode::Dup);
+                                    self.push_op(OpCode::IssetProp(sym));
                                     let jump_idx = self.chunk.code.len();
-                                    self.chunk.code.push(OpCode::JmpIfTrue(0));
+                                    self.push_op(OpCode::JmpIfTrue(0));
 
                                     self.emit_expr(expr);
-                                    self.chunk.code.push(OpCode::AssignProp(sym));
+                                    self.push_op(OpCode::AssignProp(sym));
 
                                     let end_jump_idx = self.chunk.code.len();
-                                    self.chunk.code.push(OpCode::Jmp(0));
+                                    self.push_op(OpCode::Jmp(0));
 
                                     let label_set = self.chunk.code.len();
                                     self.chunk.code[jump_idx] = OpCode::JmpIfTrue(label_set as u32);
-                                    self.chunk.code.push(OpCode::FetchProp(sym));
+                                    self.push_op(OpCode::FetchProp(sym));
 
                                     let label_end = self.chunk.code.len();
                                     self.chunk.code[end_jump_idx] = OpCode::Jmp(label_end as u32);
                                     return;
                                 }
 
-                                self.chunk.code.push(OpCode::FetchProp(sym));
+                                self.push_op(OpCode::FetchProp(sym));
 
                                 self.emit_expr(expr);
 
                                 match op {
-                                    AssignOp::Plus => self.chunk.code.push(OpCode::Add),
-                                    AssignOp::Minus => self.chunk.code.push(OpCode::Sub),
-                                    AssignOp::Mul => self.chunk.code.push(OpCode::Mul),
-                                    AssignOp::Div => self.chunk.code.push(OpCode::Div),
-                                    AssignOp::Mod => self.chunk.code.push(OpCode::Mod),
-                                    AssignOp::Concat => self.chunk.code.push(OpCode::Concat),
-                                    AssignOp::Pow => self.chunk.code.push(OpCode::Pow),
-                                    AssignOp::BitAnd => self.chunk.code.push(OpCode::BitwiseAnd),
-                                    AssignOp::BitOr => self.chunk.code.push(OpCode::BitwiseOr),
-                                    AssignOp::BitXor => self.chunk.code.push(OpCode::BitwiseXor),
-                                    AssignOp::ShiftLeft => self.chunk.code.push(OpCode::ShiftLeft),
+                                    AssignOp::Plus => self.push_op(OpCode::Add),
+                                    AssignOp::Minus => self.push_op(OpCode::Sub),
+                                    AssignOp::Mul => self.push_op(OpCode::Mul),
+                                    AssignOp::Div => self.push_op(OpCode::Div),
+                                    AssignOp::Mod => self.push_op(OpCode::Mod),
+                                    AssignOp::Concat => self.push_op(OpCode::Concat),
+                                    AssignOp::Pow => self.push_op(OpCode::Pow),
+                                    AssignOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                                    AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                                    AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                                    AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
                                     AssignOp::ShiftRight => {
-                                        self.chunk.code.push(OpCode::ShiftRight)
+                                        self.push_op(OpCode::ShiftRight)
                                     }
                                     _ => {}
                                 }
 
-                                self.chunk.code.push(OpCode::AssignProp(sym));
+                                self.push_op(OpCode::AssignProp(sym));
                             }
                         }
                     }
@@ -3610,24 +3791,24 @@ impl<'src> Emitter<'src> {
                                         if let AssignOp::Coalesce = op {
                                             let idx =
                                                 self.add_constant(Val::String(resolved_name.into()));
-                                            self.chunk.code.push(OpCode::Const(idx as u16));
-                                            self.chunk.code.push(OpCode::IssetStaticProp(prop_sym));
+                                            self.push_op(OpCode::Const(idx as u16));
+                                            self.push_op(OpCode::IssetStaticProp(prop_sym));
 
                                             let jump_idx = self.chunk.code.len();
-                                            self.chunk.code.push(OpCode::JmpIfFalse(0));
+                                            self.push_op(OpCode::JmpIfFalse(0));
 
                                             self.chunk
                                                 .code
                                                 .push(OpCode::FetchStaticProp(class_sym, prop_sym));
                                             let jump_end_idx = self.chunk.code.len();
-                                            self.chunk.code.push(OpCode::Jmp(0));
+                                            self.push_op(OpCode::Jmp(0));
 
                                             let label_assign = self.chunk.code.len();
                                             self.chunk.code[jump_idx] =
                                                 OpCode::JmpIfFalse(label_assign as u32);
 
                                             self.emit_expr(expr);
-                                            self.chunk.code.push(OpCode::AssignStaticProp(
+                                            self.push_op(OpCode::AssignStaticProp(
                                                 class_sym, prop_sym,
                                             ));
 
@@ -3643,29 +3824,29 @@ impl<'src> Emitter<'src> {
                                         self.emit_expr(expr);
 
                                         match op {
-                                            AssignOp::Plus => self.chunk.code.push(OpCode::Add),
-                                            AssignOp::Minus => self.chunk.code.push(OpCode::Sub),
-                                            AssignOp::Mul => self.chunk.code.push(OpCode::Mul),
-                                            AssignOp::Div => self.chunk.code.push(OpCode::Div),
-                                            AssignOp::Mod => self.chunk.code.push(OpCode::Mod),
+                                            AssignOp::Plus => self.push_op(OpCode::Add),
+                                            AssignOp::Minus => self.push_op(OpCode::Sub),
+                                            AssignOp::Mul => self.push_op(OpCode::Mul),
+                                            AssignOp::Div => self.push_op(OpCode::Div),
+                                            AssignOp::Mod => self.push_op(OpCode::Mod),
                                             AssignOp::Concat => {
-                                                self.chunk.code.push(OpCode::Concat)
+                                                self.push_op(OpCode::Concat)
                                             }
-                                            AssignOp::Pow => self.chunk.code.push(OpCode::Pow),
+                                            AssignOp::Pow => self.push_op(OpCode::Pow),
                                             AssignOp::BitAnd => {
-                                                self.chunk.code.push(OpCode::BitwiseAnd)
+                                                self.push_op(OpCode::BitwiseAnd)
                                             }
                                             AssignOp::BitOr => {
-                                                self.chunk.code.push(OpCode::BitwiseOr)
+                                                self.push_op(OpCode::BitwiseOr)
                                             }
                                             AssignOp::BitXor => {
-                                                self.chunk.code.push(OpCode::BitwiseXor)
+                                                self.push_op(OpCode::BitwiseXor)
                                             }
                                             AssignOp::ShiftLeft => {
-                                                self.chunk.code.push(OpCode::ShiftLeft)
+                                                self.push_op(OpCode::ShiftLeft)
                                             }
                                             AssignOp::ShiftRight => {
-                                                self.chunk.code.push(OpCode::ShiftRight)
+                                                self.push_op(OpCode::ShiftRight)
                                             }
                                             _ => {}
                                         }
@@ -3697,7 +3878,7 @@ impl<'src> Emitter<'src> {
                                 // So we can panic or emit error if key is None.
                                 // For now, push 0 or null?
                                 // Actually, let's just push 0 as placeholder, but it will fail at runtime if used for reading.
-                                self.chunk.code.push(OpCode::Const(0));
+                                self.push_op(OpCode::Const(0));
                             }
                         }
 
@@ -3710,7 +3891,7 @@ impl<'src> Emitter<'src> {
 
                         if let AssignOp::Coalesce = op {
                             let jump_idx = self.chunk.code.len();
-                            self.chunk.code.push(OpCode::Coalesce(0));
+                            self.push_op(OpCode::Coalesce(0));
 
                             // If null, evaluate rhs
                             self.emit_expr(expr);
@@ -3724,18 +3905,18 @@ impl<'src> Emitter<'src> {
 
                             // 5. Op
                             match op {
-                                AssignOp::Plus => self.chunk.code.push(OpCode::Add),
-                                AssignOp::Minus => self.chunk.code.push(OpCode::Sub),
-                                AssignOp::Mul => self.chunk.code.push(OpCode::Mul),
-                                AssignOp::Div => self.chunk.code.push(OpCode::Div),
-                                AssignOp::Mod => self.chunk.code.push(OpCode::Mod),
-                                AssignOp::Concat => self.chunk.code.push(OpCode::Concat),
-                                AssignOp::Pow => self.chunk.code.push(OpCode::Pow),
-                                AssignOp::BitAnd => self.chunk.code.push(OpCode::BitwiseAnd),
-                                AssignOp::BitOr => self.chunk.code.push(OpCode::BitwiseOr),
-                                AssignOp::BitXor => self.chunk.code.push(OpCode::BitwiseXor),
-                                AssignOp::ShiftLeft => self.chunk.code.push(OpCode::ShiftLeft),
-                                AssignOp::ShiftRight => self.chunk.code.push(OpCode::ShiftRight),
+                                AssignOp::Plus => self.push_op(OpCode::Add),
+                                AssignOp::Minus => self.push_op(OpCode::Sub),
+                                AssignOp::Mul => self.push_op(OpCode::Mul),
+                                AssignOp::Div => self.push_op(OpCode::Div),
+                                AssignOp::Mod => self.push_op(OpCode::Mod),
+                                AssignOp::Concat => self.push_op(OpCode::Concat),
+                                AssignOp::Pow => self.push_op(OpCode::Pow),
+                                AssignOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                                AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                                AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                                AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
+                                AssignOp::ShiftRight => self.push_op(OpCode::ShiftRight),
                                 _ => {}
                             }
                         }
@@ -3761,8 +3942,8 @@ impl<'src> Emitter<'src> {
                             if name.starts_with(b"$") {
                                 let var_name = &name[1..];
                                 let sym = self.interner.intern(var_name);
-                                self.chunk.code.push(OpCode::StoreVar(sym));
-                                self.chunk.code.push(OpCode::LoadVar(sym));
+                                self.push_op(OpCode::StoreVar(sym));
+                                self.push_op(OpCode::LoadVar(sym));
                             }
                         }
                     }
@@ -3878,7 +4059,7 @@ impl<'src> Emitter<'src> {
                     }
                 };
                 let idx = self.add_constant(value);
-                self.chunk.code.push(OpCode::Const(idx as u16));
+                self.push_op(OpCode::Const(idx as u16));
             }
             _ => {}
         }
@@ -4117,8 +4298,8 @@ impl<'src> Emitter<'src> {
                 let resolved_name = self.resolve_class_name(class_name);
                 let class_idx = self.add_constant(Val::String(Rc::new(resolved_name)));
                 let prop_idx = self.add_constant(Val::String(Rc::new(prop_name[1..].to_vec())));
-                self.chunk.code.push(OpCode::Const(class_idx as u16));
-                self.chunk.code.push(OpCode::Const(prop_idx as u16));
+                self.push_op(OpCode::Const(class_idx as u16));
+                self.push_op(OpCode::Const(prop_idx as u16));
                 return true;
             }
         }

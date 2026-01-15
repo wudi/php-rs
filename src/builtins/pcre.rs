@@ -1,6 +1,7 @@
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
 use pcre2::bytes::{Regex, Captures};
+use smallvec::smallvec;
 use std::rc::Rc;
 
 pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
@@ -38,11 +39,27 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
         if let Some(captures) = captures {
             let mut match_array = ArrayData::new();
+            let mut indexed_handles = Vec::new();
+
             for i in 0..captures.len() {
-                if let Some(m) = captures.get(i) {
+                let handle = if let Some(m) = captures.get(i) {
                     let match_str = m.as_bytes().to_vec();
-                    let val = vm.arena.alloc(Val::String(Rc::new(match_str)));
-                    match_array.insert(ArrayKey::Int(i as i64), val);
+                    vm.arena.alloc(Val::String(Rc::new(match_str)))
+                } else {
+                    vm.arena.alloc(Val::String(Rc::new(Vec::new())))
+                };
+                match_array.insert(ArrayKey::Int(i as i64), handle);
+                indexed_handles.push(handle);
+            }
+
+            for (idx, name) in regex.capture_names().iter().enumerate() {
+                if let Some(name) = name.as_deref() {
+                    if let Some(&handle) = indexed_handles.get(idx) {
+                        match_array.insert(
+                            ArrayKey::Str(Rc::new(name.as_bytes().to_vec())),
+                            handle,
+                        );
+                    }
                 }
             }
 
@@ -51,12 +68,12 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 let slot = vm.arena.get_mut(matches_handle);
                 slot.value = Val::Array(Rc::new(match_array));
             }
-            
+
             // Match found
-             Ok(vm.arena.alloc(Val::Int(1)))
+            Ok(vm.arena.alloc(Val::Int(1)))
         } else {
-             // No match
-             Ok(vm.arena.alloc(Val::Int(0)))
+            // No match
+            Ok(vm.arena.alloc(Val::Int(0)))
         }
     } else {
         let is_match = regex.is_match(&subject_str)
@@ -141,6 +158,209 @@ pub fn preg_replace(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     Ok(vm.arena.alloc(Val::String(Rc::new(result))))
 }
 
+pub fn preg_match_all(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    // args: pattern, subject, matches (ref), flags, offset
+    if args.len() < 2 {
+        return Err("preg_match_all expects at least 2 arguments".into());
+    }
+
+    let pattern_handle = args[0];
+    let subject_handle = args[1];
+
+    let flags = if args.len() >= 4 {
+        match vm.arena.get(args[3]).value {
+            Val::Int(value) => value,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+
+    let offset = if args.len() >= 5 {
+        match vm.arena.get(args[4]).value {
+            Val::Int(value) if value > 0 => value as usize,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+
+    let pattern_str = match &vm.arena.get(pattern_handle).value {
+        Val::String(s) => s.clone(),
+        _ => return Err("preg_match_all pattern must be a string".into()),
+    };
+
+    let subject_str = match &vm.arena.get(subject_handle).value {
+        Val::String(s) => s.clone(),
+        _ => Rc::new(
+            vm.convert_to_string(subject_handle)
+                .map_err(|e| e.to_string())?,
+        ),
+    };
+
+    let (pattern_bytes, _flags) = parse_php_pattern(&pattern_str)?;
+
+    let regex = Regex::new(&String::from_utf8_lossy(&pattern_bytes))
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+
+    let set_order = (flags & 2) != 0;
+    let offset_capture = (flags & (1 << 8)) != 0;
+    let unmatched_as_null = (flags & (1 << 9)) != 0;
+
+    let mut count = 0i64;
+    let mut matches_array = ArrayData::new();
+
+    if set_order {
+        let mut match_index = 0i64;
+        for captures in regex.captures_iter(&subject_str) {
+            let captures = captures.map_err(|e| format!("Regex execution error: {}", e))?;
+            let Some(m0) = captures.get(0) else {
+                continue;
+            };
+            if m0.start() < offset {
+                continue;
+            }
+
+            let mut row = ArrayData::new();
+            for i in 0..captures.len() {
+                let capture = captures.get(i);
+                let val = capture_to_val(vm, capture, offset_capture, unmatched_as_null);
+                row.insert(ArrayKey::Int(i as i64), val);
+            }
+
+            let row_handle = vm.arena.alloc(Val::Array(Rc::new(row)));
+            matches_array.insert(ArrayKey::Int(match_index), row_handle);
+            match_index += 1;
+            count += 1;
+        }
+    } else {
+        let mut group_arrays: Vec<ArrayData> = Vec::new();
+        let mut match_index = 0i64;
+
+        for captures in regex.captures_iter(&subject_str) {
+            let captures = captures.map_err(|e| format!("Regex execution error: {}", e))?;
+            let Some(m0) = captures.get(0) else {
+                continue;
+            };
+            if m0.start() < offset {
+                continue;
+            }
+
+            if group_arrays.is_empty() {
+                group_arrays = (0..captures.len()).map(|_| ArrayData::new()).collect();
+            }
+
+            for i in 0..captures.len() {
+                let capture = captures.get(i);
+                let val = capture_to_val(vm, capture, offset_capture, unmatched_as_null);
+                group_arrays[i].insert(ArrayKey::Int(match_index), val);
+            }
+
+            match_index += 1;
+            count += 1;
+        }
+
+        for (i, group) in group_arrays.into_iter().enumerate() {
+            let group_handle = vm.arena.alloc(Val::Array(Rc::new(group)));
+            matches_array.insert(ArrayKey::Int(i as i64), group_handle);
+        }
+    }
+
+    if args.len() >= 3 {
+        let matches_handle = args[2];
+        if vm.arena.get(matches_handle).is_ref {
+            let slot = vm.arena.get_mut(matches_handle);
+            slot.value = Val::Array(Rc::new(matches_array));
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Int(count)))
+}
+
+pub fn preg_replace_callback(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() < 3 {
+        return Err("preg_replace_callback expects at least 3 arguments".into());
+    }
+
+    let pattern_handle = args[0];
+    let callback_handle = args[1];
+    let subject_handle = args[2];
+
+    let limit = if args.len() >= 4 {
+        match vm.arena.get(args[3]).value {
+            Val::Int(l) => l,
+            _ => -1,
+        }
+    } else {
+        -1
+    };
+
+    let pattern_str = match &vm.arena.get(pattern_handle).value {
+        Val::String(s) => s.clone(),
+        _ => return Err("preg_replace_callback pattern must be a string".into()),
+    };
+
+    let subject_str = match &vm.arena.get(subject_handle).value {
+        Val::String(s) => s.clone(),
+        _ => Rc::new(
+            vm.convert_to_string(subject_handle)
+                .map_err(|e| e.to_string())?,
+        ),
+    };
+
+    let (pattern_bytes, _flags) = parse_php_pattern(&pattern_str)?;
+
+    let regex = Regex::new(&String::from_utf8_lossy(&pattern_bytes))
+        .map_err(|e| format!("Invalid regex: {}", e))?;
+
+    let mut result = Vec::new();
+    let mut last_end = 0;
+    let mut count = 0;
+
+    for captures in regex.captures_iter(&subject_str) {
+        let captures = captures.map_err(|e| format!("Regex error: {}", e))?;
+
+        if let Some(m) = captures.get(0) {
+            if limit != -1 && count >= limit {
+                break;
+            }
+
+            result.extend_from_slice(&subject_str[last_end..m.start()]);
+
+            let mut match_array = ArrayData::new();
+            for i in 0..captures.len() {
+                if let Some(mat) = captures.get(i) {
+                    let match_str = mat.as_bytes().to_vec();
+                    let val = vm.arena.alloc(Val::String(Rc::new(match_str)));
+                    match_array.insert(ArrayKey::Int(i as i64), val);
+                }
+            }
+
+            let matches_handle = vm.arena.alloc(Val::Array(Rc::new(match_array)));
+            let callback_result = vm
+                .call_callable(callback_handle, smallvec![matches_handle])
+                .map_err(|e| e.to_string())?;
+            let replacement = vm.value_to_string(callback_result)?;
+
+            result.extend_from_slice(&replacement);
+            last_end = m.end();
+            count += 1;
+        }
+    }
+
+    result.extend_from_slice(&subject_str[last_end..]);
+
+    if args.len() >= 5 {
+        let count_handle = args[4];
+        if vm.arena.get(count_handle).is_ref {
+            let slot = vm.arena.get_mut(count_handle);
+            slot.value = Val::Int(count);
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::String(Rc::new(result))))
+}
+
 fn interpolate_replacement(replacement: &[u8], captures: &Captures) -> Vec<u8> {
     let mut result = Vec::new();
     let mut i = 0;
@@ -172,6 +392,29 @@ fn interpolate_replacement(replacement: &[u8], captures: &Captures) -> Vec<u8> {
         i += 1;
     }
     result
+}
+
+fn capture_to_val(
+    vm: &mut VM,
+    capture: Option<pcre2::bytes::Match>,
+    offset_capture: bool,
+    unmatched_as_null: bool,
+) -> Handle {
+    if let Some(m) = capture {
+        let match_val = vm.arena.alloc(Val::String(Rc::new(m.as_bytes().to_vec())));
+        if offset_capture {
+            let mut pair = ArrayData::new();
+            pair.insert(ArrayKey::Int(0), match_val);
+            pair.insert(ArrayKey::Int(1), vm.arena.alloc(Val::Int(m.start() as i64)));
+            vm.arena.alloc(Val::Array(Rc::new(pair)))
+        } else {
+            match_val
+        }
+    } else if unmatched_as_null {
+        vm.arena.alloc(Val::Null)
+    } else {
+        vm.arena.alloc(Val::String(Rc::new(Vec::new())))
+    }
 }
 
 pub fn preg_split(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {

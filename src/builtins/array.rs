@@ -1,8 +1,9 @@
-use crate::core::value::{ArrayKey, Handle, Val};
+use crate::core::value::{ArrayData, ArrayKey, ConstArrayKey, Handle, Val};
 use crate::vm::engine::VM;
 use indexmap::IndexMap;
 use smallvec::smallvec;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 pub fn php_count(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() != 1 {
@@ -81,6 +82,48 @@ pub fn php_array_merge(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     Ok(vm.arena.alloc(Val::Array(
         crate::core::value::ArrayData::from(new_array).into(),
     )))
+}
+
+pub fn php_array_search(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() < 2 || args.len() > 3 {
+        return Err("array_search() expects 2 or 3 parameters".into());
+    }
+
+    let needle = vm.arena.get(args[0]).value.clone();
+    let strict = if args.len() == 3 {
+        vm.arena.get(args[2]).value.to_bool()
+    } else {
+        false
+    };
+
+    match &vm.arena.get(args[1]).value {
+        Val::Array(arr) => {
+            for (key, value_handle) in arr.map.iter() {
+                let candidate = vm.arena.get(*value_handle).value.clone();
+                if values_equal(&needle, &candidate, strict) {
+                    let key_val = match key {
+                        ArrayKey::Int(i) => Val::Int(*i),
+                        ArrayKey::Str(s) => Val::String(s.clone()),
+                    };
+                    return Ok(vm.arena.alloc(key_val));
+                }
+            }
+        }
+        Val::ConstArray(map) => {
+            for (key, val) in map.iter() {
+                if values_equal(&needle, val, strict) {
+                    let key_val = match key {
+                        ConstArrayKey::Int(i) => Val::Int(*i),
+                        ConstArrayKey::Str(s) => Val::String(s.clone()),
+                    };
+                    return Ok(vm.arena.alloc(key_val));
+                }
+            }
+        }
+        _ => return Err("array_search(): Argument #2 ($haystack) must be of type array".into()),
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
 pub fn php_array_keys(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
@@ -1520,12 +1563,30 @@ pub fn php_array_map(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let mut max_len = 0;
 
     for &arg in &args[1..] {
-        let val = vm.arena.get(arg);
-        if let Val::Array(arr) = &val.value {
-            arrays.push(arr.clone());
-            max_len = max_len.max(arr.map.len());
-        } else {
-            return Err("array_map(): All arguments after the callback must be arrays".into());
+        let val = vm.arena.get(arg).value.clone();
+        match val {
+            Val::Array(arr) => {
+                arrays.push(arr.clone());
+                max_len = max_len.max(arr.map.len());
+            }
+            Val::ConstArray(const_arr) => {
+                let mut map = IndexMap::new();
+                let entries: Vec<_> = const_arr.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                for (key, val) in entries {
+                    let runtime_key = match key {
+                        ConstArrayKey::Int(i) => ArrayKey::Int(i),
+                        ConstArrayKey::Str(s) => ArrayKey::Str(s),
+                    };
+                    let handle = vm.arena.alloc(val);
+                    map.insert(runtime_key, handle);
+                }
+                let arr = Rc::new(ArrayData::from(map));
+                max_len = max_len.max(arr.map.len());
+                arrays.push(arr);
+            }
+            _ => {
+                return Err("array_map(): All arguments after the callback must be arrays".into());
+            }
         }
     }
 
@@ -2083,6 +2144,61 @@ pub fn php_array_intersect(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
         let mut in_all = true;
         for set in &intersect_sets {
             if !set.contains(&v_bytes) {
+                in_all = false;
+                break;
+            }
+        }
+
+        if in_all {
+            if let ArrayKey::Int(i) = key {
+                if *i >= next_free {
+                    next_free = *i + 1;
+                }
+            }
+            result_map.insert(key.clone(), val_handle);
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Array(
+        crate::core::value::ArrayData {
+            map: result_map,
+            next_free,
+            internal_ptr: 0,
+        }
+        .into(),
+    )))
+}
+
+pub fn php_array_intersect_key(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() < 2 {
+        return Err("array_intersect_key() expects at least 2 parameters".into());
+    }
+
+    let first_val = vm.arena.get(args[0]);
+    let first_arr = match &first_val.value {
+        Val::Array(a) => a,
+        _ => return Err("array_intersect_key(): Argument #1 must be an array".into()),
+    };
+
+    let mut key_sets = Vec::new();
+    for &arg in &args[1..] {
+        let val = vm.arena.get(arg);
+        if let Val::Array(arr) = &val.value {
+            let mut set = HashSet::new();
+            for (key, _) in &arr.map {
+                set.insert(key.clone());
+            }
+            key_sets.push(set);
+        }
+    }
+
+    let mut result_map = IndexMap::new();
+    let mut next_free = 0;
+
+    for (key, &val_handle) in &first_arr.map {
+        let mut in_all = true;
+        for set in &key_sets {
+            if !set.contains(key) {
                 in_all = false;
                 break;
             }

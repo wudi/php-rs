@@ -111,3 +111,21 @@ fn test_reference_separation_check_b() {
         _ => panic!("Expected integer result, got {:?}", result),
     }
 }
+
+#[test]
+fn test_by_ref_creates_variable_when_undefined() {
+    let src = r#"<?php
+    function fill_array(&$out) {
+        $out['a'] = 1;
+    }
+    fill_array($result);
+    return $result['a'];
+    "#;
+
+    let (result, _) = run_code_with_vm(src).unwrap();
+
+    match result {
+        Val::Int(i) => assert_eq!(i, 1),
+        _ => panic!("Expected integer result, got {:?}", result),
+    }
+}

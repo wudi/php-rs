@@ -19,18 +19,9 @@ pub fn php_urlencode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("urlencode() expects exactly 1 parameter, 0 given".into());
     }
 
-    let s = match &vm.arena.get(args[0]).value {
-        Val::String(s) => s,
-        v => {
-            return Err(format!(
-                "urlencode() expects parameter 1 to be string, {} given",
-                v.type_name()
-            ));
-        }
-    };
-
+    let s = vm.arena.get(args[0]).value.to_php_string_bytes();
     let mut result = Vec::with_capacity(s.len());
-    for &b in s.as_ref() {
+    for &b in s.iter() {
         match b {
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => result.push(b),
             b' ' => result.push(b'+'),
@@ -50,18 +41,9 @@ pub fn php_urldecode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("urldecode() expects exactly 1 parameter, 0 given".into());
     }
 
-    let s = match &vm.arena.get(args[0]).value {
-        Val::String(s) => s,
-        v => {
-            return Err(format!(
-                "urldecode() expects parameter 1 to be string, {} given",
-                v.type_name()
-            ));
-        }
-    };
-
+    let s = vm.arena.get(args[0]).value.to_php_string_bytes();
     let mut result = Vec::with_capacity(s.len());
-    let bytes = s.as_ref();
+    let bytes = s.as_slice();
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
@@ -93,18 +75,9 @@ pub fn php_rawurlencode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> 
         return Err("rawurlencode() expects exactly 1 parameter, 0 given".into());
     }
 
-    let s = match &vm.arena.get(args[0]).value {
-        Val::String(s) => s,
-        v => {
-            return Err(format!(
-                "rawurlencode() expects parameter 1 to be string, {} given",
-                v.type_name()
-            ));
-        }
-    };
-
+    let s = vm.arena.get(args[0]).value.to_php_string_bytes();
     let mut result = Vec::with_capacity(s.len());
-    for &b in s.as_ref() {
+    for &b in s.iter() {
         match b {
             b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => result.push(b),
             _ => {

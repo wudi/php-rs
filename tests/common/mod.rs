@@ -65,6 +65,8 @@ pub fn run_code_with_vm(code: &str) -> Result<(Val, VM), VmError> {
 
     let mut vm = VM::new_with_context(request_context);
     vm.run(std::rc::Rc::new(chunk))?;
+    php_rs::builtins::output_control::flush_all_output_buffers(&mut vm)
+        .map_err(VmError::RuntimeError)?;
 
     let value = match vm.last_return_value {
         Some(handle) => vm.arena.get(handle).value.clone(),

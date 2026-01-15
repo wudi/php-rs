@@ -351,6 +351,10 @@ fn execute_source(source: &str, file_path: Option<&Path>, vm: &mut VM) -> Result
         return Err(err);
     }
 
+    php_rs::builtins::output_control::flush_all_output_buffers(vm)
+        .map_err(VmError::RuntimeError)?;
+    vm.flush_output()?;
+
     Ok(())
 }
 

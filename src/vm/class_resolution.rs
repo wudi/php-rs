@@ -34,6 +34,24 @@ pub(crate) struct ConstantLookupResult {
 }
 
 impl VM {
+    /// Resolve a class symbol using case-insensitive lookup (PHP class names are case-insensitive).
+    pub(crate) fn lookup_class_symbol(&self, class_name: Symbol) -> Option<Symbol> {
+        if self.context.classes.contains_key(&class_name) {
+            return Some(class_name);
+        }
+
+        let class_name_bytes = self.context.interner.lookup(class_name)?;
+        self.context
+            .classes
+            .keys()
+            .find(|sym| {
+                self.context
+                    .interner
+                    .lookup(**sym)
+                    .map_or(false, |bytes| bytes.eq_ignore_ascii_case(class_name_bytes))
+            })
+            .copied()
+    }
     /// Walk inheritance chain and find first match
     /// Generic helper that reduces code duplication
     /// Reference: $PHP_SRC_PATH/Zend/zend_inheritance.c - do_inheritance
@@ -106,13 +124,14 @@ impl VM {
     /// Check if a class exists
     #[inline]
     pub(crate) fn class_exists(&self, class_name: Symbol) -> bool {
-        self.context.classes.contains_key(&class_name)
+        self.lookup_class_symbol(class_name).is_some()
     }
 
     /// Get class definition
     #[inline]
     pub(crate) fn get_class_def(&self, class_name: Symbol) -> Option<&ClassDef> {
-        self.context.classes.get(&class_name)
+        self.lookup_class_symbol(class_name)
+            .and_then(|sym| self.context.classes.get(&sym))
     }
 
     /// Resolve special class names (self, parent, static)

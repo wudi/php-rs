@@ -162,7 +162,35 @@ impl VM {
         // User-defined function
         let func_opt = self.context.user_functions.get(&name).cloned();
         if let Some(func) = func_opt {
-            self.handle_pending_undefined_for_call(&args, None);
+            let by_ref_indices: Vec<usize> = func
+                .params
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, param)| if param.by_ref { Some(idx) } else { None })
+                .collect();
+            let by_ref = if by_ref_indices.is_empty() {
+                None
+            } else {
+                Some(by_ref_indices.as_slice())
+            };
+
+            self.handle_pending_undefined_for_call(&args, by_ref);
+
+            if let Some(by_ref) = by_ref {
+                for &idx in by_ref {
+                    if let Some(&arg_handle) = args.get(idx) {
+                        if !self.arena.get(arg_handle).is_ref {
+                            self.arena.get_mut(arg_handle).is_ref = true;
+                        }
+                        if let Some(&sym) = self.var_handle_map.get(&arg_handle) {
+                            if let Some(frame) = self.frames.last_mut() {
+                                frame.locals.entry(sym).or_insert(arg_handle);
+                            }
+                        }
+                    }
+                }
+            }
+
             let mut frame = CallFrame::new(func.chunk.clone());
             frame.func = Some(func.clone());
             frame.args = args;

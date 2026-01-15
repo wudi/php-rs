@@ -184,7 +184,8 @@ pub fn php_ob_flush(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
             .content
             .extend_from_slice(&output);
     } else {
-        vm.write_output(&output).map_err(|e| format!("{:?}", e))?;
+        vm.write_output_direct(&output)
+            .map_err(|e| format!("{:?}", e))?;
     }
 
     // Clear the buffer after flushing
@@ -269,7 +270,8 @@ pub fn php_ob_end_flush(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String>
             .content
             .extend_from_slice(&output);
     } else {
-        vm.write_output(&output).map_err(|e| format!("{:?}", e))?;
+        vm.write_output_direct(&output)
+            .map_err(|e| format!("{:?}", e))?;
     }
 
     vm.output_buffers.pop();
@@ -318,7 +320,8 @@ pub fn php_ob_get_flush(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String>
             .content
             .extend_from_slice(&output);
     } else {
-        vm.write_output(&output).map_err(|e| format!("{:?}", e))?;
+        vm.write_output_direct(&output)
+            .map_err(|e| format!("{:?}", e))?;
     }
 
     let buffer = vm.output_buffers.pop().unwrap();
@@ -461,6 +464,26 @@ pub fn php_flush(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     vm.flush_output().map_err(|e| format!("{:?}", e))?;
 
     Ok(vm.arena.alloc(Val::Null))
+}
+
+pub fn flush_all_output_buffers(vm: &mut VM) -> Result<(), String> {
+    while !vm.output_buffers.is_empty() {
+        let buffer_idx = vm.output_buffers.len() - 1;
+        let output = process_buffer(vm, buffer_idx, PHP_OUTPUT_HANDLER_FINAL)?;
+
+        if buffer_idx > 0 {
+            vm.output_buffers[buffer_idx - 1]
+                .content
+                .extend_from_slice(&output);
+        } else {
+            vm.write_output_direct(&output)
+                .map_err(|e| format!("{:?}", e))?;
+        }
+
+        vm.output_buffers.pop();
+    }
+
+    Ok(())
 }
 
 /// Add URL rewriter values

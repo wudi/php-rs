@@ -21,8 +21,9 @@
 //! - Zend Encoder: $PHP_SRC_PATH/ext/json/json_encoder.c
 //! - Zend Parser: $PHP_SRC_PATH/ext/json/json_parser.y
 
-use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
+use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Val};
 use crate::vm::engine::VM;
+use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -564,7 +565,7 @@ pub fn php_json_decode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Parse depth
-    let _max_depth = if args.len() > 2 {
+    let max_depth = if args.len() > 2 {
         let depth_val = &vm.arena.get(args[2]).value;
         match depth_val {
             Val::Int(i) if *i > 0 => *i as usize,
@@ -575,7 +576,7 @@ pub fn php_json_decode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Parse flags
-    let _options = if args.len() > 3 {
+    let options = if args.len() > 3 {
         let flags_val = &vm.arena.get(args[3]).value;
         let flags = match flags_val {
             Val::Int(i) => *i,
@@ -586,13 +587,128 @@ pub fn php_json_decode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         JsonDecodeOptions::default()
     };
 
-    // TODO: Implement actual JSON parser
-    // For now, return a placeholder
-    let _ = (json_str, assoc);
-    vm.context
-        .get_or_init_extension_data(|| JsonExtensionData::default())
-        .last_error = JsonError::Syntax;
-    Ok(vm.arena.alloc(Val::Null))
+    let object_as_array = assoc || options.object_as_array;
+
+    let parsed = match serde_json::from_str::<serde_json::Value>(json_str) {
+        Ok(value) => value,
+        Err(_) => {
+            vm.context
+                .get_or_init_extension_data(|| JsonExtensionData::default())
+                .last_error = JsonError::Syntax;
+            if options.throw_on_error {
+                return Err("json_decode error: Syntax error".into());
+            }
+            return Ok(vm.arena.alloc(Val::Null));
+        }
+    };
+
+    match decode_json_value(vm, &parsed, object_as_array, options, 0, max_depth) {
+        Ok(handle) => Ok(handle),
+        Err(err) => {
+            vm.context
+                .get_or_init_extension_data(|| JsonExtensionData::default())
+                .last_error = err;
+            if options.throw_on_error {
+                Err(format!("json_decode error: {}", err.message()))
+            } else {
+                Ok(vm.arena.alloc(Val::Null))
+            }
+        }
+    }
+}
+
+fn decode_json_value(
+    vm: &mut VM,
+    value: &serde_json::Value,
+    object_as_array: bool,
+    options: JsonDecodeOptions,
+    depth: usize,
+    max_depth: usize,
+) -> Result<Handle, JsonError> {
+    if depth > max_depth {
+        return Err(JsonError::Depth);
+    }
+
+    match value {
+        serde_json::Value::Null => Ok(vm.arena.alloc(Val::Null)),
+        serde_json::Value::Bool(b) => Ok(vm.arena.alloc(Val::Bool(*b))),
+        serde_json::Value::Number(num) => {
+            if let Some(i) = num.as_i64() {
+                Ok(vm.arena.alloc(Val::Int(i)))
+            } else if let Some(u) = num.as_u64() {
+                if u <= i64::MAX as u64 {
+                    Ok(vm.arena.alloc(Val::Int(u as i64)))
+                } else if options.bigint_as_string {
+                    Ok(vm
+                        .arena
+                        .alloc(Val::String(u.to_string().into_bytes().into())))
+                } else {
+                    Ok(vm.arena.alloc(Val::Float(u as f64)))
+                }
+            } else if let Some(f) = num.as_f64() {
+                Ok(vm.arena.alloc(Val::Float(f)))
+            } else {
+                Ok(vm.arena.alloc(Val::Null))
+            }
+        }
+        serde_json::Value::String(s) => Ok(vm.arena.alloc(Val::String(s.as_bytes().to_vec().into()))),
+        serde_json::Value::Array(items) => {
+            let mut map = IndexMap::new();
+            for (idx, item) in items.iter().enumerate() {
+                let handle = decode_json_value(
+                    vm,
+                    item,
+                    object_as_array,
+                    options,
+                    depth + 1,
+                    max_depth,
+                )?;
+                map.insert(ArrayKey::Int(idx as i64), handle);
+            }
+            let array_val = Val::Array(Rc::new(ArrayData::from(map)));
+            Ok(vm.arena.alloc(array_val))
+        }
+        serde_json::Value::Object(entries) => {
+            if object_as_array {
+                let mut map = IndexMap::new();
+                for (key, val) in entries.iter() {
+                    let handle = decode_json_value(
+                        vm,
+                        val,
+                        object_as_array,
+                        options,
+                        depth + 1,
+                        max_depth,
+                    )?;
+                    map.insert(ArrayKey::Str(key.as_bytes().to_vec().into()), handle);
+                }
+                let array_val = Val::Array(Rc::new(ArrayData::from(map)));
+                Ok(vm.arena.alloc(array_val))
+            } else {
+                let mut props = IndexMap::new();
+                for (key, val) in entries.iter() {
+                    let handle = decode_json_value(
+                        vm,
+                        val,
+                        object_as_array,
+                        options,
+                        depth + 1,
+                        max_depth,
+                    )?;
+                    let key_sym = vm.context.interner.intern(key.as_bytes());
+                    props.insert(key_sym, handle);
+                }
+                let obj_data = ObjectData {
+                    class: vm.context.interner.intern(b"stdClass"),
+                    properties: props,
+                    internal: None,
+                    dynamic_properties: std::collections::HashSet::new(),
+                };
+                let payload_handle = vm.arena.alloc(Val::ObjPayload(obj_data));
+                Ok(vm.arena.alloc(Val::Object(payload_handle)))
+            }
+        }
+    }
 }
 
 /// json_last_error(): int
