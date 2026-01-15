@@ -1,0 +1,20 @@
+FROM rust:bookworm as builder
+
+WORKDIR /usr/src/php-rs
+COPY . .
+
+RUN cargo build --release --bin php-fpm
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /usr/src/php-rs/target/release/php-fpm /usr/local/bin/php-fpm
+
+EXPOSE 9000
+
+CMD ["php-fpm", "--bind", "0.0.0.0:9000"]
