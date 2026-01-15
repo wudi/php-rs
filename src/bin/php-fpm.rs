@@ -522,7 +522,8 @@ async fn execute_php<W: Write + 'static>(
         fpm_req.files_vars.clone(),
     );
 
-    let emitter = Emitter::new(&source, &mut vm.context.interner);
+    let emitter = Emitter::new(&source, &mut vm.context.interner)
+        .with_file_path(fpm_req.script_filename.clone());
     let (bytecode, _) = emitter.compile(&program.statements);
 
     // Setup FPM Output Writer

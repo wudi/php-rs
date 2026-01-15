@@ -270,7 +270,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"get_called_class", class::php_get_called_class);
 
         // PCRE functions
-        registry.register_function(b"preg_match", pcre::preg_match);
+        registry.register_function_with_by_ref(b"preg_match", pcre::preg_match, vec![2]);
         registry.register_function(b"preg_replace", pcre::preg_replace);
         registry.register_function(b"preg_split", pcre::preg_split);
         registry.register_function(b"preg_quote", pcre::preg_quote);
@@ -283,6 +283,13 @@ impl Extension for CoreExtension {
         registry.register_function(b"is_callable", function::php_is_callable);
         registry.register_function(b"call_user_func", function::php_call_user_func);
         registry.register_function(b"call_user_func_array", function::php_call_user_func_array);
+        registry.register_function(
+            b"register_shutdown_function",
+            function::php_register_shutdown_function,
+        );
+        registry.register_function(b"set_error_handler", function::php_set_error_handler);
+        registry.register_function(b"restore_error_handler", function::php_restore_error_handler);
+        registry.register_function(b"trigger_error", function::php_trigger_error);
         registry.register_function(b"extension_loaded", function::php_extension_loaded);
         registry.register_function(b"spl_autoload_register", spl::php_spl_autoload_register);
         registry.register_function(b"spl_object_hash", spl::php_spl_object_hash);
@@ -1317,6 +1324,16 @@ impl Extension for CoreExtension {
         registry.register_constant(b"ENT_XML1", Val::Int(string::ENT_XML1));
         registry.register_constant(b"ENT_XHTML", Val::Int(string::ENT_XHTML));
         registry.register_constant(b"ENT_HTML5", Val::Int(string::ENT_HTML5));
+
+        // Register core sort constants
+        registry.register_constant(b"SORT_REGULAR", Val::Int(0));
+        registry.register_constant(b"SORT_NUMERIC", Val::Int(1));
+        registry.register_constant(b"SORT_STRING", Val::Int(2));
+        registry.register_constant(b"SORT_LOCALE_STRING", Val::Int(5));
+        registry.register_constant(b"SORT_NATURAL", Val::Int(6));
+        registry.register_constant(b"SORT_FLAG_CASE", Val::Int(8));
+        registry.register_constant(b"SORT_ASC", Val::Int(4));
+        registry.register_constant(b"SORT_DESC", Val::Int(3));
 
         // Register locale category constants
         #[cfg(unix)]

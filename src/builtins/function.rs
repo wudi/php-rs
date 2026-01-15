@@ -1,4 +1,5 @@
 use crate::core::value::{ArrayKey, Handle, Val};
+use crate::runtime::context::ShutdownFunction;
 use crate::vm::engine::{ErrorLevel, VM};
 use std::rc::Rc;
 
@@ -261,4 +262,126 @@ pub fn php_call_user_func_array(vm: &mut VM, args: &[Handle]) -> Result<Handle, 
 
     vm.call_callable(callback_handle, func_args)
         .map_err(|e| format!("call_user_func_array error: {:?}", e))
+}
+
+/// register_shutdown_function() - Register a function to be called on shutdown
+///
+/// PHP Reference: https://www.php.net/manual/en/function.register-shutdown-function.php
+pub fn php_register_shutdown_function(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("register_shutdown_function() expects at least 1 parameter".to_string());
+    }
+
+    let callable = args[0];
+    if !vm.is_callable(callable) {
+        return Err(
+            "register_shutdown_function(): Argument #1 ($callback) must be a valid callback"
+                .to_string(),
+        );
+    }
+
+    let shutdown_args = args[1..].to_vec();
+    vm.context.shutdown_functions.push(ShutdownFunction {
+        callable,
+        args: shutdown_args,
+    });
+
+    Ok(vm.arena.alloc(Val::Null))
+}
+
+/// set_error_handler() - Sets a user-defined error handler function
+///
+/// PHP Reference: https://www.php.net/manual/en/function.set-error-handler.php
+pub fn php_set_error_handler(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("set_error_handler() expects at least 1 parameter".to_string());
+    }
+
+    if args.len() > 2 {
+        return Err(format!(
+            "set_error_handler() expects at most 2 parameters, {} given",
+            args.len()
+        ));
+    }
+
+    let new_handler_handle = args[0];
+    let new_handler = match &vm.arena.get(new_handler_handle).value {
+        Val::Null => None,
+        _ => {
+            if !vm.is_callable(new_handler_handle) {
+                return Err("set_error_handler(): Argument #1 ($callback) must be a valid callback"
+                    .to_string());
+            }
+            Some(new_handler_handle)
+        }
+    };
+
+    let error_type = args
+        .get(1)
+        .map(|handle| vm.arena.get(*handle).value.to_int() as u32)
+        .unwrap_or(32767);
+
+    let previous = vm.context.user_error_handler;
+    let previous_reporting = vm.context.user_error_handler_reporting;
+    vm.context
+        .user_error_handler_stack
+        .push((previous, previous_reporting));
+
+    vm.context.user_error_handler = new_handler;
+    vm.context.user_error_handler_reporting = error_type;
+
+    if let Some(previous_handle) = previous {
+        Ok(previous_handle)
+    } else {
+        Ok(vm.arena.alloc(Val::Null))
+    }
+}
+
+/// restore_error_handler() - Restores the previous error handler
+///
+/// PHP Reference: https://www.php.net/manual/en/function.restore-error-handler.php
+pub fn php_restore_error_handler(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
+    if let Some((handler, reporting)) = vm.context.user_error_handler_stack.pop() {
+        vm.context.user_error_handler = handler;
+        vm.context.user_error_handler_reporting = reporting;
+        Ok(vm.arena.alloc(Val::Bool(true)))
+    } else {
+        vm.context.user_error_handler = None;
+        Ok(vm.arena.alloc(Val::Bool(false)))
+    }
+}
+
+/// trigger_error() - Generates a user-level error/warning/notice message
+///
+/// PHP Reference: https://www.php.net/manual/en/function.trigger-error.php
+pub fn php_trigger_error(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("trigger_error() expects at least 1 parameter".to_string());
+    }
+
+    let message = match &vm.arena.get(args[0]).value {
+        Val::String(s) => String::from_utf8_lossy(s).to_string(),
+        _ => return Err("trigger_error() expects parameter 1 to be string".to_string()),
+    };
+
+    let error_type = args
+        .get(1)
+        .map(|handle| vm.arena.get(*handle).value.to_int())
+        .unwrap_or(ErrorLevel::UserNotice.to_bitmask() as i64);
+
+    let level = match error_type {
+        256 => ErrorLevel::UserError,
+        512 => ErrorLevel::UserWarning,
+        1024 => ErrorLevel::UserNotice,
+        16384 => ErrorLevel::Deprecated,
+        _ => {
+            return Err(
+                "trigger_error(): Argument #2 must be one of E_USER_ERROR, E_USER_WARNING, E_USER_NOTICE, or E_USER_DEPRECATED"
+                    .to_string(),
+            );
+        }
+    };
+
+    vm.report_error(level, &message);
+    Ok(vm.arena.alloc(Val::Bool(true)))
 }

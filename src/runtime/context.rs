@@ -174,6 +174,12 @@ pub struct ErrorInfo {
     pub line: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ShutdownFunction {
+    pub callable: Handle,
+    pub args: Vec<Handle>,
+}
+
 pub struct EngineContext {
     pub registry: ExtensionRegistry,
 }
@@ -259,6 +265,10 @@ pub struct RequestContext {
     pub last_error: Option<ErrorInfo>,
     pub headers: Vec<HeaderEntry>,
     pub http_status: Option<i64>,
+    pub shutdown_functions: Vec<ShutdownFunction>,
+    pub user_error_handler: Option<Handle>,
+    pub user_error_handler_reporting: u32,
+    pub user_error_handler_stack: Vec<(Option<Handle>, u32)>,
     pub native_methods: HashMap<(Symbol, Symbol), NativeMethodEntry>,
     pub next_resource_id: u64,
     /// Generic extension data storage keyed by TypeId
@@ -289,6 +299,10 @@ impl RequestContext {
             last_error: None,
             headers: Vec::new(),
             http_status: None,
+            shutdown_functions: Vec::new(),
+            user_error_handler: None,
+            user_error_handler_reporting: 32767,
+            user_error_handler_stack: Vec::new(),
             native_methods: HashMap::new(),
             next_resource_id: 1,
             extension_data: HashMap::new(),
@@ -522,6 +536,11 @@ impl RequestContext {
         self.insert_builtin_constant(b"PHP_OS", Val::String(Rc::new(b"Darwin".to_vec())));
         self.insert_builtin_constant(b"PHP_SAPI", Val::String(Rc::new(b"cli".to_vec())));
         self.insert_builtin_constant(b"PHP_EOL", Val::String(Rc::new(b"\n".to_vec())));
+
+        let int_size = std::mem::size_of::<i64>() as i64;
+        self.insert_builtin_constant(b"PHP_INT_SIZE", Val::Int(int_size));
+        self.insert_builtin_constant(b"PHP_INT_MAX", Val::Int(i64::MAX));
+        self.insert_builtin_constant(b"PHP_INT_MIN", Val::Int(i64::MIN));
 
         // Path separator constants
         let dir_sep = std::path::MAIN_SEPARATOR.to_string().into_bytes();

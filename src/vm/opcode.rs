@@ -149,6 +149,7 @@ pub enum OpCode {
     FetchProp(Symbol),  // [Obj] -> [Val]
     FetchPropDynamic,   // [Obj, Name] -> [Val]
     AssignProp(Symbol), // [Obj, Val] -> [Val]
+    AssignPropDynamic,  // [Obj, Name, Val] -> [Val]
     CallMethod(Symbol, u8), // [Obj, Arg1...ArgN] -> [RetVal]
     CallMethodDynamic(u8), // [Obj, MethodName, Arg1...ArgN] -> [RetVal]
     UnsetObj,

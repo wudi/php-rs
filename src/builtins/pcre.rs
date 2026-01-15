@@ -19,7 +19,10 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     let subject_str = match &vm.arena.get(subject_handle).value {
         Val::String(s) => s.clone(),
-        _ => return Err("preg_match subject must be a string".into()),
+        _ => Rc::new(
+            vm.convert_to_string(subject_handle)
+                .map_err(|e| e.to_string())?,
+        ),
     };
 
     let (pattern_bytes, _flags) = parse_php_pattern(&pattern_str)?;

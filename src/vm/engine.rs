@@ -333,6 +333,7 @@ pub struct VM {
     pub(crate) var_handle_map: HashMap<Handle, Symbol>,
     pending_undefined: HashMap<Handle, Symbol>,
     pub(crate) suppress_undefined_notice: bool,
+    handling_user_error: bool,
     pub execution_start_time: SystemTime,
     /// Track if we're currently executing finally blocks to prevent recursion
     executing_finally: bool,
@@ -357,6 +358,7 @@ pub struct VM {
     pub(crate) disable_functions: std::collections::HashSet<String>,
     /// Sandboxing: disabled class names (blacklist)
     pub(crate) disable_classes: std::collections::HashSet<String>,
+    last_error_location: Option<(String, u32)>,
 }
 
 impl VM {
@@ -841,6 +843,7 @@ impl VM {
             var_handle_map: HashMap::new(),
             pending_undefined: HashMap::new(),
             suppress_undefined_notice: false,
+            handling_user_error: false,
             execution_start_time: SystemTime::now(),
             executing_finally: false,
             finally_return_value: None,
@@ -853,6 +856,7 @@ impl VM {
             allowed_functions: None, // All functions allowed by default
             disable_functions: std::collections::HashSet::new(),
             disable_classes: std::collections::HashSet::new(),
+            last_error_location: None,
         };
         vm.context.bind_memory_api(vm.arena.as_mut());
         vm.initialize_superglobals();
@@ -977,17 +981,49 @@ impl VM {
     /// Also stores the error in context.last_error for error_get_last()
     pub(crate) fn report_error(&mut self, level: ErrorLevel, message: &str) {
         let level_bitmask = level.to_bitmask();
+        let error_file = "Unknown".to_string();
+        let error_line = 0i64;
 
         // Store this as the last error regardless of error_reporting level
         self.context.last_error = Some(crate::runtime::context::ErrorInfo {
             error_type: level_bitmask as i64,
             message: message.to_string(),
-            file: "Unknown".to_string(),
-            line: 0,
+            file: error_file.clone(),
+            line: error_line,
         });
 
+        let mut handled = false;
+        if let Some(handler) = self.context.user_error_handler {
+            let should_handle = (self.context.user_error_handler_reporting & level_bitmask) != 0;
+            if should_handle && !self.handling_user_error {
+                self.handling_user_error = true;
+                let mut args = ArgList::new();
+                args.push(self.arena.alloc(Val::Int(level_bitmask as i64)));
+                args.push(self.arena.alloc(Val::String(Rc::new(message.as_bytes().to_vec()))));
+                args.push(self.arena.alloc(Val::String(Rc::new(error_file.as_bytes().to_vec()))));
+                args.push(self.arena.alloc(Val::Int(error_line)));
+
+                match self.call_callable(handler, args) {
+                    Ok(handle) => {
+                        let val = self.arena.get(handle).value.clone();
+                        if val != Val::Bool(false) {
+                            handled = true;
+                        }
+                    }
+                    Err(err) => {
+                        self.error_handler.report(
+                            ErrorLevel::Warning,
+                            &format!("set_error_handler() callback failed: {:?}", err),
+                        );
+                    }
+                }
+
+                self.handling_user_error = false;
+            }
+        }
+
         // Only report if the error level is enabled in error_reporting
-        if (self.context.config.error_reporting & level_bitmask) != 0 {
+        if !handled && (self.context.config.error_reporting & level_bitmask) != 0 {
             self.error_handler.report(level, message);
         }
     }
@@ -1107,6 +1143,27 @@ impl VM {
         self.frames
             .last_mut()
             .ok_or_else(|| VmError::RuntimeError("No active frame".into()))
+    }
+
+    pub fn current_location(&self) -> Option<(String, u32)> {
+        self.last_error_location
+            .clone()
+            .or_else(|| self.compute_current_location())
+    }
+
+    fn compute_current_location(&self) -> Option<(String, u32)> {
+        let frame = self.frames.last()?;
+        let file = frame
+            .chunk
+            .file_path
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_string());
+        let line = if frame.ip > 0 && frame.ip <= frame.chunk.lines.len() {
+            frame.chunk.lines[frame.ip - 1]
+        } else {
+            0
+        };
+        Some((file, line))
     }
 
     #[inline]
@@ -2311,6 +2368,40 @@ impl VM {
         false
     }
 
+    fn current_frame_is_magic_method(&self, magic: Symbol) -> bool {
+        let magic_bytes = match self.context.interner.lookup(magic) {
+            Some(bytes) => bytes,
+            None => return false,
+        };
+        let frame = match self.current_frame() {
+            Ok(frame) => frame,
+            Err(_) => return false,
+        };
+        let func = match frame.func.as_ref() {
+            Some(func) => func,
+            None => return false,
+        };
+        let func_bytes = match self.context.interner.lookup(func.chunk.name) {
+            Some(bytes) => bytes,
+            None => return false,
+        };
+
+        let magic_lower = magic_bytes.to_ascii_lowercase();
+        let func_lower = func_bytes.to_ascii_lowercase();
+        if func_lower == magic_lower {
+            return true;
+        }
+
+        if func_lower.len() < magic_lower.len() + 2 {
+            return false;
+        }
+
+        let mut suffix = Vec::with_capacity(magic_lower.len() + 2);
+        suffix.extend_from_slice(b"::");
+        suffix.extend_from_slice(&magic_lower);
+        func_lower.ends_with(&suffix)
+    }
+
     /// Check if writing a dynamic property should emit a deprecation warning
     /// Reference: $PHP_SRC_PATH/Zend/zend_object_handlers.c - zend_std_write_property
     /// Direct property assignment with all checks (readonly, type validation, dynamic property)
@@ -2826,7 +2917,27 @@ impl VM {
         }
 
         self.push_frame(initial_frame);
-        self.run_loop(0)
+        let result = self.run_loop(0);
+        self.run_shutdown_functions();
+        result
+    }
+
+    fn run_shutdown_functions(&mut self) {
+        if self.context.shutdown_functions.is_empty() {
+            return;
+        }
+
+        let shutdowns = std::mem::take(&mut self.context.shutdown_functions);
+        for shutdown in shutdowns {
+            let mut args = ArgList::new();
+            args.extend(shutdown.args.into_iter());
+            if let Err(err) = self.call_callable(shutdown.callable, args) {
+                self.report_error(
+                    ErrorLevel::Warning,
+                    &format!("register_shutdown_function() error: {}", err),
+                );
+            }
+        }
     }
 
     pub fn run_frame(&mut self, frame: CallFrame) -> Result<Handle, VmError> {
@@ -3060,7 +3171,10 @@ impl VM {
                             return Err(VmError::Exception(h));
                         }
                     }
-                    _ => return Err(e),
+                    _ => {
+                        self.last_error_location = self.compute_current_location();
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -5576,9 +5690,11 @@ impl VM {
                         }
                     }
                     _ => {
-                        return Err(VmError::RuntimeError(
-                            "Foreach expects array or object".into(),
-                        ));
+                        let type_str = iterable_val.type_name();
+                        return Err(VmError::RuntimeError(format!(
+                            "Foreach expects array or object, got {}",
+                            type_str
+                        )));
                     }
                 }
             }
@@ -5670,9 +5786,11 @@ impl VM {
                         }
                     }
                     _ => {
-                        return Err(VmError::RuntimeError(
-                            "Foreach expects array or object".into(),
-                        ));
+                        let type_str = self.arena.get(iterable_handle).value.type_name();
+                        return Err(VmError::RuntimeError(format!(
+                            "Foreach expects array or object, got {}",
+                            type_str
+                        )));
                     }
                 }
             }
@@ -5764,9 +5882,11 @@ impl VM {
                         }
                     }
                     _ => {
-                        return Err(VmError::RuntimeError(
-                            "Foreach expects array or object".into(),
-                        ));
+                        let type_str = self.arena.get(iterable_handle).value.type_name();
+                        return Err(VmError::RuntimeError(format!(
+                            "Foreach expects array or object, got {}",
+                            type_str
+                        )));
                     }
                 }
             }
@@ -5850,9 +5970,11 @@ impl VM {
                         }
                     }
                     _ => {
-                        return Err(VmError::RuntimeError(
-                            "Foreach expects array or object".into(),
-                        ));
+                        let type_str = self.arena.get(iterable_handle).value.type_name();
+                        return Err(VmError::RuntimeError(format!(
+                            "Foreach expects array or object, got {}",
+                            type_str
+                        )));
                     }
                 }
             }
@@ -6108,6 +6230,10 @@ impl VM {
                 let mut abstract_methods = HashSet::new();
 
                 if let Some(parent_sym) = parent {
+                    if !self.context.classes.contains_key(&parent_sym) {
+                        self.trigger_autoload(parent_sym)?;
+                    }
+
                     if let Some(parent_def) = self.context.classes.get(&parent_sym) {
                         // Inherit methods, excluding private ones.
                         for (key, entry) in &parent_def.methods {
@@ -6369,6 +6495,18 @@ impl VM {
                 }
             }
             OpCode::FinalizeClass(class_name) => {
+                let interfaces = if let Some(class_def) = self.context.classes.get(&class_name) {
+                    class_def.interfaces.clone()
+                } else {
+                    Vec::new()
+                };
+
+                for interface_name in interfaces.iter() {
+                    if !self.context.classes.contains_key(interface_name) {
+                        self.trigger_autoload(*interface_name)?;
+                    }
+                }
+
                 // Validate interface implementation after all methods are defined
                 if let Some(class_def) = self.context.classes.get(&class_name) {
                     if let Some(parent_sym) = class_def.parent {
@@ -7369,12 +7507,11 @@ impl VM {
 
                 // Determine if __set magic method should be used
                 let use_magic = !prop_exists || visibility_check.is_err();
+                let magic_set = self.context.interner.intern(b"__set");
+                let in_magic_set = self.current_frame_is_magic_method(magic_set);
 
-                if use_magic {
-                    let magic_set = self.context.interner.intern(b"__set");
-                    if let Some((method, _, _, defined_class)) =
-                        self.find_method(class_name, magic_set)
-                    {
+                if use_magic && !in_magic_set {
+                    if let Some((method, _, _, defined_class)) = self.find_method(class_name, magic_set) {
                         let prop_name_bytes = self
                             .context
                             .interner
@@ -7409,6 +7546,91 @@ impl VM {
                 }
 
                 // Direct property assignment (common path)
+                self.assign_property_direct(
+                    payload_handle,
+                    obj_handle,
+                    class_name,
+                    prop_name,
+                    val_handle,
+                    prop_exists,
+                )?;
+
+                self.operand_stack.push(val_handle);
+            }
+            OpCode::AssignPropDynamic => {
+                let val_handle = self
+                    .operand_stack
+                    .pop()
+                    .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
+                let name_handle = self
+                    .operand_stack
+                    .pop()
+                    .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
+                let obj_handle = self
+                    .operand_stack
+                    .pop()
+                    .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
+
+                let prop_name_bytes = self.convert_to_string(name_handle)?;
+                let prop_name = self.context.interner.intern(&prop_name_bytes);
+
+                let payload_handle = if let Val::Object(h) = self.arena.get(obj_handle).value {
+                    h
+                } else {
+                    return Err(VmError::RuntimeError(
+                        "Attempt to assign property on non-object".into(),
+                    ));
+                };
+
+                let (class_name, prop_exists) = {
+                    let payload_zval = self.arena.get(payload_handle);
+                    if let Val::ObjPayload(obj_data) = &payload_zval.value {
+                        (obj_data.class, obj_data.properties.contains_key(&prop_name))
+                    } else {
+                        return Err(VmError::RuntimeError("Invalid object payload".into()));
+                    }
+                };
+
+                let current_scope = self.get_current_class();
+                let visibility_check =
+                    self.check_prop_visibility(class_name, prop_name, current_scope);
+
+                let use_magic = !prop_exists || visibility_check.is_err();
+                let magic_set = self.context.interner.intern(b"__set");
+                let in_magic_set = self.current_frame_is_magic_method(magic_set);
+
+                if use_magic && !in_magic_set {
+                    if let Some((method, _, _, defined_class)) =
+                        self.find_method(class_name, magic_set)
+                    {
+                        let name_handle =
+                            self.arena
+                                .alloc(Val::String(Rc::new(prop_name_bytes)));
+
+                        let mut frame = CallFrame::new(method.chunk.clone());
+                        frame.func = Some(method.clone());
+                        frame.this = Some(obj_handle);
+                        frame.class_scope = Some(defined_class);
+                        frame.called_scope = Some(class_name);
+                        frame.discard_return = true;
+
+                        if let Some(param) = method.params.get(0) {
+                            frame.locals.insert(param.name, name_handle);
+                        }
+                        if let Some(param) = method.params.get(1) {
+                            frame.locals.insert(param.name, val_handle);
+                        }
+
+                        self.operand_stack.push(val_handle);
+                        self.push_frame(frame);
+                        return Ok(());
+                    }
+
+                    if let Err(e) = visibility_check {
+                        return Err(e);
+                    }
+                }
+
                 self.assign_property_direct(
                     payload_handle,
                     obj_handle,
@@ -11412,7 +11634,7 @@ impl VM {
 
     /// Check if a value is callable
     /// Reference: $PHP_SRC_PATH/Zend/zend_API.c - zend_is_callable
-    fn is_callable(&mut self, val_handle: Handle) -> bool {
+    pub(crate) fn is_callable(&mut self, val_handle: Handle) -> bool {
         let val = &self.arena.get(val_handle).value;
 
         match val {
@@ -12071,6 +12293,10 @@ impl VM {
             self.resolve_class_name(class_name)?
         };
 
+        if !self.context.classes.contains_key(&resolved_class) {
+            self.trigger_autoload(resolved_class)?;
+        }
+
         // Check for native method first
         let native_method = self.find_native_method(resolved_class, method_name);
         if let Some(native_entry) = native_method {
@@ -12542,6 +12768,11 @@ impl VM {
             .lookup(method_name)
             .map(|b| String::from_utf8_lossy(b).to_string())
             .unwrap_or_else(|| format!("{:?}", method_name));
+        if let Some(method_name_bytes) = self.context.interner.lookup(method_name) {
+            if method_name_bytes.eq_ignore_ascii_case(b"__construct") {
+                return Ok(());
+            }
+        }
 
         // 1. Static/non-static must match
         if child_static != parent_static {

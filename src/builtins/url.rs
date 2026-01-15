@@ -246,15 +246,7 @@ pub fn php_parse_url(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("parse_url() expects at least 1 parameter, 0 given".into());
     }
 
-    let url_str = match &vm.arena.get(args[0]).value {
-        Val::String(s) => s,
-        v => {
-            return Err(format!(
-                "parse_url() expects parameter 1 to be string, {} given",
-                v.type_name()
-            ));
-        }
-    };
+    let url_str = vm.check_builtin_param_string(args[0], 1, "parse_url")?;
 
     let component = if args.len() >= 2 {
         match &vm.arena.get(args[1]).value {
@@ -419,6 +411,8 @@ fn parse_url_internal(url: &[u8]) -> ParsedUrl {
     // Path
     if !remaining.is_empty() {
         res.path = Some(remaining.to_vec());
+    } else if url.is_empty() {
+        res.path = Some(Vec::new());
     }
 
     res

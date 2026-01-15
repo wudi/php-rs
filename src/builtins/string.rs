@@ -195,24 +195,15 @@ pub fn php_substr(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("substr() expects 2 or 3 parameters".into());
     }
 
-    let str_val = vm.arena.get(args[0]);
-    let s = match &str_val.value {
-        Val::String(s) => s,
-        _ => return Err("substr() expects parameter 1 to be string".into()),
-    };
+    let s = vm.check_builtin_param_string(args[0], 1, "substr")?;
 
-    let start_val = vm.arena.get(args[1]);
-    let start = match &start_val.value {
-        Val::Int(i) => *i,
-        _ => return Err("substr() expects parameter 2 to be int".into()),
-    };
+    let start = vm.check_builtin_param_int(args[1], 2, "substr")?;
 
     let len = if args.len() == 3 {
-        let len_val = vm.arena.get(args[2]);
-        match &len_val.value {
-            Val::Int(i) => Some(*i),
-            Val::Null => None,
-            _ => return Err("substr() expects parameter 3 to be int or null".into()),
+        if matches!(vm.arena.get(args[2]).value, Val::Null) {
+            None
+        } else {
+            Some(vm.check_builtin_param_int(args[2], 3, "substr")?)
         }
     } else {
         None
@@ -2733,17 +2724,8 @@ pub fn php_strpos(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("strpos() expects 2 or 3 parameters".into());
     }
 
-    let haystack_val = vm.arena.get(args[0]);
-    let haystack = match &haystack_val.value {
-        Val::String(s) => s,
-        _ => return Err("strpos() expects parameter 1 to be string".into()),
-    };
-
-    let needle_val = vm.arena.get(args[1]);
-    let needle = match &needle_val.value {
-        Val::String(s) => s,
-        _ => return Err("strpos() expects parameter 2 to be string".into()),
-    };
+    let haystack = vm.check_builtin_param_string(args[0], 1, "strpos")?;
+    let needle = vm.check_builtin_param_string(args[1], 2, "strpos")?;
 
     let offset = if args.len() == 3 {
         let offset_val = vm.arena.get(args[2]);
@@ -2757,7 +2739,15 @@ pub fn php_strpos(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     let haystack_len = haystack.len() as i64;
 
-    if offset < 0 || offset >= haystack_len {
+    if offset < 0 || offset > haystack_len {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
+    if needle.is_empty() {
+        return Ok(vm.arena.alloc(Val::Int(offset)));
+    }
+
+    if offset == haystack_len {
         return Ok(vm.arena.alloc(Val::Bool(false)));
     }
 
@@ -3018,11 +3008,7 @@ pub fn php_strtolower(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("strtolower() expects exactly 1 parameter".into());
     }
 
-    let str_val = vm.arena.get(args[0]);
-    let s = match &str_val.value {
-        Val::String(s) => s,
-        _ => return Err("strtolower() expects parameter 1 to be string".into()),
-    };
+    let s = vm.check_builtin_param_string(args[0], 1, "strtolower")?;
 
     let lower = s
         .iter()
@@ -3037,11 +3023,7 @@ pub fn php_strtoupper(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("strtoupper() expects exactly 1 parameter".into());
     }
 
-    let str_val = vm.arena.get(args[0]);
-    let s = match &str_val.value {
-        Val::String(s) => s,
-        _ => return Err("strtoupper() expects parameter 1 to be string".into()),
-    };
+    let s = vm.check_builtin_param_string(args[0], 1, "strtoupper")?;
 
     let upper = s
         .iter()

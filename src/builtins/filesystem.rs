@@ -758,13 +758,10 @@ pub fn php_realpath(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let path_bytes = handle_to_path(vm, args[0])?;
     let path = bytes_to_path(&path_bytes)?;
 
-    let canonical = path.canonicalize().map_err(|_| {
-        // PHP returns false on error, but we use errors for now
-        format!(
-            "realpath({}): No such file or directory",
-            String::from_utf8_lossy(&path_bytes)
-        )
-    })?;
+    let canonical = match path.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return Ok(vm.arena.alloc(Val::Bool(false))),
+    };
 
     #[cfg(unix)]
     {

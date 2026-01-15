@@ -210,6 +210,25 @@ fn test_fpm_headers() {
 }
 
 #[test]
+fn test_fpm_magic_constants_file_dir() {
+    let socket = "/tmp/test-fpm-magic-constants.sock";
+    let _server = FpmServer::start(socket);
+
+    let script_path = std::env::temp_dir().join("test_magic_constants.php");
+    std::fs::write(
+        &script_path,
+        b"<?php echo __FILE__ . \"\\n\" . __DIR__;",
+    )
+    .unwrap();
+
+    let response = send_fcgi_request(socket, script_path.to_str().unwrap(), "");
+    let expected_dir = script_path.parent().unwrap().to_string_lossy();
+
+    assert!(response.contains(script_path.to_str().unwrap()));
+    assert!(response.contains(expected_dir.as_ref()));
+}
+
+#[test]
 fn test_fpm_concurrent_requests() {
     let socket = "/tmp/test-fpm-concurrent.sock";
     let _server = FpmServer::start(socket);

@@ -153,6 +153,17 @@ fn test_const_types() {
 }
 
 #[test]
+fn test_php_int_constants() {
+    let int_max = run_code("<?php return PHP_INT_MAX;");
+    let int_min = run_code("<?php return PHP_INT_MIN;");
+    let int_size = run_code("<?php return PHP_INT_SIZE;");
+
+    assert_eq!(int_max, php_rs::core::value::Val::Int(i64::MAX));
+    assert_eq!(int_min, php_rs::core::value::Val::Int(i64::MIN));
+    assert_eq!(int_size, php_rs::core::value::Val::Int(8));
+}
+
+#[test]
 fn test_undefined_in_expression() {
     // Undefined constant in arithmetic expression should fail
     run_code_expect_error(

@@ -1,7 +1,8 @@
 use crate::builtins::json;
 use crate::runtime::context::RequestContext;
 use crate::runtime::extension::{Extension, ExtensionInfo, ExtensionResult};
-use crate::runtime::registry::ExtensionRegistry;
+use crate::runtime::registry::{ExtensionRegistry, NativeClassDef};
+use std::collections::HashMap;
 
 /// JSON extension - RFC 8259 compliant JSON encoding/decoding
 ///
@@ -47,6 +48,19 @@ impl Extension for JsonExtension {
 
         // Register JSON error constants
         use crate::core::value::Val;
+
+        registry.register_class(NativeClassDef {
+            name: b"JsonSerializable".to_vec(),
+            parent: None,
+            is_interface: true,
+            is_trait: false,
+            is_final: false,
+            interfaces: Vec::new(),
+            methods: HashMap::new(),
+            constants: HashMap::new(),
+            constructor: None,
+            extension_name: None,
+        });
 
         registry.register_constant(b"JSON_ERROR_NONE", Val::Int(0));
         registry.register_constant(b"JSON_ERROR_DEPTH", Val::Int(1));

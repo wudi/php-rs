@@ -3,7 +3,7 @@ use crate::core::interner::Interner;
 use crate::core::value::{Symbol, Val, Visibility};
 use crate::parser::ast::{
     AssignOp, AttributeGroup, BinaryOp, CastKind, ClassMember, Expr, IncludeKind, MagicConstKind,
-    Name, Stmt, StmtId, TraitAdaptation, Type, UnaryOp,
+    Name, Stmt, StmtId, TraitAdaptation, Type, UnaryOp, UseKind,
 };
 use crate::parser::lexer::token::{Token, TokenKind};
 use crate::parser::span::Span;
@@ -102,6 +102,7 @@ pub struct Emitter<'src> {
     current_trait: Option<Symbol>,
     current_function: Option<Symbol>,
     current_namespace: Option<Symbol>,
+    use_aliases: HashMap<Vec<u8>, Vec<u8>>,
     // For eval(): inherit strict_types from parent scope if not explicitly declared
     inherited_strict_types: Option<bool>,
     // Counter for anonymous classes
@@ -122,6 +123,7 @@ impl<'src> Emitter<'src> {
             current_trait: None,
             current_function: None,
             current_namespace: None,
+            use_aliases: HashMap::new(),
             inherited_strict_types: None,
             anonymous_class_counter: 0,
         }
@@ -199,11 +201,201 @@ impl<'src> Emitter<'src> {
 
         // Handle interfaces
         for interface_name in implements {
-            let interface_str = self.get_text(interface_name.span);
-            let interface_sym = self.interner.intern(interface_str);
+            let interface_sym = self.resolve_class_sym_from_name(interface_name);
             self.chunk
                 .code
                 .push(OpCode::AddInterface(class_sym, interface_sym));
+        }
+    }
+
+    fn name_bytes(&self, name: &Name) -> Vec<u8> {
+        self.get_text(name.span).to_vec()
+    }
+
+    fn strip_leading_backslash(name: &[u8]) -> &[u8] {
+        if name.first() == Some(&b'\\') {
+            &name[1..]
+        } else {
+            name
+        }
+    }
+
+    fn qualify_declaration_name(&self, name: &[u8]) -> Vec<u8> {
+        let trimmed = Self::strip_leading_backslash(name);
+        if let Some(ns_sym) = self.current_namespace {
+            if let Some(ns_bytes) = self.interner.lookup(ns_sym) {
+                if !ns_bytes.is_empty() {
+                    let mut full = Vec::with_capacity(ns_bytes.len() + 1 + trimmed.len());
+                    full.extend_from_slice(ns_bytes);
+                    full.push(b'\\');
+                    full.extend_from_slice(trimmed);
+                    return full;
+                }
+            }
+        }
+        trimmed.to_vec()
+    }
+
+    fn resolve_class_name(&self, name: &[u8]) -> Vec<u8> {
+        if name.eq_ignore_ascii_case(b"self")
+            || name.eq_ignore_ascii_case(b"static")
+            || name.eq_ignore_ascii_case(b"parent")
+        {
+            return name.to_vec();
+        }
+
+        let trimmed = Self::strip_leading_backslash(name);
+        let mut split = trimmed.splitn(2, |b| *b == b'\\');
+        let first = split.next().unwrap_or(&[]);
+        let rest = split.next();
+        let key = first.to_ascii_lowercase();
+
+        if let Some(alias) = self.use_aliases.get(&key) {
+            if let Some(rest) = rest {
+                let mut full = Vec::with_capacity(alias.len() + 1 + rest.len());
+                full.extend_from_slice(alias);
+                full.push(b'\\');
+                full.extend_from_slice(rest);
+                return full;
+            }
+            return alias.clone();
+        }
+
+        if name.first() != Some(&b'\\') {
+            if let Some(ns_sym) = self.current_namespace {
+                if let Some(ns_bytes) = self.interner.lookup(ns_sym) {
+                    if !ns_bytes.is_empty() {
+                        let mut full = Vec::with_capacity(ns_bytes.len() + 1 + trimmed.len());
+                        full.extend_from_slice(ns_bytes);
+                        full.push(b'\\');
+                        full.extend_from_slice(trimmed);
+                        return full;
+                    }
+                }
+            }
+        }
+
+        trimmed.to_vec()
+    }
+
+    fn resolve_class_sym_from_span(&mut self, span: Span) -> Symbol {
+        let name = self.get_text(span);
+        let resolved = self.resolve_class_name(name);
+        self.interner.intern(&resolved)
+    }
+
+    fn resolve_class_sym_from_name(&mut self, name: &Name) -> Symbol {
+        let resolved = self.resolve_class_name(&self.name_bytes(name));
+        self.interner.intern(&resolved)
+    }
+
+    fn declare_class_sym_from_span(&mut self, span: Span) -> Symbol {
+        let name = self.get_text(span);
+        let qualified = self.qualify_declaration_name(name);
+        self.interner.intern(&qualified)
+    }
+
+    fn emit_toplevel_decls(&mut self, stmts: &[StmtId]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Namespace { name, body, .. } => {
+                    let ns_sym = name.as_ref().map(|ns| {
+                        let ns_bytes = self.name_bytes(ns);
+                        let trimmed = Self::strip_leading_backslash(&ns_bytes);
+                        self.interner.intern(trimmed)
+                    });
+
+                    if let Some(body) = body {
+                        let prev_namespace = self.current_namespace;
+                        let prev_aliases = self.use_aliases.clone();
+                        self.current_namespace = ns_sym;
+                        self.use_aliases.clear();
+                        self.emit_toplevel_decls(body);
+                        self.current_namespace = prev_namespace;
+                        self.use_aliases = prev_aliases;
+                    } else {
+                        self.current_namespace = ns_sym;
+                        self.use_aliases.clear();
+                    }
+                }
+                Stmt::Use { uses, kind, .. } => {
+                    if *kind != UseKind::Normal {
+                        continue;
+                    }
+
+                    for item in *uses {
+                        let name_bytes = self.name_bytes(&item.name);
+                        let full_name = Self::strip_leading_backslash(&name_bytes);
+                        let alias = if let Some(alias) = item.alias {
+                            self.get_text(alias.span).to_vec()
+                        } else {
+                            full_name
+                                .rsplit(|b| *b == b'\\')
+                                .next()
+                                .unwrap_or(full_name)
+                                .to_vec()
+                        };
+                        self.use_aliases
+                            .insert(alias.to_ascii_lowercase(), full_name.to_vec());
+                    }
+                }
+                Stmt::Function { .. } => {
+                    self.emit_stmt(stmt);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn emit_toplevel_stmts(&mut self, stmts: &[StmtId]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Namespace { name, body, .. } => {
+                    let ns_sym = name.as_ref().map(|ns| {
+                        let ns_bytes = self.name_bytes(ns);
+                        let trimmed = Self::strip_leading_backslash(&ns_bytes);
+                        self.interner.intern(trimmed)
+                    });
+
+                    if let Some(body) = body {
+                        let prev_namespace = self.current_namespace;
+                        let prev_aliases = self.use_aliases.clone();
+                        self.current_namespace = ns_sym;
+                        self.use_aliases.clear();
+                        self.emit_toplevel_stmts(body);
+                        self.current_namespace = prev_namespace;
+                        self.use_aliases = prev_aliases;
+                    } else {
+                        self.current_namespace = ns_sym;
+                        self.use_aliases.clear();
+                    }
+                }
+                Stmt::Use { uses, kind, .. } => {
+                    if *kind != UseKind::Normal {
+                        continue;
+                    }
+
+                    for item in *uses {
+                        let name_bytes = self.name_bytes(&item.name);
+                        let full_name = Self::strip_leading_backslash(&name_bytes);
+                        let alias = if let Some(alias) = item.alias {
+                            self.get_text(alias.span).to_vec()
+                        } else {
+                            full_name
+                                .rsplit(|b| *b == b'\\')
+                                .next()
+                                .unwrap_or(full_name)
+                                .to_vec()
+                        };
+                        self.use_aliases
+                            .insert(alias.to_ascii_lowercase(), full_name.to_vec());
+                    }
+                }
+                Stmt::Function { .. } => {
+                    continue;
+                }
+                _ => self.emit_stmt(stmt),
+            }
         }
     }
 
@@ -223,8 +415,13 @@ impl<'src> Emitter<'src> {
             }
         }
 
-        for stmt in stmts {
-            self.emit_stmt(stmt);
+        if self.current_function.is_none() {
+            self.emit_toplevel_decls(stmts);
+            self.emit_toplevel_stmts(stmts);
+        } else {
+            for stmt in stmts {
+                self.emit_stmt(stmt);
+            }
         }
 
         // Implicit return:
@@ -297,6 +494,7 @@ impl<'src> Emitter<'src> {
                     method_emitter.file_path = self.file_path.clone();
                     method_emitter.current_class = Some(class_sym);
                     method_emitter.current_namespace = self.current_namespace;
+                    method_emitter.use_aliases = self.use_aliases.clone();
                     method_emitter.chunk.strict_types = self.chunk.strict_types;
 
                     // Build method name after creating method_emitter to avoid borrow issues
@@ -598,6 +796,49 @@ impl<'src> Emitter<'src> {
 
                 for s in *body {
                     self.emit_stmt(s);
+                }
+            }
+            Stmt::Namespace { name, body, .. } => {
+                let ns_sym = name.as_ref().map(|ns| {
+                    let ns_bytes = self.name_bytes(ns);
+                    let trimmed = Self::strip_leading_backslash(&ns_bytes);
+                    self.interner.intern(trimmed)
+                });
+
+                if let Some(body) = body {
+                    let prev_namespace = self.current_namespace;
+                    let prev_aliases = self.use_aliases.clone();
+                    self.current_namespace = ns_sym;
+                    self.use_aliases.clear();
+                    for s in *body {
+                        self.emit_stmt(s);
+                    }
+                    self.current_namespace = prev_namespace;
+                    self.use_aliases = prev_aliases;
+                } else {
+                    self.current_namespace = ns_sym;
+                    self.use_aliases.clear();
+                }
+            }
+            Stmt::Use { uses, kind, .. } => {
+                if *kind != UseKind::Normal {
+                    return;
+                }
+
+                for item in *uses {
+                    let name_bytes = self.name_bytes(&item.name);
+                    let full_name = Self::strip_leading_backslash(&name_bytes);
+                    let alias = if let Some(alias) = item.alias {
+                        self.get_text(alias.span).to_vec()
+                    } else {
+                        full_name
+                            .rsplit(|b| *b == b'\\')
+                            .next()
+                            .unwrap_or(full_name)
+                            .to_vec()
+                    };
+                    self.use_aliases
+                        .insert(alias.to_ascii_lowercase(), full_name.to_vec());
                 }
             }
             Stmt::Echo { exprs, .. } => {
@@ -939,7 +1180,8 @@ impl<'src> Emitter<'src> {
                 ..
             } => {
                 let func_name_str = self.get_text(name.span);
-                let func_sym = self.interner.intern(func_name_str);
+                let func_name = self.qualify_declaration_name(func_name_str);
+                let func_sym = self.interner.intern(&func_name);
 
                 // 1. Collect param info to avoid borrow issues
                 struct ParamInfo<'a> {
@@ -966,6 +1208,7 @@ impl<'src> Emitter<'src> {
                 func_emitter.file_path = self.file_path.clone();
                 func_emitter.current_function = Some(func_sym);
                 func_emitter.current_namespace = self.current_namespace;
+                func_emitter.use_aliases = self.use_aliases.clone();
                 func_emitter.chunk.strict_types = self.chunk.strict_types;
 
                 // 3. Process params using func_emitter
@@ -1048,12 +1291,10 @@ impl<'src> Emitter<'src> {
                 close_brace_span,
                 ..
             } => {
-                let class_name_str = self.get_text(name.span);
-                let class_sym = self.interner.intern(class_name_str);
+                let class_sym = self.declare_class_sym_from_span(name.span);
 
                 let parent_sym = if let Some(parent_name) = extends {
-                    let parent_str = self.get_text(parent_name.span);
-                    Some(self.interner.intern(parent_str))
+                    Some(self.resolve_class_sym_from_name(parent_name))
                 } else {
                     None
                 };
@@ -1116,8 +1357,7 @@ impl<'src> Emitter<'src> {
                 close_brace_span,
                 ..
             } => {
-                let name_str = self.get_text(name.span);
-                let sym = self.interner.intern(name_str);
+                let sym = self.declare_class_sym_from_span(name.span);
 
                 self.chunk.code.push(OpCode::DefInterface(sym));
 
@@ -1140,8 +1380,7 @@ impl<'src> Emitter<'src> {
                 }
 
                 for interface in *extends {
-                    let interface_str = self.get_text(interface.span);
-                    let interface_sym = self.interner.intern(interface_str);
+                    let interface_sym = self.resolve_class_sym_from_name(interface);
                     self.chunk
                         .code
                         .push(OpCode::AddInterface(sym, interface_sym));
@@ -1159,8 +1398,7 @@ impl<'src> Emitter<'src> {
                 close_brace_span,
                 ..
             } => {
-                let name_str = self.get_text(name.span);
-                let sym = self.interner.intern(name_str);
+                let sym = self.declare_class_sym_from_span(name.span);
 
                 self.chunk.code.push(OpCode::DefTrait(sym));
 
@@ -1838,7 +2076,8 @@ impl<'src> Emitter<'src> {
                                     return;
                                 } else {
                                     // Bare class name - push as string constant
-                                    Val::String(name.to_vec().into())
+                                    let resolved = self.resolve_class_name(name);
+                                    Val::String(resolved.into())
                                 };
                                 let const_idx = self.add_constant(class_name_str) as u16;
                                 self.chunk.code.push(OpCode::Const(const_idx));
@@ -2489,6 +2728,7 @@ impl<'src> Emitter<'src> {
                 func_emitter.current_class = self.current_class;
                 func_emitter.current_function = Some(closure_sym);
                 func_emitter.current_namespace = self.current_namespace;
+                func_emitter.use_aliases = self.use_aliases.clone();
                 func_emitter.chunk.strict_types = self.chunk.strict_types;
 
                 // 3. Process params
@@ -2645,14 +2885,16 @@ impl<'src> Emitter<'src> {
                 {
                     // Extract parent information once
                     let (parent_name, parent_sym) = if let Some(parent_ref) = extends {
-                        let parent_str = self.get_text(parent_ref.span);
-                        (Some(parent_str), Some(self.interner.intern(parent_str)))
+                        let parent_bytes = self.resolve_class_name(self.get_text(parent_ref.span));
+                        let parent_sym = self.interner.intern(&parent_bytes);
+                        (Some(parent_bytes), Some(parent_sym))
                     } else {
                         (None, None)
                     };
 
                     // Generate unique name and create class symbol
-                    let anon_name = self.generate_anonymous_class_name(parent_name, span);
+                    let anon_name =
+                        self.generate_anonymous_class_name(parent_name.as_deref(), span);
                     let class_sym = self.interner.intern(anon_name.as_bytes());
 
                     // Define class with parent
@@ -2690,7 +2932,7 @@ impl<'src> Emitter<'src> {
                 } else if let Expr::Variable { span, .. } = class {
                     let name = self.get_text(*span);
                     if !name.starts_with(b"$") {
-                        let class_sym = self.interner.intern(name);
+                        let class_sym = self.resolve_class_sym_from_span(*span);
 
                         for arg in *args {
                             self.emit_expr(arg.value);
@@ -2790,7 +3032,7 @@ impl<'src> Emitter<'src> {
                 if let Expr::Variable { span, .. } = class {
                     let class_name = self.get_text(*span);
                     if !class_name.starts_with(b"$") {
-                        let class_sym = self.interner.intern(class_name);
+                        let class_sym = self.resolve_class_sym_from_span(*span);
 
                         if let Expr::Variable {
                             span: method_span, ..
@@ -2813,7 +3055,8 @@ impl<'src> Emitter<'src> {
 
                         if !class_emitted {
                             // Class is static, but method is dynamic: Class::$method()
-                            let idx = self.add_constant(Val::String(class_name.to_vec().into()));
+                            let resolved_name = self.resolve_class_name(class_name);
+                            let idx = self.add_constant(Val::String(resolved_name.into()));
                             self.chunk.code.push(OpCode::Const(idx as u16));
                             self.emit_expr(method);
                             for arg in *args {
@@ -2857,12 +3100,26 @@ impl<'src> Emitter<'src> {
                     let class_name = self.get_text(*span);
                     if !class_name.starts_with(b"$") {
                         if is_class_keyword {
-                            let idx = self.add_constant(Val::String(class_name.to_vec().into()));
+                            if (class_name.eq_ignore_ascii_case(b"self")
+                                || class_name.eq_ignore_ascii_case(b"static"))
+                                && self.current_class.is_some()
+                            {
+                                let class_sym = self.current_class.unwrap();
+                                let name_bytes =
+                                    self.interner.lookup(class_sym).unwrap_or(b"");
+                                let idx =
+                                    self.add_constant(Val::String(name_bytes.to_vec().into()));
+                                self.chunk.code.push(OpCode::Const(idx as u16));
+                                return;
+                            }
+
+                            let resolved = self.resolve_class_name(class_name);
+                            let idx = self.add_constant(Val::String(resolved.into()));
                             self.chunk.code.push(OpCode::Const(idx as u16));
                             return;
                         }
 
-                        let class_sym = self.interner.intern(class_name);
+                        let class_sym = self.resolve_class_sym_from_span(*span);
 
                         if let Expr::Variable {
                             span: const_span, ..
@@ -2934,12 +3191,23 @@ impl<'src> Emitter<'src> {
                     target, property, ..
                 } => {
                     self.emit_expr(target);
-                    self.emit_expr(expr);
-                    if let Expr::Variable { span, .. } = property {
-                        let name = self.get_text(*span);
-                        if !name.starts_with(b"$") {
-                            let sym = self.interner.intern(name);
-                            self.chunk.code.push(OpCode::AssignProp(sym));
+                    match property {
+                        Expr::Variable { span, .. } => {
+                            let name = self.get_text(*span);
+                            if name.starts_with(b"$") {
+                                self.emit_expr(property);
+                                self.emit_expr(expr);
+                                self.chunk.code.push(OpCode::AssignPropDynamic);
+                            } else {
+                                let sym = self.interner.intern(name);
+                                self.emit_expr(expr);
+                                self.chunk.code.push(OpCode::AssignProp(sym));
+                            }
+                        }
+                        _ => {
+                            self.emit_expr(property);
+                            self.emit_expr(expr);
+                            self.chunk.code.push(OpCode::AssignPropDynamic);
                         }
                     }
                 }
@@ -2950,7 +3218,7 @@ impl<'src> Emitter<'src> {
                     if let Expr::Variable { span, .. } = class {
                         let class_name = self.get_text(*span);
                         if !class_name.starts_with(b"$") {
-                            let class_sym = self.interner.intern(class_name);
+                            let class_sym = self.resolve_class_sym_from_span(*span);
 
                             if let Expr::Variable {
                                 span: const_span, ..
@@ -3306,7 +3574,8 @@ impl<'src> Emitter<'src> {
                         if let Expr::Variable { span, .. } = class {
                             let class_name = self.get_text(*span);
                             if !class_name.starts_with(b"$") {
-                                let class_sym = self.interner.intern(class_name);
+                                let class_sym = self.resolve_class_sym_from_span(*span);
+                                let resolved_name = self.resolve_class_name(class_name);
 
                                 if let Expr::Variable {
                                     span: const_span, ..
@@ -3318,9 +3587,8 @@ impl<'src> Emitter<'src> {
                                         let prop_sym = self.interner.intern(prop_name);
 
                                         if let AssignOp::Coalesce = op {
-                                            let idx = self.add_constant(Val::String(
-                                                class_name.to_vec().into(),
-                                            ));
+                                            let idx =
+                                                self.add_constant(Val::String(resolved_name.into()));
                                             self.chunk.code.push(OpCode::Const(idx as u16));
                                             self.chunk.code.push(OpCode::IssetStaticProp(prop_sym));
 
@@ -3825,7 +4093,8 @@ impl<'src> Emitter<'src> {
 
             // Valid static property: Class::$property (class name without $, property with $)
             if !class_name.starts_with(b"$") && prop_name.starts_with(b"$") {
-                let class_idx = self.add_constant(Val::String(Rc::new(class_name.to_vec())));
+                let resolved_name = self.resolve_class_name(class_name);
+                let class_idx = self.add_constant(Val::String(Rc::new(resolved_name)));
                 let prop_idx = self.add_constant(Val::String(Rc::new(prop_name[1..].to_vec())));
                 self.chunk.code.push(OpCode::Const(class_idx as u16));
                 self.chunk.code.push(OpCode::Const(prop_idx as u16));
@@ -3872,7 +4141,8 @@ impl<'src> Emitter<'src> {
             },
             Type::Name(name) => {
                 let name_str = self.get_text(name.span);
-                let sym = self.interner.intern(name_str);
+                let resolved = self.resolve_class_name(name_str);
+                let sym = self.interner.intern(&resolved);
                 Some(ReturnType::Named(sym))
             }
             Type::Union(types) => {
