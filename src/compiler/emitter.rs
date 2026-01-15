@@ -347,6 +347,42 @@ impl<'src> Emitter<'src> {
         }
     }
 
+    /// Parse an integer literal from bytes, handling '_' separators.
+    /// Returns the parsed u64 value.
+    fn parse_integer_literal(&self, value: &[u8]) -> u64 {
+        let mut num: u64 = 0;
+        for b in value {
+            if *b == b'_' {
+                continue;
+            }
+            if !b.is_ascii_digit() {
+                return 0;
+            }
+            num = num.saturating_mul(10).saturating_add((b - b'0') as u64);
+        }
+        num
+    }
+
+    /// Process declare(strict_types=...) statements early, before function compilation.
+    /// Returns true if an explicit strict_types declaration was found.
+    fn process_strict_types_early(&mut self, stmts: &[StmtId]) -> bool {
+        for stmt in stmts {
+            if let Stmt::Declare { declares, .. } = stmt {
+                for item in *declares {
+                    let key = self.get_text(item.key.span);
+                    if key.eq_ignore_ascii_case(b"strict_types") {
+                        if let Expr::Integer { value, .. } = item.value {
+                            let num = self.parse_integer_literal(value);
+                            self.chunk.strict_types = num == 1;
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn emit_toplevel_stmts(&mut self, stmts: &[StmtId]) {
         for stmt in stmts {
             match stmt {
@@ -400,13 +436,9 @@ impl<'src> Emitter<'src> {
     }
 
     pub fn compile(mut self, stmts: &[StmtId]) -> (CodeChunk, bool) {
-        // Check if any statement is an explicit declare(strict_types=...)
-        let has_explicit_strict_types = stmts.iter().any(|stmt| {
-            matches!(stmt, Stmt::Declare { declares, .. } if declares.iter().any(|item| {
-                let key = self.get_text(item.key.span);
-                key.eq_ignore_ascii_case(b"strict_types")
-            }))
-        });
+        // Process declare(strict_types=...) FIRST before anything else
+        // This ensures functions inherit the correct strict_types setting
+        let has_explicit_strict_types = self.process_strict_types_early(stmts);
 
         // Apply inherited strictness only if no explicit declare
         if !has_explicit_strict_types {
@@ -777,18 +809,7 @@ impl<'src> Emitter<'src> {
                     let key = self.get_text(item.key.span);
                     if key.eq_ignore_ascii_case(b"strict_types") {
                         if let Expr::Integer { value, .. } = item.value {
-                            // Integers may contain '_' separators.
-                            let mut num: u64 = 0;
-                            for b in *value {
-                                if *b == b'_' {
-                                    continue;
-                                }
-                                if !b.is_ascii_digit() {
-                                    num = 0;
-                                    break;
-                                }
-                                num = num.saturating_mul(10).saturating_add((b - b'0') as u64);
-                            }
+                            let num = self.parse_integer_literal(value);
                             self.chunk.strict_types = num == 1;
                         }
                     }
@@ -2690,7 +2711,7 @@ impl<'src> Emitter<'src> {
                 }
             }
             Expr::Closure {
-                attributes,
+                attributes: _,
                 params,
                 uses,
                 body,
