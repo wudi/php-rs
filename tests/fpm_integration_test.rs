@@ -339,7 +339,7 @@ fn test_fpm_status_page() {
     let mut stream = UnixStream::connect(socket).expect("Failed to connect");
     let request_id = 1u16;
 
-    let mut begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
+    let begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
     stream.write_all(&make_record(1, request_id, &begin_body)).unwrap();
 
     let mut params = Vec::new();
@@ -384,7 +384,7 @@ fn test_fpm_ping_page() {
     let mut stream = UnixStream::connect(socket).expect("Failed to connect");
     let request_id = 1u16;
 
-    let mut begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
+    let begin_body = vec![0, 1, 0, 0, 0, 0, 0, 0];
     stream.write_all(&make_record(1, request_id, &begin_body)).unwrap();
 
     let mut params = Vec::new();
