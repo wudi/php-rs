@@ -38,7 +38,19 @@ impl VM {
                 }
                 handle
             })
-            .ok_or(VmError::StackUnderflow { operation: "pop" })
+            .ok_or_else(|| {
+                let (ip, file) = if let Some(frame) = self.frames.last() {
+                    let file: String = if let Some(path) = &frame.chunk.file_path {
+                        path.clone()
+                    } else {
+                        "unknown".to_string()
+                    };
+                    (frame.ip, file)
+                } else {
+                    (0, "unknown".to_string())
+                };
+                VmError::RuntimeError(format!("Stack underflow during pop at IP {} in {}", ip, file))
+            })
     }
 
     /// Pop two operands for binary operations (returns in (left, right) order)

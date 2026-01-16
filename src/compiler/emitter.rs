@@ -3448,29 +3448,73 @@ impl<'src> Emitter<'src> {
                         self.emit_expr(target);
                         self.push_op(OpCode::Dup);
 
-                        if let Expr::Variable { span, .. } = property {
+                        let static_sym = if let Expr::Variable { span, .. } = property {
                             let name = self.get_text(*span);
                             if !name.starts_with(b"$") {
-                                let sym = self.interner.intern(name);
-                                self.push_op(OpCode::FetchProp(sym));
-
-                                for key in &keys {
-                                    if let Some(k) = key {
-                                        self.emit_expr(k);
-                                    } else {
-                                        let idx = self.add_constant(Val::AppendPlaceholder);
-                                        self.push_op(OpCode::Const(idx as u16));
-                                    }
-                                }
-
-                                self.emit_expr(expr);
-
-                                self.chunk
-                                    .code
-                                    .push(OpCode::StoreNestedDim(keys.len() as u8));
-
-                                self.push_op(OpCode::AssignProp(sym));
+                                Some(self.interner.intern(name))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
+                        };
+
+                        if let Some(sym) = static_sym {
+                            self.push_op(OpCode::FetchProp(sym));
+
+                            for key in &keys {
+                                if let Some(k) = key {
+                                    self.emit_expr(k);
+                                } else {
+                                    let idx = self.add_constant(Val::AppendPlaceholder);
+                                    self.push_op(OpCode::Const(idx as u16));
+                                }
+                            }
+
+                            self.emit_expr(expr);
+
+                            self.chunk
+                                .code
+                                .push(OpCode::StoreNestedDim(keys.len() as u8));
+
+                            self.push_op(OpCode::AssignProp(sym));
+                        } else {
+                            // Dynamic property name: $obj->{$expr}['key'] = val
+                            // Stack: [obj, obj] (target already duped)
+
+                            self.emit_expr(property); // [obj, obj, name]
+                            self.push_op(OpCode::Dup); // [obj, obj, name, name]
+
+                            let suffix = self.chunk.code.len();
+                            let tmp_name_str = format!("__tmp_prop_name_{}", suffix);
+                            let tmp_name = self.interner.intern(tmp_name_str.as_bytes());
+                            self.push_op(OpCode::StoreVar(tmp_name)); // [obj, obj, name]
+
+                            self.push_op(OpCode::FetchPropDynamic); // [obj, array]
+
+                            for key in &keys {
+                                if let Some(k) = key {
+                                    self.emit_expr(k);
+                                } else {
+                                    let idx = self.add_constant(Val::AppendPlaceholder);
+                                    self.push_op(OpCode::Const(idx as u16));
+                                }
+                            }
+
+                            self.emit_expr(expr); // [obj, array, keys..., val]
+
+                            self.chunk
+                                .code
+                                .push(OpCode::StoreNestedDim(keys.len() as u8)); // [obj, modified_array]
+
+                            let tmp_val_str = format!("__tmp_assign_val_{}", suffix);
+                            let tmp_val = self.interner.intern(tmp_val_str.as_bytes());
+                            self.push_op(OpCode::StoreVar(tmp_val)); // [obj]
+
+                            self.push_op(OpCode::LoadVar(tmp_name)); // [obj, name]
+                            self.push_op(OpCode::LoadVar(tmp_val)); // [obj, name, modified_array]
+
+                            self.push_op(OpCode::AssignPropDynamic); // [result]
                         }
                     } else {
                         self.emit_expr(base);

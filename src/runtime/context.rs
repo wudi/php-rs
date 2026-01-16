@@ -33,7 +33,7 @@ impl Default for PhpConfig {
     fn default() -> Self {
         Self {
             error_reporting: 32767, // E_ALL
-            max_execution_time: 30,
+            max_execution_time: 300,
             timezone: "UTC".to_string(),
             working_dir: None,
         }

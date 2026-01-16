@@ -135,7 +135,7 @@ impl VmHeap {
     pub fn new(mode: SapiMode) -> Self {
         match mode {
             SapiMode::FpmFcgi => Self {
-                policy: Box::new(ArenaPolicy::new()),
+                policy: Box::new(EpochPolicy::new()),
             },
             SapiMode::Cli => Self {
                 policy: Box::new(EpochPolicy::new()),
