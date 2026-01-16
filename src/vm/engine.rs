@@ -11199,7 +11199,7 @@ impl VM {
                     self.sync_globals_key(&key, val_handle);
                 }
             } else {
-                return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
             }
             self.operand_stack.push(array_handle);
         } else {
@@ -11218,7 +11218,7 @@ impl VM {
                     self.sync_globals_key(&key, val_handle);
                 }
             } else {
-                return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
             }
 
             let new_handle = self.arena.alloc(new_val);
@@ -11251,7 +11251,7 @@ impl VM {
                 // Use O(1) push method instead of O(n) index computation
                 Rc::make_mut(map).push(val_handle);
             } else {
-                return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
             }
             self.operand_stack.push(array_handle);
         } else {
@@ -11266,7 +11266,7 @@ impl VM {
                 // Use O(1) push method instead of O(n) index computation
                 Rc::make_mut(map).push(val_handle);
             } else {
-                return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
             }
 
             let new_handle = self.arena.alloc(new_val);
@@ -11495,7 +11495,7 @@ impl VM {
                 if let Val::Array(map) = &current_zval.value {
                     ArrayKey::Int(map.next_index())
                 } else {
-                    return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                    return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
                 }
             };
 
@@ -11533,7 +11533,7 @@ impl VM {
                             }
                         })
                     } else {
-                        return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                        return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
                     }
                 };
 
@@ -11560,7 +11560,7 @@ impl VM {
                     if let Val::Array(map) = &current_zval.value {
                         map.map.get(&key).copied()
                     } else {
-                        return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+                        return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
                     }
                 };
 
@@ -11639,7 +11639,7 @@ impl VM {
                 map_mut.insert(key, new_next_handle);
             }
         } else {
-            return Err(VmError::RuntimeError("Cannot use scalar as array".into()));
+            return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
         }
 
         let new_handle = self.arena.alloc(new_val);
