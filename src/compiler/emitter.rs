@@ -3590,7 +3590,7 @@ impl<'src> Emitter<'src> {
                         }
 
                         if !handled {
-                            self.emit_expr(expr);
+                            self.emit_expr_for_write(expr);
                             self.push_op(OpCode::MakeRef);
                         }
 
@@ -4410,6 +4410,94 @@ impl<'src> Emitter<'src> {
             Type::Nullable(inner) => self
                 .convert_type(inner)
                 .map(|t| ReturnType::Nullable(Box::new(t))),
+        }
+    }
+
+    fn emit_expr_for_write(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Variable { span, .. } => {
+                let name = self.get_text(*span);
+                if name.starts_with(b"$") {
+                    let sym = self.interner.intern(&name[1..]);
+                    self.push_op(OpCode::LoadVar(sym));
+                } else {
+                    self.emit_expr(expr);
+                }
+            }
+            Expr::ArrayDimFetch { array, dim, .. } => {
+                self.emit_expr_for_write(array);
+                if let Some(d) = dim {
+                    self.emit_expr(d);
+                } else {
+                    // Append uses 0 as dummy dimension for FetchDimW (it will auto-increment)
+                    let idx = self.add_constant(Val::Int(0));
+                    self.push_op(OpCode::Const(idx as u16));
+                }
+                self.push_op(OpCode::FetchDimW);
+            }
+            Expr::PropertyFetch {
+                target, property, ..
+            } => {
+                self.emit_expr_for_write(target);
+                if let Expr::Variable { span, .. } = property {
+                    let name = self.get_text(*span);
+                    let idx = self.add_constant(Val::String(name.to_vec().into()));
+                    self.push_op(OpCode::Const(idx as u16));
+                } else {
+                    self.emit_expr(property);
+                }
+                self.push_op(OpCode::FetchObjW);
+            }
+            Expr::ClassConstFetch {
+                class, constant, ..
+            } => {
+                let is_static_prop = if let Expr::Variable { span, .. } = constant {
+                    let name = self.get_text(*span);
+                    name.starts_with(b"$")
+                } else {
+                    false
+                };
+
+                if is_static_prop {
+                    let mut class_name = b"".to_vec();
+                    if let Expr::Variable { span, .. } = class {
+                        class_name = self.get_text(*span).to_vec();
+                    }
+
+                    if !class_name.starts_with(b"$") {
+                        let resolved_name = self.resolve_class_name(&class_name);
+                        let class_idx = self.add_constant(Val::String(Rc::new(resolved_name)));
+                        self.push_op(OpCode::Const(class_idx as u16));
+
+                        if let Expr::Variable {
+                            span: prop_span, ..
+                        } = constant
+                        {
+                            let prop_name = self.get_text(*prop_span);
+                            let prop_idx =
+                                self.add_constant(Val::String(Rc::new(prop_name[1..].to_vec())));
+                            self.push_op(OpCode::Const(prop_idx as u16));
+                            self.push_op(OpCode::FetchStaticPropW);
+                        }
+                    } else {
+                        // Dynamic class: $obj::$prop
+                        self.emit_expr(class);
+                        if let Expr::Variable {
+                            span: prop_span, ..
+                        } = constant
+                        {
+                            let prop_name = self.get_text(*prop_span);
+                            let prop_idx =
+                                self.add_constant(Val::String(Rc::new(prop_name[1..].to_vec())));
+                            self.push_op(OpCode::Const(prop_idx as u16));
+                            self.push_op(OpCode::FetchStaticPropW);
+                        }
+                    }
+                } else {
+                    self.emit_expr(expr);
+                }
+            }
+            _ => self.emit_expr(expr),
         }
     }
 }
