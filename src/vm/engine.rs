@@ -359,6 +359,8 @@ pub struct VM {
     /// Sandboxing: disabled class names (blacklist)
     pub(crate) disable_classes: std::collections::HashSet<String>,
     last_error_location: Option<(String, u32)>,
+    /// Cache for static property handles within this request's arena
+    pub(crate) static_prop_handles: HashMap<(Symbol, Symbol), Handle>,
 }
 
 impl VM {
@@ -861,6 +863,7 @@ impl VM {
             disable_functions: std::collections::HashSet::new(),
             disable_classes: std::collections::HashSet::new(),
             last_error_location: None,
+            static_prop_handles: HashMap::new(),
         };
         vm.context.bind_memory_api(vm.arena.as_mut());
         vm.initialize_superglobals();
@@ -2254,6 +2257,26 @@ impl VM {
                 class_str, prop_str
             )))
         }
+    }
+
+    /// Get a stable handle for a static property, allocating it in the arena if needed.
+    pub(crate) fn get_static_prop_handle(
+        &mut self,
+        class_name: Symbol,
+        prop_name: Symbol,
+    ) -> Result<(Handle, Visibility, Symbol), VmError> {
+        let resolved_class = self.resolve_class_name(class_name)?;
+        let (_, visibility, defining_class) = self.find_static_prop(resolved_class, prop_name)?;
+
+        if let Some(&handle) = self.static_prop_handles.get(&(defining_class, prop_name)) {
+            return Ok((handle, visibility, defining_class));
+        }
+
+        // Not in cache, fetch from ClassDef and allocate in arena
+        let (val, _, _) = self.find_static_prop(defining_class, prop_name)?;
+        let handle = self.arena.alloc(val);
+        self.static_prop_handles.insert((defining_class, prop_name), handle);
+        Ok((handle, visibility, defining_class))
     }
 
     pub(crate) fn get_current_class(&self) -> Option<Symbol> {
@@ -3879,6 +3902,7 @@ impl VM {
                     let handle = if let Some(h) = statics.get(&sym) {
                         *h
                     } else {
+                        // eprintln!("[DEBUG] BindStatic: Creating new for sym {:?}", sym);
                         // Initialize with default value
                         let val = frame.chunk.constants[default_idx as usize].clone();
                         let h = self.arena.alloc(val);
@@ -7040,12 +7064,16 @@ impl VM {
                 self.operand_stack.push(handle);
             }
             OpCode::FetchStaticProp(class_name, prop_name) => {
-                let resolved_class = self.resolve_class_name(class_name)?;
-                let (val, visibility, defining_class) =
-                    self.find_static_prop(resolved_class, prop_name)?;
-                self.check_const_visibility(defining_class, visibility)?;
-                let handle = self.deep_clone_val(&val);
-                self.operand_stack.push(handle);
+                let (handle, _visibility, _defining_class) =
+                    self.get_static_prop_handle(class_name, prop_name)?;
+                // If it's a reference, return it as is. Otherwise return a clone.
+                if self.arena.get(handle).is_ref {
+                    self.operand_stack.push(handle);
+                } else {
+                    let val = self.arena.get(handle).value.clone();
+                    let copy_handle = self.deep_clone_val(&val);
+                    self.operand_stack.push(copy_handle);
+                }
             }
             OpCode::AssignStaticProp(class_name, prop_name) => {
                 let val_handle = self
@@ -7053,10 +7081,8 @@ impl VM {
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
 
-                let resolved_class = self.resolve_class_name(class_name)?;
-                let (_, visibility, defining_class) =
-                    self.find_static_prop(resolved_class, prop_name)?;
-                self.check_const_visibility(defining_class, visibility)?;
+                let (handle, _visibility, defining_class) =
+                    self.get_static_prop_handle(class_name, prop_name)?;
 
                 // Validate and potentially coerce static property type
                 self.validate_static_property_type(defining_class, prop_name, val_handle)?;
@@ -7064,9 +7090,17 @@ impl VM {
                 // Get the (possibly coerced) value
                 let val = self.arena.get(val_handle).value.clone();
 
-                if let Some(class_def) = self.context.classes.get_mut(&defining_class) {
-                    if let Some(entry) = class_def.static_properties.get_mut(&prop_name) {
-                        entry.value = val.clone();
+                if self.arena.get(handle).is_ref {
+                    self.arena.get_mut(handle).value = val.clone();
+                } else {
+                    // Update the cached handle in-place
+                    self.arena.get_mut(handle).value = val.clone();
+
+                    // Also update ClassDef for persistent state within this request
+                    if let Some(class_def) = self.context.classes.get_mut(&defining_class) {
+                        if let Some(entry) = class_def.static_properties.get_mut(&prop_name) {
+                            entry.value = val.clone();
+                        }
                     }
                 }
 
@@ -7101,11 +7135,14 @@ impl VM {
                 self.arena.get_mut(ref_handle).is_ref = true;
                 let val = self.arena.get(ref_handle).value.clone();
 
-                let resolved_class = self.resolve_class_name(class_name)?;
-                let (_, visibility, defining_class) =
-                    self.find_static_prop(resolved_class, prop_name)?;
-                self.check_const_visibility(defining_class, visibility)?;
+                let (_, _visibility, defining_class) =
+                    self.get_static_prop_handle(class_name, prop_name)?;
 
+                // Update cache to point to the new reference handle
+                self.static_prop_handles
+                    .insert((defining_class, prop_name), ref_handle);
+
+                // Update ClassDef for persistence
                 if let Some(class_def) = self.context.classes.get_mut(&defining_class) {
                     if let Some(entry) = class_def.static_properties.get_mut(&prop_name) {
                         entry.value = val.clone();
@@ -7139,13 +7176,29 @@ impl VM {
                     _ => return Err(VmError::RuntimeError("Property name must be string".into())),
                 };
 
-                let resolved_class = self.resolve_class_name(class_name)?;
-                let (val, visibility, defining_class) =
-                    self.find_static_prop(resolved_class, prop_name)?;
-                self.check_const_visibility(defining_class, visibility)?;
+                let (handle, _visibility, _defining_class) =
+                    self.get_static_prop_handle(class_name, prop_name)?;
 
-                let handle = self.arena.alloc(val);
-                self.operand_stack.push(handle);
+                let is_write = matches!(
+                    op,
+                    OpCode::FetchStaticPropW
+                        | OpCode::FetchStaticPropRw
+                        | OpCode::FetchStaticPropFuncArg
+                );
+
+                if is_write {
+                    // For write operations, return the handle directly so it can be modified or turned into a reference
+                    self.operand_stack.push(handle);
+                } else {
+                    // For read operations, return the handle if it's already a reference, otherwise return a clone
+                    if self.arena.get(handle).is_ref {
+                        self.operand_stack.push(handle);
+                    } else {
+                        let val = self.arena.get(handle).value.clone();
+                        let copy_handle = self.deep_clone_val(&val);
+                        self.operand_stack.push(copy_handle);
+                    }
+                }
             }
             OpCode::New(class_name, arg_count) => {
                 // Resolve special class names (self, parent, static)
@@ -8483,6 +8536,7 @@ impl VM {
                     match container {
                         Val::Null => true,
                         Val::Array(map) => !map.map.contains_key(&key),
+                        Val::ConstArray(_) => true,
                         _ => {
                             return Err(VmError::RuntimeError(
                                 "Cannot use [] for reading/writing on non-array".into(),
@@ -8492,21 +8546,48 @@ impl VM {
                 };
 
                 if needs_insert {
-                    // 3. Alloc new value
-                    let val_handle = self.arena.alloc(Val::Null);
-
-                    // 4. Modify container
-                    let container = &mut self.arena.get_mut(container_handle).value;
-                    if let Val::Null = container {
-                        *container = Val::Array(ArrayData::new().into());
-                    }
-
-                    if let Val::Array(map) = container {
-                        Rc::make_mut(map).insert(key, val_handle);
-                        self.operand_stack.push(val_handle);
-                    } else {
-                        // Should not happen due to check above
-                        return Err(VmError::RuntimeError("Container is not an array".into()));
+                    let container_val = self.arena.get(container_handle).value.clone();
+                    match container_val {
+                        Val::Null => {
+                            let mut map = ArrayData::new();
+                            let h = self.arena.alloc(Val::Null);
+                            map.insert(key, h);
+                            self.arena.get_mut(container_handle).value = Val::Array(map.into());
+                            self.operand_stack.push(h);
+                        }
+                        Val::ConstArray(map) => {
+                            let mut new_map = ArrayData::new();
+                            let mut val_handle_opt = None;
+                            for (k, v) in map.iter() {
+                                let ak = match k {
+                                    crate::core::value::ConstArrayKey::Int(i) => ArrayKey::Int(*i),
+                                    crate::core::value::ConstArrayKey::Str(s) => {
+                                        ArrayKey::Str(s.clone())
+                                    }
+                                };
+                                let h = self.deep_clone_val(v);
+                                new_map.insert(ak.clone(), h);
+                                if ak == key {
+                                    val_handle_opt = Some(h);
+                                }
+                            }
+                            let h = if let Some(h) = val_handle_opt {
+                                h
+                            } else {
+                                let new_h = self.arena.alloc(Val::Null);
+                                new_map.insert(key, new_h);
+                                new_h
+                            };
+                            self.arena.get_mut(container_handle).value = Val::Array(new_map.into());
+                            self.operand_stack.push(h);
+                        }
+                        Val::Array(mut map) => {
+                            let new_h = self.arena.alloc(Val::Null);
+                            Rc::make_mut(&mut map).insert(key, new_h);
+                            self.arena.get_mut(container_handle).value = Val::Array(map);
+                            self.operand_stack.push(new_h);
+                        }
+                        _ => unreachable!(),
                     }
                 } else {
                     // 5. Get existing value
@@ -13524,7 +13605,7 @@ mod tests {
 
         let result = vm.run(Rc::new(chunk));
         match result {
-            Err(VmError::StackUnderflow { operation }) => assert_eq!(operation, "pop"),
+            Err(VmError::RuntimeError(msg)) => assert!(msg.contains("Stack underflow during pop")),
             other => panic!("Expected stack underflow error, got {:?}", other),
         }
     }

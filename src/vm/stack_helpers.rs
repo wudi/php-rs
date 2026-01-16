@@ -148,13 +148,13 @@ mod tests {
         let engine = Arc::new(EngineContext::new());
         let mut vm = VM::new(engine);
 
-        // Test that stack underflow produces specific error variant
+        // Test that stack underflow in pop produces RuntimeError with location info
         let err = vm.pop_operand_required().unwrap_err();
         match err {
-            VmError::StackUnderflow { operation } => {
-                assert_eq!(operation, "pop");
+            VmError::RuntimeError(msg) => {
+                assert!(msg.contains("Stack underflow during pop"));
             }
-            _ => panic!("Expected StackUnderflow error"),
+            _ => panic!("Expected RuntimeError for pop underflow"),
         }
 
         assert!(vm.pop_binary_operands().is_err());

@@ -240,10 +240,11 @@ mod tests {
     }
 
     #[test]
-    fn heap_policy_switches_by_sapi() {
+    fn heap_policy_unified_across_sapi() {
         let cli_heap = VmHeap::new(SapiMode::Cli);
         let fpm_heap = VmHeap::new(SapiMode::FpmFcgi);
-        assert_ne!(cli_heap.policy_name(), fpm_heap.policy_name());
+        assert_eq!(cli_heap.policy_name(), fpm_heap.policy_name());
+        assert_eq!(cli_heap.policy_name(), "epoch");
     }
 
     #[test]

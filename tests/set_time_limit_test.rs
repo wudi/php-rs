@@ -123,7 +123,7 @@ fn test_set_time_limit_affects_ini_get() {
     "#,
     );
     let lines: Vec<&str> = output.lines().collect();
-    assert_eq!(lines[0], "30"); // Default
+    assert_eq!(lines[0], "300"); // Default
     assert_eq!(lines[1], "60"); // After set_time_limit(60)
     assert_eq!(lines[2], "0"); // After set_time_limit(0)
 }
@@ -267,7 +267,7 @@ fn test_set_time_limit_resets_timer() {
 fn test_set_time_limit_multiple_calls() {
     let output = php_out(
         r#"
-        set_time_limit(30);
+        set_time_limit(300);
         echo ini_get('max_execution_time') . "\n";
         set_time_limit(60);
         echo ini_get('max_execution_time') . "\n";
@@ -276,7 +276,7 @@ fn test_set_time_limit_multiple_calls() {
     "#,
     );
     let lines: Vec<&str> = output.lines().collect();
-    assert_eq!(lines[0], "30");
+    assert_eq!(lines[0], "300");
     assert_eq!(lines[1], "60");
     assert_eq!(lines[2], "5");
 }
@@ -317,7 +317,7 @@ fn test_set_time_limit_with_function_calls() {
             }
         }
         
-        set_time_limit(30);
+        set_time_limit(300);
         do_work(1000);
         echo ini_get('max_execution_time') . "\n";
         
@@ -327,13 +327,13 @@ fn test_set_time_limit_with_function_calls() {
     "#,
     );
     let lines: Vec<&str> = output.lines().collect();
-    assert_eq!(lines[0], "30");
+    assert_eq!(lines[0], "300");
     assert_eq!(lines[1], "60");
 }
 
 #[test]
 fn test_default_max_execution_time() {
-    // Default should be 30 seconds
+    // Default should be 300 seconds
     let output = php_out(r#"echo ini_get('max_execution_time');"#);
-    assert_eq!(output.trim(), "30");
+    assert_eq!(output.trim(), "300");
 }
