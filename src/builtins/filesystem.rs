@@ -459,7 +459,12 @@ pub fn php_glob(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         require_literal_leading_dot: false,
     };
 
-    let only_dir = (flags & libc::GLOB_ONLYDIR as i64) != 0;
+    #[cfg(any(target_os = "linux"))]
+    let only_dir_flag = libc::GLOB_ONLYDIR as i64;
+    #[cfg(not(any(target_os = "linux")))]
+    let only_dir_flag = 0;
+
+    let only_dir = (flags & only_dir_flag) != 0;
     let no_sort = (flags & libc::GLOB_NOSORT as i64) != 0;
     let no_check = (flags & libc::GLOB_NOCHECK as i64) != 0;
 

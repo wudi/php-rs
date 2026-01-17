@@ -1359,7 +1359,9 @@ impl Extension for CoreExtension {
         registry.register_constant(b"GLOB_NOSORT", Val::Int(libc::GLOB_NOSORT as i64));
         registry.register_constant(b"GLOB_NOCHECK", Val::Int(libc::GLOB_NOCHECK as i64));
         registry.register_constant(b"GLOB_NOESCAPE", Val::Int(libc::GLOB_NOESCAPE as i64));
+        #[cfg(any(target_os = "linux"))]
         registry.register_constant(b"GLOB_BRACE", Val::Int(libc::GLOB_BRACE as i64));
+        #[cfg(any(target_os = "linux"))]
         registry.register_constant(b"GLOB_ONLYDIR", Val::Int(libc::GLOB_ONLYDIR as i64));
         registry.register_constant(b"GLOB_ERR", Val::Int(libc::GLOB_ERR as i64));
 
