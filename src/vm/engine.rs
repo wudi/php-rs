@@ -368,6 +368,26 @@ impl VM {
         Self::new_with_sapi(engine_context, SapiMode::Cli)
     }
 
+    /// Reset transient execution state after a runtime error.
+    ///
+    /// Keeps globals, interners, and arena allocations intact so REPL sessions
+    /// can continue, while clearing stack/frame state that would otherwise
+    /// leak into the next execution.
+    pub fn reset_after_error(&mut self) {
+        self.operand_stack.clear();
+        self.frames.clear();
+        self.pending_calls.clear();
+        self.silence_stack.clear();
+        self.var_handle_map.clear();
+        self.pending_undefined.clear();
+        self.executing_finally = false;
+        self.finally_return_value = None;
+        self.last_return_value = None;
+        self.last_error_location = None;
+        self.suppress_undefined_notice = false;
+        self.builtin_call_strict = false;
+    }
+
     /// Instantiate a class and call its constructor.
     pub fn instantiate_class(
         &mut self,

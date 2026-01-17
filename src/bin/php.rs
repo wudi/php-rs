@@ -133,7 +133,7 @@ fn run_repl() -> anyhow::Result<()> {
         let readline = rl.readline("php > ");
         match readline {
             Ok(line) => {
-                let line = line.trim();
+                let line: &str = line.trim();
                 if line == "exit" || line == "quit" {
                     break;
                 }
@@ -325,29 +325,7 @@ fn execute_source(source: &str, file_path: Option<&Path>, vm: &mut VM) -> Result
         if let Some((file, line)) = vm.current_location() {
             eprintln!("Runtime error in {} on line {}: {:?}", file, line, err);
         }
-        if std::env::var_os("PHP_RS_TRACE_ERRORS").is_some() {
-            eprintln!("Call stack:");
-            for frame in vm.frames.iter().rev() {
-                let func_sym = frame.func.as_ref().map(|func| func.chunk.name).unwrap_or(frame.chunk.name);
-                let func_name = vm
-                    .context
-                    .interner
-                    .lookup(func_sym)
-                    .map(|name| String::from_utf8_lossy(name).to_string())
-                    .unwrap_or_else(|| "<main>".to_string());
-                let file = frame
-                    .chunk
-                    .file_path
-                    .as_deref()
-                    .unwrap_or("Unknown");
-                let line = if frame.ip > 0 && frame.ip <= frame.chunk.lines.len() {
-                    frame.chunk.lines[frame.ip - 1]
-                } else {
-                    0
-                };
-                eprintln!("  at {} in {}:{}", func_name, file, line);
-            }
-        }
+        vm.reset_after_error();
         return Err(err);
     }
 
