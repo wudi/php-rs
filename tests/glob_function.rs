@@ -1,8 +1,12 @@
+#[cfg(any(target_os = "linux"))]
 mod common;
+#[cfg(any(target_os = "linux"))]
 use common::run_code_capture_output;
+#[cfg(any(target_os = "linux"))]
 use tempfile::tempdir;
 
 #[test]
+#[cfg(any(target_os = "linux"))]
 fn test_glob_onlydir() {
     let temp_dir = tempdir().expect("temp dir");
     std::fs::write(temp_dir.path().join("file.txt"), "x").expect("write");
