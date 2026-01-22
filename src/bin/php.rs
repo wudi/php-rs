@@ -11,6 +11,7 @@ use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::cell::RefCell;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -114,10 +115,118 @@ fn append_repl_trailing_newline_if_needed(
     Ok(())
 }
 
+/// Decode readline history format (converts \040 to space, \134 to backslash, etc.)
+fn decode_readline_history_line(line: &str) -> String {
+    let mut result = String::new();
+    let mut chars = line.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            // Support legacy "\\" escapes written by older php-rs versions.
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch == '\\' {
+                    result.push('\\');
+                    chars.next();
+                    continue;
+                }
+            }
+            // Check for octal escape sequence (\nnn)
+            let next_chars: String = chars.clone().take(3).collect();
+            if next_chars.len() == 3 && next_chars.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(code) = u8::from_str_radix(&next_chars, 8) {
+                    result.push(code as char);
+                    chars.next();
+                    chars.next();
+                    chars.next();
+                    continue;
+                }
+            }
+            // If not a valid escape, keep the backslash
+            result.push(ch);
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Encode string to readline history format (converts space to \040, etc.)
+fn encode_readline_history_line(line: &str) -> String {
+    let mut result = String::new();
+    for ch in line.chars() {
+        match ch {
+            ' ' => result.push_str("\\040"),
+            '\t' => result.push_str("\\011"),
+            '\n' => result.push_str("\\012"),
+            '\r' => result.push_str("\\015"),
+            '\\' => result.push_str("\\134"),
+            _ if ch.is_ascii() && !ch.is_control() => result.push(ch),
+            _ => {
+                // For non-ASCII or control chars, use octal encoding
+                let code = ch as u32;
+                if code <= 255 {
+                    result.push_str(&format!("\\{:03o}", code));
+                } else {
+                    result.push(ch); // Keep as-is for Unicode
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Load readline history file (compatible with PHP's .php_history format)
+fn load_readline_history(path: &Path, editor: &mut DefaultEditor) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    
+    let file = fs::File::open(path)?;
+    let reader = BufReader::new(file);
+    
+    for line in reader.lines() {
+        let line = line?;
+        // Skip the _HiStOrY_V2_ header
+        if line == "_HiStOrY_V2_" {
+            continue;
+        }
+        let decoded = decode_readline_history_line(&line);
+        if !decoded.is_empty() {
+            let _ = editor.add_history_entry(&decoded);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Save readline history file (compatible with PHP's .php_history format)
+fn save_readline_history(path: &Path, editor: &DefaultEditor) -> anyhow::Result<()> {
+    let mut file = fs::File::create(path)?;
+    
+    // Write the readline v2 header
+    writeln!(file, "_HiStOrY_V2_")?;
+    
+    // Write history entries
+    let history = editor.history();
+    for entry in history.iter() {
+        let encoded = encode_readline_history_line(entry);
+        writeln!(file, "{}", encoded)?;
+    }
+    
+    Ok(())
+}
+
 fn run_repl() -> anyhow::Result<()> {
     let mut rl = DefaultEditor::new()?;
-    if let Err(_) = rl.load_history("history.txt") {
-        // No history file is fine
+    
+    // Use ~/.php_history for REPL history (compatible with PHP's readline format)
+    let history_path = std::env::var("HOME")
+        .map(|home| PathBuf::from(home).join(".php_history"))
+        .unwrap_or_else(|_| PathBuf::from(".php_history"));
+    
+    // Load history in readline format
+    if let Err(e) = load_readline_history(&history_path, &mut rl) {
+        eprintln!("Warning: Could not load history: {}", e);
     }
 
     println!("Interactive shell");
@@ -165,7 +274,6 @@ fn run_repl() -> anyhow::Result<()> {
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
                 break;
             }
             Err(ReadlineError::Eof) => {
@@ -178,7 +286,12 @@ fn run_repl() -> anyhow::Result<()> {
             }
         }
     }
-    rl.save_history("history.txt")?;
+    
+    // Save history in readline format
+    if let Err(e) = save_readline_history(&history_path, &rl) {
+        eprintln!("Warning: Could not save history: {}", e);
+    }
+    
     Ok(())
 }
 
