@@ -12,3 +12,5 @@ flamegraph.svg
 *.log
 node_modules/
 editors/code/out
+.claude/
+.codebuddy/
