@@ -83,6 +83,7 @@ multipart = "0.18"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 memchr = "2.7"
+walkdir = "2.4"
 
 [[bin]]
 name = "php"
@@ -91,3 +92,7 @@ path = "src/bin/php.rs"
 [[bin]]
 name = "php-fpm"
 path = "src/bin/php-fpm.rs"
+
+[[bin]]
+name = "php-test"
+path = "src/bin/php-test.rs"
