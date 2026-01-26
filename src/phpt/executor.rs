@@ -5,7 +5,7 @@ use crate::phpt::matcher::{match_output, ExpectationType};
 use crate::phpt::output_writer::BufferedOutputWriter;
 use crate::phpt::parser::PhptTest;
 use crate::runtime::context::{EngineBuilder, EngineContext};
-use crate::vm::engine::VM;
+use crate::vm::engine::{OutputWriter, VM};
 use bumpalo::Bump;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -116,10 +116,16 @@ impl PhptExecutor {
         self.setup_superglobals(&mut vm, test);
 
         // Set up $_SERVER superglobal with argv/argc
-        self.setup_server_superglobal(&mut vm, test);
+        let argv_warning = self.setup_server_superglobal(&mut vm, test);
 
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer.clone()));
+
+        if let Some(warning) = argv_warning {
+            let mut writer = output_writer.clone();
+            // Best-effort: prepend warning so EXPECTF patterns match PHP behavior.
+            let _ = writer.write(warning.as_bytes());
+        }
 
         if let Err(e) = self.execute_source(&test.sections.file, &mut vm) {
             return TestResult::Error {
@@ -168,7 +174,7 @@ impl PhptExecutor {
     }
 
     fn setup_superglobals(&self, vm: &mut VM, test: &PhptTest) {
-        use crate::core::value::{Val, ArrayData, Handle};
+        use crate::core::value::{Val, ArrayData};
         use indexmap::IndexMap;
         use std::rc::Rc;
 
@@ -230,24 +236,26 @@ impl PhptExecutor {
     }
 
     fn parse_query_string(&self, query: &str, vm: &mut VM) -> crate::core::value::Handle {
-        use crate::core::value::{Val, ArrayData, ArrayKey};
+        use crate::core::value::{ArrayData, Val};
         use indexmap::IndexMap;
         use std::rc::Rc;
 
         let mut result = IndexMap::new();
 
         for pair in query.split('&') {
-            if let Some(pos) = pair.find('=') {
-                let key = &pair[..pos];
-                let value = &pair[pos + 1..];
+            let (key, value) = if let Some(pos) = pair.find('=') {
+                (&pair[..pos], &pair[pos + 1..])
+            } else {
+                (pair, "")
+            };
 
-                // URL decode
-                let decoded_key = Self::url_decode(key);
-                let decoded_value = Self::url_decode(value);
-
-                // Parse key for array notation: name, name[], name[key], name[0]
-                self.insert_into_query_array(&mut result, &decoded_key, &decoded_value, vm);
+            let decoded_key = Self::url_decode(key);
+            if decoded_key.is_empty() {
+                continue;
             }
+            let decoded_value = Self::url_decode(value);
+
+            self.insert_query_pair(&mut result, &decoded_key, &decoded_value, vm);
         }
 
         let array_data = ArrayData::from(result);
@@ -255,94 +263,111 @@ impl PhptExecutor {
         vm.arena.alloc(array_val)
     }
 
-    /// Parse and insert a key-value pair into the query result array, handling PHP array notation
-    ///
-    /// Supports:
-    /// - `name=value` - simple key-value
-    /// - `name[]=value` - append to array
-    /// - `name[0]=value` - indexed array
-    /// - `name[key]=value` - associative array
-    /// - `name[a][b]=value` - nested arrays (basic support)
-    fn insert_into_query_array(
+    fn insert_query_pair(
         &self,
         result: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
         key: &str,
         value: &str,
         vm: &mut VM,
     ) {
-        use crate::core::value::{Val, ArrayData, ArrayKey};
+        let (base, mut segments) = Self::parse_key_parts(key);
+        if base.is_empty() {
+            return;
+        }
+
+        let mut parts = Vec::with_capacity(1 + segments.len());
+        parts.push(base);
+        parts.append(&mut segments);
+
+        self.insert_parts(result, &parts, value, vm);
+    }
+
+    fn parse_key_parts(key: &str) -> (String, Vec<String>) {
+        let mut base = String::new();
+        let mut segments = Vec::new();
+        let mut chars = key.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '[' {
+                let mut segment = String::new();
+                while let Some(&inner) = chars.peek() {
+                    chars.next();
+                    if inner == ']' {
+                        break;
+                    }
+                    segment.push(inner);
+                }
+                segments.push(segment);
+            } else if ch == ']' {
+                // Ignore stray closing brackets to mimic PHP's tolerant parsing
+                continue;
+            } else {
+                base.push(ch);
+            }
+        }
+
+        (base, segments)
+    }
+
+    fn insert_parts(
+        &self,
+        map: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
+        parts: &[String],
+        value: &str,
+        vm: &mut VM,
+    ) {
+        use crate::core::value::{ArrayData, ArrayKey, Val};
         use std::rc::Rc;
 
-        // Check if key contains array notation
-        if let Some(bracket_pos) = key.find('[') {
-            let base_name = &key[..bracket_pos];
-            let rest = &key[bracket_pos..];
+        let is_last = parts.len() == 1;
+        let part = &parts[0];
 
-            // Parse bracket notation
-            let base_key = ArrayKey::Str(Rc::new(base_name.as_bytes().to_vec()));
+        let array_key = if part.is_empty() {
+            ArrayKey::Int(self.next_index(map))
+        } else if let Ok(idx) = part.parse::<i64>() {
+            ArrayKey::Int(idx)
+        } else {
+            ArrayKey::Str(Rc::new(part.as_bytes().to_vec()))
+        };
 
-            // Get or create array for this base name
-            let array_handle = if let Some(existing_handle) = result.get(&base_key) {
-                // Get existing array
-                *existing_handle
+        if is_last {
+            let val = Val::String(Rc::new(value.as_bytes().to_vec()));
+            let handle = vm.arena.alloc(val);
+            map.insert(array_key, handle);
+            return;
+        }
+
+        let existing_handle = map.get(&array_key).copied();
+        let mut child_map = if let Some(handle) = existing_handle {
+            if let Val::Array(arr) = &vm.arena.get(handle).value {
+                arr.map.clone()
             } else {
-                // Create new array
-                let new_array = Val::Array(Rc::new(ArrayData::new()));
-                let handle = vm.arena.alloc(new_array);
-                result.insert(base_key.clone(), handle);
-                handle
-            };
-
-            // Parse bracket content
-            if rest == "[]" {
-                // Append mode: name[]=value
-                // Need to append to the array
-                let current_array = &vm.arena.get(array_handle).value;
-                if let Val::Array(arr_data) = current_array {
-                    let mut new_map = arr_data.map.clone();
-                    let next_index = arr_data.next_index();
-
-                    let val = Val::String(Rc::new(value.as_bytes().to_vec()));
-                    let val_handle = vm.arena.alloc(val);
-                    new_map.insert(ArrayKey::Int(next_index), val_handle);
-
-                    // Replace the array with updated version
-                    let updated_array = Val::Array(Rc::new(ArrayData::from(new_map)));
-                    let updated_handle = vm.arena.alloc(updated_array);
-                    result.insert(base_key, updated_handle);
-                }
-            } else if rest.starts_with('[') && rest.ends_with(']') {
-                // Indexed or associative: name[key]=value or name[0]=value
-                let inner_key = &rest[1..rest.len() - 1];
-
-                let current_array = &vm.arena.get(array_handle).value;
-                if let Val::Array(arr_data) = current_array {
-                    let mut new_map = arr_data.map.clone();
-
-                    // Determine if numeric or string key
-                    let sub_key = if let Ok(idx) = inner_key.parse::<i64>() {
-                        ArrayKey::Int(idx)
-                    } else {
-                        ArrayKey::Str(Rc::new(inner_key.as_bytes().to_vec()))
-                    };
-
-                    let val = Val::String(Rc::new(value.as_bytes().to_vec()));
-                    let val_handle = vm.arena.alloc(val);
-                    new_map.insert(sub_key, val_handle);
-
-                    // Replace the array with updated version
-                    let updated_array = Val::Array(Rc::new(ArrayData::from(new_map)));
-                    let updated_handle = vm.arena.alloc(updated_array);
-                    result.insert(base_key, updated_handle);
-                }
+                indexmap::IndexMap::new()
             }
         } else {
-            // Simple key-value pair
-            let array_key = ArrayKey::Str(Rc::new(key.as_bytes().to_vec()));
-            let val = Val::String(Rc::new(value.as_bytes().to_vec()));
-            let val_handle = vm.arena.alloc(val);
-            result.insert(array_key, val_handle);
+            indexmap::IndexMap::new()
+        };
+
+        self.insert_parts(&mut child_map, &parts[1..], value, vm);
+
+        let new_array = Val::Array(Rc::new(ArrayData::from(child_map)));
+        let new_handle = vm.arena.alloc(new_array);
+        map.insert(array_key, new_handle);
+    }
+
+    fn next_index(
+        &self,
+        map: &indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
+    ) -> i64 {
+        let mut max = -1;
+        for key in map.keys() {
+            if let crate::core::value::ArrayKey::Int(idx) = key {
+                if *idx > max {
+                    max = *idx;
+                }
+            }
         }
+        max + 1
     }
 
     fn url_decode(s: &str) -> String {
@@ -368,12 +393,27 @@ impl PhptExecutor {
         result
     }
 
-    fn setup_server_superglobal(&self, vm: &mut VM, test: &PhptTest) {
+    fn setup_server_superglobal(&self, vm: &mut VM, test: &PhptTest) -> Option<String> {
         use crate::core::value::{Val, ArrayData, ArrayKey};
         use indexmap::IndexMap;
         use std::rc::Rc;
 
         let mut server_map = IndexMap::new();
+        let register_argc_argv_setting = vm
+            .context
+            .config
+            .ini_settings
+            .get("register_argc_argv")
+            .cloned();
+        let register_argc_argv = register_argc_argv_setting
+            .as_deref()
+            .map(|v| v != "0")
+            .unwrap_or(false);
+        let allow_get_derivation = register_argc_argv && register_argc_argv_setting.is_some();
+
+        let mut argv_handle: Option<crate::core::value::Handle> = None;
+        let mut argc_handle: Option<crate::core::value::Handle> = None;
+        let mut warn_get_derivation = false;
 
         // Populate argv and argc from --ARGS-- section (CLI mode)
         if let Some(ref args_str) = test.sections.args {
@@ -396,33 +436,23 @@ impl PhptExecutor {
             }
 
             let argv_array = Val::Array(Rc::new(ArrayData::from(argv_map)));
-            let argv_handle = vm.arena.alloc(argv_array);
+            let handle = vm.arena.alloc(argv_array);
 
             // Set argc (number of arguments including script name)
             let argc_val = Val::Int((args.len() + 1) as i64);
-            let argc_handle = vm.arena.alloc(argc_val);
+            let argc = vm.arena.alloc(argc_val);
 
-            // Add to $_SERVER
-            server_map.insert(
-                ArrayKey::Str(Rc::new(b"argv".to_vec())),
-                argv_handle,
-            );
-            server_map.insert(
-                ArrayKey::Str(Rc::new(b"argc".to_vec())),
-                argc_handle,
-            );
-        }
-        // Handle argv/argc from GET query string (for test 011.phpt)
-        else if let Some(ref get_data) = test.sections.get {
-            // Parse query string as space-separated values for argv
-            let args: Vec<String> = get_data
-                .split('+')
-                .map(|s| Self::url_decode(s))
-                .collect();
+            argv_handle = Some(handle);
+            argc_handle = Some(argc);
+        } else if allow_get_derivation && (test.sections.get.is_some() || test.sections.cgi) {
+            // Handle argv/argc from GET query string (for tests like 011.phpt)
+            let args: Vec<String> = if let Some(ref get_data) = test.sections.get {
+                get_data.split('+').map(Self::url_decode).collect()
+            } else {
+                Vec::new()
+            };
 
             let mut argv_map = IndexMap::new();
-
-            // Add arguments (no script name for GET-derived argv)
             for (i, arg) in args.iter().enumerate() {
                 let arg_val = Val::String(Rc::new(arg.as_bytes().to_vec()));
                 let arg_handle = vm.arena.alloc(arg_val);
@@ -430,19 +460,21 @@ impl PhptExecutor {
             }
 
             let argv_array = Val::Array(Rc::new(ArrayData::from(argv_map)));
-            let argv_handle = vm.arena.alloc(argv_array);
+            let handle = vm.arena.alloc(argv_array);
 
             let argc_val = Val::Int(args.len() as i64);
-            let argc_handle = vm.arena.alloc(argc_val);
+            let argc = vm.arena.alloc(argc_val);
 
-            server_map.insert(
-                ArrayKey::Str(Rc::new(b"argv".to_vec())),
-                argv_handle,
-            );
-            server_map.insert(
-                ArrayKey::Str(Rc::new(b"argc".to_vec())),
-                argc_handle,
-            );
+            argv_handle = Some(handle);
+            argc_handle = Some(argc);
+            warn_get_derivation = true;
+        }
+
+        if let Some(argv) = argv_handle {
+            server_map.insert(ArrayKey::Str(Rc::new(b"argv".to_vec())), argv);
+        }
+        if let Some(argc) = argc_handle {
+            server_map.insert(ArrayKey::Str(Rc::new(b"argc".to_vec())), argc);
         }
 
         // Create $_SERVER array
@@ -450,6 +482,23 @@ impl PhptExecutor {
         let server_handle = vm.arena.alloc(server_array);
         let server_sym = vm.context.interner.intern(b"_SERVER");
         vm.context.globals.insert(server_sym, server_handle);
+
+        // Populate $argv/$argc variables when available
+        if let (Some(argv), Some(argc)) = (argv_handle, argc_handle) {
+            let argv_sym = vm.context.interner.intern(b"argv");
+            let argc_sym = vm.context.interner.intern(b"argc");
+            vm.context.globals.insert(argv_sym, argv);
+            vm.context.globals.insert(argc_sym, argc);
+        }
+
+        if warn_get_derivation {
+            Some(
+                "Deprecated: Deriving $_SERVER['argv'] from the query string is deprecated. Configure register_argc_argv=0 to turn this message off in Unknown on line 1\n"
+                    .to_string(),
+            )
+        } else {
+            None
+        }
     }
 
     /// Apply INI settings from --INI-- section to VM context

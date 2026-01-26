@@ -47,11 +47,15 @@ pub struct PhptSections {
     pub post: Option<String>,
     pub get: Option<String>,
     pub cookie: Option<String>,
+    pub cgi: bool,
 }
 
 impl PhptTest {
     pub fn from_file(path: &Path) -> Result<Self, PhptError> {
-        let content = fs::read_to_string(path)?;
+        // PHPT fixtures can include binary payloads (gzip bodies, multipart delimiters), so
+        // read as raw bytes and decode lossily to keep the structure intact.
+        let content = fs::read(path)?;
+        let content = String::from_utf8_lossy(&content).to_string();
         Self::from_string(&content, path.to_path_buf())
     }
 
@@ -164,6 +168,9 @@ impl PhptTest {
             }
             "COOKIE" => {
                 sections.cookie = Some(trimmed_content.to_string());
+            }
+            "CGI" => {
+                sections.cgi = true;
             }
             "XLEAK" | "CREDITS" | "POST_RAW" | "GZIP_POST" | "DEFLATE_POST" | "HEADERS" => {
                 // Ignored sections
