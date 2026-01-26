@@ -192,6 +192,11 @@ impl PhptExecutor {
             vm.context.globals.insert(post_sym, post_array);
         }
 
+        // Parse POST_RAW if present (multipart/form-data)
+        if let Some(ref post_raw) = test.sections.post_raw {
+            self.parse_post_raw(post_raw, vm);
+        }
+
         // Parse and set $_COOKIE
         if let Some(ref cookie_data) = test.sections.cookie {
             let cookie_array = self.parse_cookie_string(cookie_data, vm);
@@ -439,6 +444,158 @@ impl PhptExecutor {
         }
 
         result
+    }
+
+    fn parse_post_raw(&self, post_raw: &str, vm: &mut VM) {
+        use crate::core::value::{Val, ArrayData, ArrayKey};
+        use indexmap::IndexMap;
+        use std::rc::Rc;
+
+        // Extract boundary from Content-Type header (first line)
+        let lines: Vec<&str> = post_raw.lines().collect();
+        if lines.is_empty() {
+            return;
+        }
+
+        // First line should be Content-Type with boundary
+        let boundary = if let Some(content_type_line) = lines.first() {
+            if let Some(boundary_pos) = content_type_line.find("boundary=") {
+                let boundary_start = boundary_pos + "boundary=".len();
+                &content_type_line[boundary_start..]
+            } else {
+                return; // No boundary found
+            }
+        } else {
+            return;
+        };
+
+        // Join all lines after the first (the actual multipart body)
+        let body = lines[1..].join("\n");
+        
+        let delimiter = format!("--{}", boundary);
+        let end_delimiter = format!("--{}--", boundary);
+        
+        let mut post_map = IndexMap::new();
+        let mut files_map = IndexMap::new();
+        
+        // Split by boundary
+        for part in body.split(&delimiter) {
+            if part.trim().is_empty() || part.trim() == end_delimiter.trim() || part.starts_with("--") {
+                continue;
+            }
+            
+            // Split headers and body
+            let part_lines: Vec<&str> = part.split('\n').collect();
+            let mut headers_end = 0;
+            for (i, line) in part_lines.iter().enumerate() {
+                if line.trim().is_empty() {
+                    headers_end = i + 1;
+                    break;
+                }
+            }
+            
+            if headers_end == 0 || headers_end >= part_lines.len() {
+                continue;
+            }
+            
+            let headers = &part_lines[0..headers_end];
+            let body_lines = &part_lines[headers_end..];
+            
+            // Parse Content-Disposition header
+            let mut field_name: Option<String> = None;
+            let mut filename: Option<String> = None;
+            let mut content_type: Option<String> = None;
+            
+            for header in headers {
+                if header.starts_with("Content-Disposition:") {
+                    // Extract name and filename
+                    for segment in header.split(';') {
+                        let segment = segment.trim();
+                        if let Some(name_start) = segment.find("name=\"") {
+                            let name_value = &segment[name_start + 6..];
+                            if let Some(end_quote) = name_value.find('"') {
+                                field_name = Some(name_value[..end_quote].to_string());
+                            }
+                        }
+                        if let Some(filename_start) = segment.find("filename=\"") {
+                            let filename_value = &segment[filename_start + 10..];
+                            if let Some(end_quote) = filename_value.find('"') {
+                                filename = Some(filename_value[..end_quote].to_string());
+                            }
+                        }
+                    }
+                } else if header.starts_with("Content-Type:") {
+                    content_type = Some(header["Content-Type:".len()..].trim().to_string());
+                }
+            }
+            
+            let Some(name) = field_name else { continue };
+            
+            // Body content (join remaining lines)
+            let content = body_lines.join("\n");
+            let content_trimmed = content.trim_end();
+            
+            if let Some(fname) = filename {
+                // This is a file upload
+                if fname.is_empty() {
+                    // Empty filename - error code 4 (UPLOAD_ERR_NO_FILE)
+                    let mut file_info = IndexMap::new();
+                    file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(4)));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(0)));
+                    
+                    let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
+                    files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                } else {
+                    // Create temporary file
+                    use std::io::Write;
+                    let tmp_dir = std::env::temp_dir();
+                    let tmp_name = format!("php{}", std::process::id());
+                    let tmp_path = tmp_dir.join(&tmp_name);
+                    
+                    let size = content_trimmed.len() as i64;
+                    if let Ok(mut file) = std::fs::File::create(&tmp_path) {
+                        let _ = file.write_all(content_trimmed.as_bytes());
+                    }
+                    
+                    let mut file_info = IndexMap::new();
+                    file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(fname.clone().into_bytes()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(fname.into_bytes()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(content_type.unwrap_or_default().into_bytes()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(tmp_path.to_string_lossy().into_owned().into_bytes()))));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(0)));
+                    file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(size)));
+                    
+                    let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
+                    files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                }
+            } else {
+                // Regular form field
+                let value_handle = vm.arena.alloc(Val::String(Rc::new(content_trimmed.as_bytes().to_vec())));
+                post_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), value_handle);
+            }
+        }
+        
+        // Set $_POST
+        if !post_map.is_empty() {
+            let post_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(post_map))));
+            let post_sym = vm.context.interner.intern(b"_POST");
+            vm.context.globals.insert(post_sym, post_array);
+        }
+        
+        // Set $_FILES
+        if !files_map.is_empty() {
+            let files_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(files_map))));
+            let files_sym = vm.context.interner.intern(b"_FILES");
+            vm.context.globals.insert(files_sym, files_array);
+        }
     }
 
     fn setup_server_superglobal(&self, vm: &mut VM, test: &PhptTest) -> Option<String> {

@@ -47,6 +47,7 @@ pub struct PhptSections {
     pub post: Option<String>,
     pub get: Option<String>,
     pub cookie: Option<String>,
+    pub post_raw: Option<String>,
     pub cgi: bool,
 }
 
@@ -172,7 +173,11 @@ impl PhptTest {
             "CGI" => {
                 sections.cgi = true;
             }
-            "XLEAK" | "CREDITS" | "POST_RAW" | "GZIP_POST" | "DEFLATE_POST" | "HEADERS" => {
+            "POST_RAW" => {
+                // Don't trim POST_RAW as it may contain binary multipart data
+                sections.post_raw = Some(content.to_string());
+            }
+            "XLEAK" | "CREDITS" | "GZIP_POST" | "DEFLATE_POST" | "HEADERS" => {
                 // Ignored sections
             }
             _ => {
