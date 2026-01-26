@@ -234,6 +234,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"header", http::php_header);
         registry.register_function(b"headers_sent", http::php_headers_sent);
         registry.register_function(b"header_remove", http::php_header_remove);
+        registry.register_function(b"header_register_callback", http::php_header_register_callback);
 
         // URL functions
         registry.register_function(b"urlencode", url::php_urlencode);
@@ -306,6 +307,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"set_error_handler", function::php_set_error_handler);
         registry.register_function(b"restore_error_handler", function::php_restore_error_handler);
         registry.register_function(b"trigger_error", function::php_trigger_error);
+        registry.register_function(b"error_log", function::php_error_log);
         registry.register_function(b"extension_loaded", function::php_extension_loaded);
         registry.register_function(b"get_defined_functions", function::php_get_defined_functions);
         registry.register_function(b"spl_autoload_register", spl::php_spl_autoload_register);
@@ -358,6 +360,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"copy", filesystem::php_copy);
         registry.register_function(b"touch", filesystem::php_touch);
         registry.register_function(b"chmod", filesystem::php_chmod);
+        registry.register_function(b"umask", filesystem::php_umask);
         registry.register_function(b"readlink", filesystem::php_readlink);
         registry.register_function(b"realpath", filesystem::php_realpath);
 
@@ -381,6 +384,10 @@ impl Extension for CoreExtension {
         // Filesystem functions - Disk space
         registry.register_function(b"disk_free_space", filesystem::php_disk_free_space);
         registry.register_function(b"disk_total_space", filesystem::php_disk_total_space);
+
+        // Filesystem functions - File uploads
+        registry.register_function(b"is_uploaded_file", filesystem::php_is_uploaded_file);
+        registry.register_function(b"move_uploaded_file", filesystem::php_move_uploaded_file);
 
         // Execution functions
         registry.register_function(b"escapeshellarg", exec::php_escapeshellarg);

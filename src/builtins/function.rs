@@ -610,3 +610,75 @@ pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle,
 
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(result)))))
 }
+
+/// error_log(message, message_type?, destination?, extra_headers?) - Send an error message
+/// Reference: $PHP_SRC_PATH/ext/standard/basic_functions.c - PHP_FUNCTION(error_log)
+///
+/// message_type values:
+/// 0 - message is sent to PHP's system logger (syslog on Unix, Event Log on Windows)
+/// 1 - message is sent by email to destination
+/// 2 - No longer an option (deprecated)
+/// 3 - message is appended to file destination
+/// 4 - message is sent directly to the SAPI logging handler
+pub fn php_error_log(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    
+    if args.is_empty() {
+        return Err("error_log() expects at least 1 parameter".into());
+    }
+
+    let message = match &vm.arena.get(args[0]).value {
+        Val::String(s) => s.clone(),
+        Val::Int(i) => Rc::new(i.to_string().into_bytes()),
+        Val::Float(f) => Rc::new(f.to_string().into_bytes()),
+        Val::Bool(b) => Rc::new(if *b { vec![b'1'] } else { vec![] }),
+        _ => return Err("error_log(): message must be a string".into()),
+    };
+
+    let message_type = if args.len() >= 2 {
+        match &vm.arena.get(args[1]).value {
+            Val::Int(i) => *i,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+
+    let destination = if args.len() >= 3 {
+        match &vm.arena.get(args[2]).value {
+            Val::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    match message_type {
+        3 => {
+            // Append to file
+            if let Some(dest) = destination {
+                let path = String::from_utf8_lossy(&dest);
+                match OpenOptions::new().create(true).append(true).open(path.as_ref()) {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(&message) {
+                            return Err(format!("error_log(): Failed to write to file: {}", e));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(format!("error_log(): Failed to open file: {}", e));
+                    }
+                }
+            } else {
+                return Err("error_log(): Destination required for message_type 3".into());
+            }
+        }
+        0 | 4 | _ => {
+            // Send to system logger / stderr
+            // For simplicity, just write to stderr
+            eprintln!("{}", String::from_utf8_lossy(&message));
+        }
+    }
+
+    Ok(vm.arena.alloc(Val::Bool(true)))
+}

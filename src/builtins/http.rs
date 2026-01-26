@@ -127,3 +127,23 @@ pub fn php_header_remove(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     }
     Ok(vm.arena.alloc(Val::Null))
 }
+
+/// header_register_callback(callback) - Register a callback to be called when headers are sent
+/// Reference: $PHP_SRC_PATH/ext/standard/head.c - PHP_FUNCTION(header_register_callback)
+///
+/// This is a stub implementation. In a real web server context, this would register
+/// a callback to be invoked just before headers are sent to the client.
+pub fn php_header_register_callback(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("header_register_callback() expects exactly 1 parameter".into());
+    }
+
+    // Validate that the argument is callable
+    let _callback = &vm.arena.get(args[0]).value;
+    
+    // TODO: Store the callback in request context and invoke it before sending headers
+    // For now, just return true to indicate the callback was "registered"
+    // In CLI mode, this callback would never actually be invoked
+    
+    Ok(vm.arena.alloc(Val::Bool(true)))
+}

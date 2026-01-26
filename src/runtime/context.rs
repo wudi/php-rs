@@ -543,6 +543,22 @@ impl RequestContext {
         self.insert_builtin_constant(b"PHP_OS", Val::String(Rc::new(b"Darwin".to_vec())));
         self.insert_builtin_constant(b"PHP_SAPI", Val::String(Rc::new(b"cli".to_vec())));
         self.insert_builtin_constant(b"PHP_EOL", Val::String(Rc::new(b"\n".to_vec())));
+        
+        // PHP_OS_FAMILY constant (Windows, BSD, Darwin, Solaris, Linux, Unknown)
+        let os_family = if cfg!(target_os = "windows") {
+            "Windows"
+        } else if cfg!(target_os = "macos") {
+            "Darwin"
+        } else if cfg!(target_os = "linux") {
+            "Linux"
+        } else if cfg!(target_os = "freebsd") || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd") {
+            "BSD"
+        } else if cfg!(target_os = "solaris") {
+            "Solaris"
+        } else {
+            "Unknown"
+        };
+        self.insert_builtin_constant(b"PHP_OS_FAMILY", Val::String(Rc::new(os_family.as_bytes().to_vec())));
 
         let int_size = std::mem::size_of::<i64>() as i64;
         self.insert_builtin_constant(b"PHP_INT_SIZE", Val::Int(int_size));

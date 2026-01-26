@@ -1581,6 +1581,42 @@ pub fn php_chmod(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     }
 }
 
+/// umask(mask?) - Change or get the current umask
+/// Reference: $PHP_SRC_PATH/ext/standard/filestat.c - PHP_FUNCTION(umask)
+///
+/// With no arguments, returns the current umask.
+/// With one argument, sets the umask to that value and returns the old value.
+pub fn php_umask(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    #[cfg(unix)]
+    {
+        if args.is_empty() {
+            // Get current umask (requires setting and getting back)
+            unsafe {
+                let current = libc::umask(0);
+                libc::umask(current);
+                Ok(vm.arena.alloc(Val::Int(current as i64)))
+            }
+        } else {
+            // Set new umask
+            let new_mask = match &vm.arena.get(args[0]).value {
+                Val::Int(m) => *m as libc::mode_t,
+                _ => return Err("umask(): Argument must be integer".into()),
+            };
+            
+            unsafe {
+                let old_mask = libc::umask(new_mask);
+                Ok(vm.arena.alloc(Val::Int(old_mask as i64)))
+            }
+        }
+    }
+    
+    #[cfg(not(unix))]
+    {
+        // Windows doesn't have umask, just return 0
+        Ok(vm.arena.alloc(Val::Int(0)))
+    }
+}
+
 /// stat(filename) - Get file statistics
 /// Reference: $PHP_SRC_PATH/ext/standard/filestat.c - PHP_FUNCTION(stat)
 pub fn php_stat(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
@@ -1887,4 +1923,55 @@ pub fn php_disk_total_space(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
 
     // This requires platform-specific syscalls
     Err("disk_total_space(): Not yet implemented".into())
+}
+
+/// is_uploaded_file(filename) - Check if file was uploaded via HTTP POST
+/// Reference: $PHP_SRC_PATH/main/rfc1867.c - PHP_FUNCTION(is_uploaded_file)
+///
+/// Returns true if the file was uploaded via HTTP POST.
+/// In our implementation, we track uploaded files in the request context.
+pub fn php_is_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("is_uploaded_file() expects exactly 1 parameter".into());
+    }
+
+    let path_bytes = handle_to_path(vm, args[0])?;
+    let path = bytes_to_path(&path_bytes)?;
+    let path_str = path.to_string_lossy();
+
+    // Check if this file is in the list of uploaded files
+    // TODO: Track uploaded files in request context during multipart parsing
+    // For now, always return false since we don't have multipart parsing yet
+    
+    // When multipart parsing is implemented, check vm.context.uploaded_files
+    let _is_uploaded = false;
+    
+    Ok(vm.arena.alloc(Val::Bool(false)))
+}
+
+/// move_uploaded_file(from, to) - Move an uploaded file to a new location
+/// Reference: $PHP_SRC_PATH/main/rfc1867.c - PHP_FUNCTION(move_uploaded_file)
+///
+/// Moves an uploaded file to a new location. Only works with files uploaded via HTTP POST.
+pub fn php_move_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() < 2 {
+        return Err("move_uploaded_file() expects exactly 2 parameters".into());
+    }
+
+    let from_bytes = handle_to_path(vm, args[0])?;
+    let from_path = bytes_to_path(&from_bytes)?;
+    
+    let to_bytes = handle_to_path(vm, args[1])?;
+    let to_path = bytes_to_path(&to_bytes)?;
+
+    // Check if the source file is an uploaded file
+    // TODO: Verify file is in uploaded_files list
+    // For now, just return false since we don't track uploads yet
+    
+    // When multipart parsing is implemented:
+    // 1. Check if from_path is in vm.context.uploaded_files
+    // 2. If yes, move the file and remove from uploaded_files list
+    // 3. Return true/false based on success
+    
+    Ok(vm.arena.alloc(Val::Bool(false)))
 }
