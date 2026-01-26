@@ -27,6 +27,8 @@ pub struct PhpConfig {
     pub timezone: String,
     /// Working directory for script execution
     pub working_dir: Option<PathBuf>,
+    /// Custom INI settings storage (for ini_get/ini_set)
+    pub ini_settings: HashMap<String, String>,
 }
 
 impl Default for PhpConfig {
@@ -36,6 +38,7 @@ impl Default for PhpConfig {
             max_execution_time: 300,
             timezone: "UTC".to_string(),
             working_dir: None,
+            ini_settings: HashMap::new(),
         }
     }
 }

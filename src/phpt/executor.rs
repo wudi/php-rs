@@ -109,8 +109,8 @@ impl PhptExecutor {
     fn execute_test_code(&self, test: &PhptTest) -> TestResult {
         let mut vm = VM::new_with_sapi(self.engine_context.clone(), crate::sapi::SapiMode::Cli);
 
-        // TODO: Apply INI settings (when INI handling is available)
-        // For now, we'll skip INI settings
+        // Apply INI settings from --INI-- section
+        self.apply_ini_settings(&mut vm, test);
 
         // Set up HTTP superglobals from test sections
         self.setup_superglobals(&mut vm, test);
@@ -450,6 +450,13 @@ impl PhptExecutor {
         let server_handle = vm.arena.alloc(server_array);
         let server_sym = vm.context.interner.intern(b"_SERVER");
         vm.context.globals.insert(server_sym, server_handle);
+    }
+
+    /// Apply INI settings from --INI-- section to VM context
+    fn apply_ini_settings(&self, vm: &mut VM, test: &PhptTest) {
+        for (key, value) in &test.sections.ini {
+            vm.context.config.ini_settings.insert(key.clone(), value.clone());
+        }
     }
 
     fn execute_source(&self, source: &str, vm: &mut VM) -> Result<(), String> {

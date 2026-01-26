@@ -751,10 +751,17 @@ pub fn php_ini_get(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         _ => return Err("ini_get() expects string parameter".into()),
     };
 
+    // First check custom INI settings (from PHPT --INI-- section or ini_set())
+    if let Some(value) = vm.context.config.ini_settings.get(&option) {
+        return Ok(vm
+            .arena
+            .alloc(Val::String(Rc::new(value.as_bytes().to_vec()))));
+    }
+
     // Return commonly expected ini values
     let value = match option.as_str() {
         "display_errors" => "1".to_string(),
-        "error_reporting" => "32767".to_string(), // E_ALL
+        "error_reporting" => vm.context.config.error_reporting.to_string(),
         "memory_limit" => "128M".to_string(),
         "max_execution_time" => vm.context.config.max_execution_time.to_string(),
         "upload_max_filesize" => "2M".to_string(),
@@ -772,20 +779,29 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         return Err("ini_set() expects exactly 2 parameters".into());
     }
 
-    let _option = match &vm.arena.get(args[0]).value {
+    let option = match &vm.arena.get(args[0]).value {
         Val::String(s) => String::from_utf8_lossy(s).to_string(),
         _ => return Err("ini_set() expects string parameter".into()),
     };
 
-    let _new_value = match &vm.arena.get(args[1]).value {
+    let new_value = match &vm.arena.get(args[1]).value {
         Val::String(s) => String::from_utf8_lossy(s).to_string(),
         Val::Int(i) => i.to_string(),
+        Val::Bool(b) => if *b { "1" } else { "0" }.to_string(),
         _ => return Err("ini_set() value must be string or int".into()),
     };
 
-    // TODO: Actually store ini settings in context
-    // For now, just return false to indicate setting couldn't be changed
-    Ok(vm.arena.alloc(Val::String(Rc::new(b"".to_vec()))))
+    // Get old value before setting
+    let old_value = vm.context.config.ini_settings
+        .get(&option)
+        .cloned()
+        .unwrap_or_else(|| "".to_string());
+
+    // Store the new value
+    vm.context.config.ini_settings.insert(option, new_value);
+
+    // Return the old value
+    Ok(vm.arena.alloc(Val::String(Rc::new(old_value.as_bytes().to_vec()))))
 }
 
 pub fn php_error_reporting(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
