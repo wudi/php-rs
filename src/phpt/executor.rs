@@ -112,11 +112,11 @@ impl PhptExecutor {
         // TODO: Apply INI settings (when INI handling is available)
         // For now, we'll skip INI settings
 
-        // TODO: Set up $argv and $argc from ARGS section
-        // For now, we'll skip command-line arguments
-
         // Set up HTTP superglobals from test sections
         self.setup_superglobals(&mut vm, test);
+
+        // Set up $_SERVER superglobal with argv/argc
+        self.setup_server_superglobal(&mut vm, test);
 
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer.clone()));
@@ -282,6 +282,90 @@ impl PhptExecutor {
         }
 
         result
+    }
+
+    fn setup_server_superglobal(&self, vm: &mut VM, test: &PhptTest) {
+        use crate::core::value::{Val, ArrayData, ArrayKey};
+        use indexmap::IndexMap;
+        use std::rc::Rc;
+
+        let mut server_map = IndexMap::new();
+
+        // Populate argv and argc from --ARGS-- section (CLI mode)
+        if let Some(ref args_str) = test.sections.args {
+            // Split args by whitespace
+            let args: Vec<&str> = args_str.split_whitespace().collect();
+
+            // Create argv array - first element is script name
+            let mut argv_map = IndexMap::new();
+
+            // argv[0] is the script name
+            let script_name = Val::String(Rc::new(b"test.php".to_vec()));
+            let script_handle = vm.arena.alloc(script_name);
+            argv_map.insert(ArrayKey::Int(0), script_handle);
+
+            // Add remaining arguments
+            for (i, arg) in args.iter().enumerate() {
+                let arg_val = Val::String(Rc::new(arg.as_bytes().to_vec()));
+                let arg_handle = vm.arena.alloc(arg_val);
+                argv_map.insert(ArrayKey::Int((i + 1) as i64), arg_handle);
+            }
+
+            let argv_array = Val::Array(Rc::new(ArrayData::from(argv_map)));
+            let argv_handle = vm.arena.alloc(argv_array);
+
+            // Set argc (number of arguments including script name)
+            let argc_val = Val::Int((args.len() + 1) as i64);
+            let argc_handle = vm.arena.alloc(argc_val);
+
+            // Add to $_SERVER
+            server_map.insert(
+                ArrayKey::Str(Rc::new(b"argv".to_vec())),
+                argv_handle,
+            );
+            server_map.insert(
+                ArrayKey::Str(Rc::new(b"argc".to_vec())),
+                argc_handle,
+            );
+        }
+        // Handle argv/argc from GET query string (for test 011.phpt)
+        else if let Some(ref get_data) = test.sections.get {
+            // Parse query string as space-separated values for argv
+            let args: Vec<String> = get_data
+                .split('+')
+                .map(|s| Self::url_decode(s))
+                .collect();
+
+            let mut argv_map = IndexMap::new();
+
+            // Add arguments (no script name for GET-derived argv)
+            for (i, arg) in args.iter().enumerate() {
+                let arg_val = Val::String(Rc::new(arg.as_bytes().to_vec()));
+                let arg_handle = vm.arena.alloc(arg_val);
+                argv_map.insert(ArrayKey::Int(i as i64), arg_handle);
+            }
+
+            let argv_array = Val::Array(Rc::new(ArrayData::from(argv_map)));
+            let argv_handle = vm.arena.alloc(argv_array);
+
+            let argc_val = Val::Int(args.len() as i64);
+            let argc_handle = vm.arena.alloc(argc_val);
+
+            server_map.insert(
+                ArrayKey::Str(Rc::new(b"argv".to_vec())),
+                argv_handle,
+            );
+            server_map.insert(
+                ArrayKey::Str(Rc::new(b"argc".to_vec())),
+                argc_handle,
+            );
+        }
+
+        // Create $_SERVER array
+        let server_array = Val::Array(Rc::new(ArrayData::from(server_map)));
+        let server_handle = vm.arena.alloc(server_array);
+        let server_sym = vm.context.interner.intern(b"_SERVER");
+        vm.context.globals.insert(server_sym, server_handle);
     }
 
     fn execute_source(&self, source: &str, vm: &mut VM) -> Result<(), String> {
