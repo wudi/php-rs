@@ -44,6 +44,9 @@ pub struct PhptSections {
     pub env: Vec<(String, String)>,
     pub args: Option<String>,
     pub clean: Option<String>,
+    pub post: Option<String>,
+    pub get: Option<String>,
+    pub cookie: Option<String>,
 }
 
 impl PhptTest {
@@ -153,7 +156,16 @@ impl PhptTest {
             "CLEAN" => {
                 sections.clean = Some(trimmed_content.to_string());
             }
-            "XLEAK" | "CREDITS" => {
+            "POST" => {
+                sections.post = Some(trimmed_content.to_string());
+            }
+            "GET" => {
+                sections.get = Some(trimmed_content.to_string());
+            }
+            "COOKIE" => {
+                sections.cookie = Some(trimmed_content.to_string());
+            }
+            "XLEAK" | "CREDITS" | "POST_RAW" | "GZIP_POST" | "DEFLATE_POST" | "HEADERS" => {
                 // Ignored sections
             }
             _ => {

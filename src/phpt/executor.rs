@@ -115,6 +115,9 @@ impl PhptExecutor {
         // TODO: Set up $argv and $argc from ARGS section
         // For now, we'll skip command-line arguments
 
+        // Set up HTTP superglobals from test sections
+        self.setup_superglobals(&mut vm, test);
+
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer.clone()));
 
@@ -162,6 +165,123 @@ impl PhptExecutor {
 
         self.execute_source(clean_code, &mut vm)
             .map_err(|e| format!("CLEAN failed: {}", e))
+    }
+
+    fn setup_superglobals(&self, vm: &mut VM, test: &PhptTest) {
+        use crate::core::value::{Val, ArrayData, Handle};
+        use indexmap::IndexMap;
+        use std::rc::Rc;
+
+        // Parse and set $_GET
+        if let Some(ref get_data) = test.sections.get {
+            let get_array = self.parse_query_string(get_data, vm);
+            let get_sym = vm.context.interner.intern(b"_GET");
+            vm.context.globals.insert(get_sym, get_array);
+        }
+
+        // Parse and set $_POST
+        if let Some(ref post_data) = test.sections.post {
+            let post_array = self.parse_query_string(post_data, vm);
+            let post_sym = vm.context.interner.intern(b"_POST");
+            vm.context.globals.insert(post_sym, post_array);
+        }
+
+        // Parse and set $_COOKIE
+        if let Some(ref cookie_data) = test.sections.cookie {
+            let cookie_array = self.parse_query_string(cookie_data, vm);
+            let cookie_sym = vm.context.interner.intern(b"_COOKIE");
+            vm.context.globals.insert(cookie_sym, cookie_array);
+        }
+
+        // Set up $_REQUEST (combination of GET, POST, COOKIE)
+        let mut request_map = IndexMap::new();
+
+        let get_sym = vm.context.interner.intern(b"_GET");
+        let post_sym = vm.context.interner.intern(b"_POST");
+        let cookie_sym = vm.context.interner.intern(b"_COOKIE");
+
+        // Merge arrays: GET, then POST, then COOKIE (POST overrides GET, COOKIE overrides both)
+        if let Some(get_handle) = vm.context.globals.get(&get_sym) {
+            if let Val::Array(arr) = &vm.arena.get(*get_handle).value {
+                for (key, value) in &arr.map {
+                    request_map.insert(key.clone(), *value);
+                }
+            }
+        }
+        if let Some(post_handle) = vm.context.globals.get(&post_sym) {
+            if let Val::Array(arr) = &vm.arena.get(*post_handle).value {
+                for (key, value) in &arr.map {
+                    request_map.insert(key.clone(), *value);
+                }
+            }
+        }
+        if let Some(cookie_handle) = vm.context.globals.get(&cookie_sym) {
+            if let Val::Array(arr) = &vm.arena.get(*cookie_handle).value {
+                for (key, value) in &arr.map {
+                    request_map.insert(key.clone(), *value);
+                }
+            }
+        }
+
+        let request_array = Val::Array(Rc::new(ArrayData::from(request_map)));
+        let request_handle = vm.arena.alloc(request_array);
+        let request_sym = vm.context.interner.intern(b"_REQUEST");
+        vm.context.globals.insert(request_sym, request_handle);
+    }
+
+    fn parse_query_string(&self, query: &str, vm: &mut VM) -> crate::core::value::Handle {
+        use crate::core::value::{Val, ArrayData, ArrayKey};
+        use indexmap::IndexMap;
+        use std::rc::Rc;
+
+        let mut map = IndexMap::new();
+
+        for pair in query.split('&') {
+            if let Some(pos) = pair.find('=') {
+                let key = &pair[..pos];
+                let value = &pair[pos + 1..];
+
+                // URL decode
+                let decoded_key = Self::url_decode(key);
+                let decoded_value = Self::url_decode(value);
+
+                // Create key
+                let array_key = ArrayKey::Str(Rc::new(decoded_key.into_bytes()));
+
+                // Create value and allocate
+                let val = Val::String(Rc::new(decoded_value.into_bytes()));
+                let val_handle = vm.arena.alloc(val);
+
+                map.insert(array_key, val_handle);
+            }
+        }
+
+        let array_data = ArrayData::from(map);
+        let array_val = Val::Array(Rc::new(array_data));
+        vm.arena.alloc(array_val)
+    }
+
+    fn url_decode(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '+' => result.push(' '),
+                '%' => {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        result.push(byte as char);
+                    } else {
+                        result.push('%');
+                        result.push_str(&hex);
+                    }
+                }
+                _ => result.push(ch),
+            }
+        }
+
+        result
     }
 
     fn execute_source(&self, source: &str, vm: &mut VM) -> Result<(), String> {
