@@ -461,7 +461,14 @@ impl PhptExecutor {
         let boundary = if let Some(content_type_line) = lines.first() {
             if let Some(boundary_pos) = content_type_line.find("boundary=") {
                 let boundary_start = boundary_pos + "boundary=".len();
-                &content_type_line[boundary_start..]
+                let boundary_rest = &content_type_line[boundary_start..];
+                // Boundary value may be followed by semicolon or other parameters
+                // Take everything up to the next semicolon or end of line
+                if let Some(semicolon_pos) = boundary_rest.find(';') {
+                    boundary_rest[..semicolon_pos].trim()
+                } else {
+                    boundary_rest.trim()
+                }
             } else {
                 return; // No boundary found
             }
