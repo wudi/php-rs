@@ -18,6 +18,7 @@ pub mod output_control;
 pub mod pcre;
 pub mod pdo;
 pub mod reflection;
+pub mod sapi;
 pub mod spl;
 pub mod string;
 pub mod url;

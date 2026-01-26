@@ -1,6 +1,6 @@
 use crate::builtins::{
     array, bcmath, class, exception, exec, fastcgi, filesystem, function, http, math,
-    output_control, pcre, spl, string, url, variable,
+    output_control, pcre, sapi, spl, string, url, variable,
 };
 use crate::core::value::{Val, Visibility};
 use crate::runtime::attributes::{
@@ -394,6 +394,14 @@ impl Extension for CoreExtension {
         registry.register_function(b"proc_nice", exec::php_proc_nice);
         registry.register_function(b"proc_get_status", exec::php_proc_get_status);
         registry.register_function(b"set_time_limit", exec::php_set_time_limit);
+
+        // SAPI functions
+        registry.register_function(b"php_sapi_name", sapi::php_sapi_name);
+        registry.register_function(b"php_uname", sapi::php_uname);
+        registry.register_function(b"getmypid", sapi::php_getmypid);
+        registry.register_function(b"ignore_user_abort", sapi::php_ignore_user_abort);
+        registry.register_function(b"connection_aborted", sapi::php_connection_aborted);
+        registry.register_function(b"connection_status", sapi::php_connection_status);
 
         // FastCGI functions
         registry.register_function(b"fastcgi_finish_request", fastcgi::fastcgi_finish_request);
