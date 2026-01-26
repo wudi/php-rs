@@ -234,7 +234,7 @@ impl PhptExecutor {
         use indexmap::IndexMap;
         use std::rc::Rc;
 
-        let mut map = IndexMap::new();
+        let mut result = IndexMap::new();
 
         for pair in query.split('&') {
             if let Some(pos) = pair.find('=') {
@@ -245,20 +245,104 @@ impl PhptExecutor {
                 let decoded_key = Self::url_decode(key);
                 let decoded_value = Self::url_decode(value);
 
-                // Create key
-                let array_key = ArrayKey::Str(Rc::new(decoded_key.into_bytes()));
-
-                // Create value and allocate
-                let val = Val::String(Rc::new(decoded_value.into_bytes()));
-                let val_handle = vm.arena.alloc(val);
-
-                map.insert(array_key, val_handle);
+                // Parse key for array notation: name, name[], name[key], name[0]
+                self.insert_into_query_array(&mut result, &decoded_key, &decoded_value, vm);
             }
         }
 
-        let array_data = ArrayData::from(map);
+        let array_data = ArrayData::from(result);
         let array_val = Val::Array(Rc::new(array_data));
         vm.arena.alloc(array_val)
+    }
+
+    /// Parse and insert a key-value pair into the query result array, handling PHP array notation
+    ///
+    /// Supports:
+    /// - `name=value` - simple key-value
+    /// - `name[]=value` - append to array
+    /// - `name[0]=value` - indexed array
+    /// - `name[key]=value` - associative array
+    /// - `name[a][b]=value` - nested arrays (basic support)
+    fn insert_into_query_array(
+        &self,
+        result: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
+        key: &str,
+        value: &str,
+        vm: &mut VM,
+    ) {
+        use crate::core::value::{Val, ArrayData, ArrayKey};
+        use std::rc::Rc;
+
+        // Check if key contains array notation
+        if let Some(bracket_pos) = key.find('[') {
+            let base_name = &key[..bracket_pos];
+            let rest = &key[bracket_pos..];
+
+            // Parse bracket notation
+            let base_key = ArrayKey::Str(Rc::new(base_name.as_bytes().to_vec()));
+
+            // Get or create array for this base name
+            let array_handle = if let Some(existing_handle) = result.get(&base_key) {
+                // Get existing array
+                *existing_handle
+            } else {
+                // Create new array
+                let new_array = Val::Array(Rc::new(ArrayData::new()));
+                let handle = vm.arena.alloc(new_array);
+                result.insert(base_key.clone(), handle);
+                handle
+            };
+
+            // Parse bracket content
+            if rest == "[]" {
+                // Append mode: name[]=value
+                // Need to append to the array
+                let current_array = &vm.arena.get(array_handle).value;
+                if let Val::Array(arr_data) = current_array {
+                    let mut new_map = arr_data.map.clone();
+                    let next_index = arr_data.next_index();
+
+                    let val = Val::String(Rc::new(value.as_bytes().to_vec()));
+                    let val_handle = vm.arena.alloc(val);
+                    new_map.insert(ArrayKey::Int(next_index), val_handle);
+
+                    // Replace the array with updated version
+                    let updated_array = Val::Array(Rc::new(ArrayData::from(new_map)));
+                    let updated_handle = vm.arena.alloc(updated_array);
+                    result.insert(base_key, updated_handle);
+                }
+            } else if rest.starts_with('[') && rest.ends_with(']') {
+                // Indexed or associative: name[key]=value or name[0]=value
+                let inner_key = &rest[1..rest.len() - 1];
+
+                let current_array = &vm.arena.get(array_handle).value;
+                if let Val::Array(arr_data) = current_array {
+                    let mut new_map = arr_data.map.clone();
+
+                    // Determine if numeric or string key
+                    let sub_key = if let Ok(idx) = inner_key.parse::<i64>() {
+                        ArrayKey::Int(idx)
+                    } else {
+                        ArrayKey::Str(Rc::new(inner_key.as_bytes().to_vec()))
+                    };
+
+                    let val = Val::String(Rc::new(value.as_bytes().to_vec()));
+                    let val_handle = vm.arena.alloc(val);
+                    new_map.insert(sub_key, val_handle);
+
+                    // Replace the array with updated version
+                    let updated_array = Val::Array(Rc::new(ArrayData::from(new_map)));
+                    let updated_handle = vm.arena.alloc(updated_array);
+                    result.insert(base_key, updated_handle);
+                }
+            }
+        } else {
+            // Simple key-value pair
+            let array_key = ArrayKey::Str(Rc::new(key.as_bytes().to_vec()));
+            let val = Val::String(Rc::new(value.as_bytes().to_vec()));
+            let val_handle = vm.arena.alloc(val);
+            result.insert(array_key, val_handle);
+        }
     }
 
     fn url_decode(s: &str) -> String {
