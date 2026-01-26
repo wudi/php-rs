@@ -307,6 +307,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"restore_error_handler", function::php_restore_error_handler);
         registry.register_function(b"trigger_error", function::php_trigger_error);
         registry.register_function(b"extension_loaded", function::php_extension_loaded);
+        registry.register_function(b"get_defined_functions", function::php_get_defined_functions);
         registry.register_function(b"spl_autoload_register", spl::php_spl_autoload_register);
         registry.register_function(b"spl_object_hash", spl::php_spl_object_hash);
         registry.register_function(b"assert", function::php_assert);
@@ -402,6 +403,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"ignore_user_abort", sapi::php_ignore_user_abort);
         registry.register_function(b"connection_aborted", sapi::php_connection_aborted);
         registry.register_function(b"connection_status", sapi::php_connection_status);
+        registry.register_function(b"ini_parse_quantity", sapi::php_ini_parse_quantity);
 
         // FastCGI functions
         registry.register_function(b"fastcgi_finish_request", fastcgi::fastcgi_finish_request);

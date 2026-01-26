@@ -535,6 +535,10 @@ impl RequestContext {
         self.insert_builtin_constant(b"PHP_RELEASE_VERSION", Val::Int(PHP_RELEASE));
         self.insert_builtin_constant(b"PHP_EXTRA_VERSION", Val::String(Rc::new(Vec::new())));
 
+        // Build date constant (format: "Jan 26 2026 12:00:00")
+        let build_date = chrono::Local::now().format("%b %e %Y %H:%M:%S").to_string();
+        self.insert_builtin_constant(b"PHP_BUILD_DATE", Val::String(Rc::new(build_date.as_bytes().to_vec())));
+
         // System constants
         self.insert_builtin_constant(b"PHP_OS", Val::String(Rc::new(b"Darwin".to_vec())));
         self.insert_builtin_constant(b"PHP_SAPI", Val::String(Rc::new(b"cli".to_vec())));

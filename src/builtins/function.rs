@@ -560,3 +560,53 @@ pub fn php_trigger_error(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     vm.report_error(level, &message);
     Ok(vm.arena.alloc(Val::Bool(true)))
 }
+
+/// get_defined_functions() - Returns an array of all defined functions
+///
+/// PHP Reference: https://www.php.net/manual/en/function.get-defined-functions.php
+///
+/// Returns an array with ['internal' => [...], 'user' => [...]]
+/// The exclude_disabled parameter (if true) excludes disabled functions from the list.
+pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    let exclude_disabled = args
+        .get(0)
+        .map(|h| vm.arena.get(*h).value.to_bool())
+        .unwrap_or(true);
+
+    let mut internal_functions = IndexMap::new();
+
+    // Get internal (built-in) functions from the engine registry
+    let mut internal_idx = 0i64;
+    for (name, _entry) in vm.context.engine.registry.functions() {
+        let func_name = String::from_utf8_lossy(name).to_lowercase();
+        
+        // Check if function is disabled via disable_functions INI setting
+        if exclude_disabled {
+            if let Some(disabled) = vm.context.config.ini_settings.get("disable_functions") {
+                let disabled_list: Vec<&str> = disabled.split(',').map(|s| s.trim()).collect();
+                if disabled_list.contains(&func_name.as_str()) {
+                    continue;
+                }
+            }
+        }
+        
+        let name_handle = vm.arena.alloc(Val::String(Rc::new(name.clone())));
+        internal_functions.insert(ArrayKey::Int(internal_idx), name_handle);
+        internal_idx += 1;
+    }
+
+    // User-defined functions would be stored separately
+    // For now, return empty user array
+    let user_functions = IndexMap::new();
+
+    // Build result array
+    let mut result = IndexMap::new();
+    
+    let internal_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(internal_functions))));
+    result.insert(ArrayKey::Str(Rc::new(b"internal".to_vec())), internal_array);
+    
+    let user_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(user_functions))));
+    result.insert(ArrayKey::Str(Rc::new(b"user".to_vec())), user_array);
+
+    Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(result)))))
+}
