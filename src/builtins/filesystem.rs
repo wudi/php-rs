@@ -1940,13 +1940,9 @@ pub fn php_is_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
     let path_str = path.to_string_lossy();
 
     // Check if this file is in the list of uploaded files
-    // TODO: Track uploaded files in request context during multipart parsing
-    // For now, always return false since we don't have multipart parsing yet
+    let is_uploaded = vm.context.uploaded_files.contains(path_str.as_ref());
     
-    // When multipart parsing is implemented, check vm.context.uploaded_files
-    let _is_uploaded = false;
-    
-    Ok(vm.arena.alloc(Val::Bool(false)))
+    Ok(vm.arena.alloc(Val::Bool(is_uploaded)))
 }
 
 /// move_uploaded_file(from, to) - Move an uploaded file to a new location
@@ -1959,10 +1955,10 @@ pub fn php_move_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     }
 
     let from_bytes = handle_to_path(vm, args[0])?;
-    let from_path = bytes_to_path(&from_bytes)?;
+    let _from_path = bytes_to_path(&from_bytes)?;
     
     let to_bytes = handle_to_path(vm, args[1])?;
-    let to_path = bytes_to_path(&to_bytes)?;
+    let _to_path = bytes_to_path(&to_bytes)?;
 
     // Check if the source file is an uploaded file
     // TODO: Verify file is in uploaded_files list

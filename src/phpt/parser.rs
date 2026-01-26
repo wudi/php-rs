@@ -68,7 +68,17 @@ impl PhptTest {
 
         for line in content.lines() {
             // Check if this is a section marker
-            if line.starts_with("--") && line.ends_with("--") && line.len() > 4 {
+            // PHPT section markers are like --TEST--, --FILE--, etc.
+            // They must be exactly --NAME-- where NAME contains only uppercase, digits, or underscores
+            let is_section_marker = if line.starts_with("--") && line.ends_with("--") && line.len() > 4 {
+                let inner = &line[2..line.len()-2];
+                // Section names should be alphanumeric/underscore and typically uppercase
+                !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            } else {
+                false
+            };
+            
+            if is_section_marker {
                 // Save previous section
                 if let Some(section_name) = current_section.take() {
                     Self::save_section(&section_name, &current_content, &mut sections, &mut description)?;

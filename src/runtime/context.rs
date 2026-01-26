@@ -280,6 +280,8 @@ pub struct RequestContext {
     pub resource_manager: ResourceManager,
     /// Public memory allocation API for extensions
     pub memory_api: MemoryApi,
+    /// Uploaded files tracking (temporary file paths from multipart/form-data)
+    pub uploaded_files: HashSet<String>,
 }
 
 impl RequestContext {
@@ -311,6 +313,7 @@ impl RequestContext {
             extension_data: HashMap::new(),
             resource_manager: ResourceManager::new(),
             memory_api: MemoryApi::new_unbound(),
+            uploaded_files: HashSet::new(),
         };
 
         // Copy constants from extension registry in bulk

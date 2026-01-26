@@ -479,27 +479,36 @@ impl PhptExecutor {
         let mut files_map = IndexMap::new();
         
         // Split by boundary
-        for part in body.split(&delimiter) {
+        for (_idx, part) in body.split(&delimiter).enumerate() {
             if part.trim().is_empty() || part.trim() == end_delimiter.trim() || part.starts_with("--") {
                 continue;
             }
             
             // Split headers and body
+            // Note: Parts often start with an empty line after the boundary delimiter
             let part_lines: Vec<&str> = part.split('\n').collect();
-            let mut headers_end = 0;
-            for (i, line) in part_lines.iter().enumerate() {
-                if line.trim().is_empty() {
-                    headers_end = i + 1;
+            
+            // Skip initial empty lines
+            let mut start_idx = 0;
+            while start_idx < part_lines.len() && part_lines[start_idx].trim().is_empty() {
+                start_idx += 1;
+            }
+            
+            // Find the blank line separating headers from body
+            let mut headers_end = start_idx;
+            for i in start_idx..part_lines.len() {
+                if part_lines[i].trim().is_empty() {
+                    headers_end = i;
                     break;
                 }
             }
             
-            if headers_end == 0 || headers_end >= part_lines.len() {
+            if start_idx >= headers_end || headers_end >= part_lines.len() {
                 continue;
             }
             
-            let headers = &part_lines[0..headers_end];
-            let body_lines = &part_lines[headers_end..];
+            let headers = &part_lines[start_idx..headers_end];
+            let body_lines = &part_lines[headers_end + 1..]; // Skip the blank line
             
             // Parse Content-Disposition header
             let mut field_name: Option<String> = None;
@@ -511,14 +520,14 @@ impl PhptExecutor {
                     // Extract name and filename
                     for segment in header.split(';') {
                         let segment = segment.trim();
-                        if let Some(name_start) = segment.find("name=\"") {
-                            let name_value = &segment[name_start + 6..];
+                        // Match name="..." but not filename="..."
+                        if segment.starts_with("name=\"") {
+                            let name_value = &segment[6..];
                             if let Some(end_quote) = name_value.find('"') {
                                 field_name = Some(name_value[..end_quote].to_string());
                             }
-                        }
-                        if let Some(filename_start) = segment.find("filename=\"") {
-                            let filename_value = &segment[filename_start + 10..];
+                        } else if segment.starts_with("filename=\"") {
+                            let filename_value = &segment[10..];
                             if let Some(end_quote) = filename_value.find('"') {
                                 filename = Some(filename_value[..end_quote].to_string());
                             }
@@ -529,7 +538,9 @@ impl PhptExecutor {
                 }
             }
             
-            let Some(name) = field_name else { continue };
+            let Some(name) = field_name else {
+                continue
+            };
             
             // Body content (join remaining lines)
             let content = body_lines.join("\n");
@@ -553,13 +564,22 @@ impl PhptExecutor {
                     // Create temporary file
                     use std::io::Write;
                     let tmp_dir = std::env::temp_dir();
-                    let tmp_name = format!("php{}", std::process::id());
+                    // Use timestamp + process ID + field name to make unique
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+                    let tmp_name = format!("php{}_{}", std::process::id(), timestamp);
                     let tmp_path = tmp_dir.join(&tmp_name);
                     
                     let size = content_trimmed.len() as i64;
                     if let Ok(mut file) = std::fs::File::create(&tmp_path) {
                         let _ = file.write_all(content_trimmed.as_bytes());
                     }
+                    
+                    // Track uploaded file
+                    let tmp_path_string = tmp_path.to_string_lossy().into_owned();
+                    vm.context.uploaded_files.insert(tmp_path_string.clone());
                     
                     let mut file_info = IndexMap::new();
                     file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
@@ -569,7 +589,7 @@ impl PhptExecutor {
                     file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
                         vm.arena.alloc(Val::String(Rc::new(content_type.unwrap_or_default().into_bytes()))));
                     file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
-                        vm.arena.alloc(Val::String(Rc::new(tmp_path.to_string_lossy().into_owned().into_bytes()))));
+                        vm.arena.alloc(Val::String(Rc::new(tmp_path_string.into_bytes()))));
                     file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(0)));
                     file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(size)));
                     
