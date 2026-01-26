@@ -194,7 +194,7 @@ impl PhptExecutor {
 
         // Parse and set $_COOKIE
         if let Some(ref cookie_data) = test.sections.cookie {
-            let cookie_array = self.parse_query_string(cookie_data, vm);
+            let cookie_array = self.parse_cookie_string(cookie_data, vm);
             let cookie_sym = vm.context.interner.intern(b"_COOKIE");
             vm.context.globals.insert(cookie_sym, cookie_array);
         }
@@ -285,24 +285,43 @@ impl PhptExecutor {
     fn parse_key_parts(key: &str) -> (String, Vec<String>) {
         let mut base = String::new();
         let mut segments = Vec::new();
-        let mut chars = key.chars().peekable();
+        let chars: Vec<char> = key.chars().collect();
+        let mut i = 0;
 
-        while let Some(ch) = chars.next() {
-            if ch == '[' {
+        // Parse base name until first '['
+        while i < chars.len() && chars[i] != '[' {
+            base.push(chars[i]);
+            i += 1;
+        }
+
+        // Parse bracket segments
+        while i < chars.len() {
+            if chars[i] == '[' {
+                i += 1; // skip '['
                 let mut segment = String::new();
-                while let Some(&inner) = chars.peek() {
-                    chars.next();
-                    if inner == ']' {
-                        break;
+                let mut depth = 1;
+
+                // Find matching ']' by tracking depth
+                while i < chars.len() && depth > 0 {
+                    if chars[i] == '[' {
+                        depth += 1;
+                        segment.push(chars[i]);
+                    } else if chars[i] == ']' {
+                        depth -= 1;
+                        if depth > 0 {
+                            segment.push(chars[i]);
+                        }
+                        // depth == 0: found matching ']', don't include it
+                    } else {
+                        segment.push(chars[i]);
                     }
-                    segment.push(inner);
+                    i += 1;
                 }
+
                 segments.push(segment);
-            } else if ch == ']' {
-                // Ignore stray closing brackets to mimic PHP's tolerant parsing
-                continue;
             } else {
-                base.push(ch);
+                // Stray character after brackets - ignore (PHP ignores trailing ])
+                i += 1;
             }
         }
 
@@ -368,6 +387,35 @@ impl PhptExecutor {
             }
         }
         max + 1
+    }
+
+    fn parse_cookie_string(&self, cookie: &str, vm: &mut VM) -> crate::core::value::Handle {
+        use crate::core::value::{ArrayData, ArrayKey, Val};
+        use indexmap::IndexMap;
+        use std::rc::Rc;
+
+        let mut result = IndexMap::new();
+
+        for pair in cookie.split(';') {
+            let pair = pair.trim();
+            if let Some(pos) = pair.find('=') {
+                let key = pair[..pos].trim();
+                let value = &pair[pos + 1..];
+
+                // Replace spaces with underscores in key (PHP behavior)
+                let normalized_key = key.replace(' ', "_");
+                let decoded_value = Self::url_decode(value);
+
+                let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
+                let val = Val::String(Rc::new(decoded_value.as_bytes().to_vec()));
+                let val_handle = vm.arena.alloc(val);
+                result.insert(array_key, val_handle);
+            }
+        }
+
+        let array_data = ArrayData::from(result);
+        let array_val = Val::Array(Rc::new(array_data));
+        vm.arena.alloc(array_val)
     }
 
     fn url_decode(s: &str) -> String {
