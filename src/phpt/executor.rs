@@ -402,16 +402,33 @@ impl PhptExecutor {
         let mut result = IndexMap::new();
 
         for pair in cookie.split(';') {
-            let pair = pair.trim();
-            if let Some(pos) = pair.find('=') {
+            let pair = pair.trim_start();  // Only trim leading whitespace
+            if pair.is_empty() {
+                continue;
+            }
+            
+            let (key, value) = if let Some(pos) = pair.find('=') {
                 let key = pair[..pos].trim();
                 let value = &pair[pos + 1..];
+                (key, value)
+            } else {
+                // Cookie without value (e.g., "cookie_name")
+                (pair, "")
+            };
 
-                // Replace spaces with underscores in key (PHP behavior)
-                let normalized_key = key.replace(' ', "_");
-                let decoded_value = Self::url_decode(value);
+            // Replace spaces and dots with underscores in key (PHP behavior)
+            let normalized_key = key.chars().map(|c| {
+                match c {
+                    ' ' | '.' => '_',
+                    _ => c
+                }
+            }).collect::<String>();
+            let decoded_value = Self::url_decode(value);
 
-                let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
+            let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
+            
+            // PHP keeps the FIRST value when there are duplicate cookie names
+            if !result.contains_key(&array_key) {
                 let val = Val::String(Rc::new(decoded_value.as_bytes().to_vec()));
                 let val_handle = vm.arena.alloc(val);
                 result.insert(array_key, val_handle);
@@ -462,12 +479,18 @@ impl PhptExecutor {
             if let Some(boundary_pos) = content_type_line.find("boundary=") {
                 let boundary_start = boundary_pos + "boundary=".len();
                 let boundary_rest = &content_type_line[boundary_start..];
-                // Boundary value may be followed by semicolon or other parameters
-                // Take everything up to the next semicolon or end of line
-                if let Some(semicolon_pos) = boundary_rest.find(';') {
-                    boundary_rest[..semicolon_pos].trim()
+                // Boundary value may be quoted or followed by semicolon
+                let boundary_value = if let Some(semicolon_pos) = boundary_rest.find(';') {
+                    &boundary_rest[..semicolon_pos]
                 } else {
-                    boundary_rest.trim()
+                    boundary_rest
+                };
+                // Remove quotes if present
+                let boundary_trimmed = boundary_value.trim();
+                if boundary_trimmed.starts_with('"') && boundary_trimmed.ends_with('"') && boundary_trimmed.len() > 1 {
+                    &boundary_trimmed[1..boundary_trimmed.len()-1]
+                } else {
+                    boundary_trimmed
                 }
             } else {
                 return; // No boundary found
