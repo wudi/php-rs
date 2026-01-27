@@ -1,4 +1,5 @@
 use crate::compiler::emitter::Emitter;
+use crate::core::value::{ArrayData, Val};
 use crate::parser::lexer::Lexer;
 use crate::parser::parser::Parser as PhpParser;
 use crate::phpt::matcher::{match_output, ExpectationType};
@@ -112,14 +113,21 @@ impl PhptExecutor {
         // Apply INI settings from --INI-- section
         self.apply_ini_settings(&mut vm, test);
 
+        // Set up output writer and error handler BEFORE setup_superglobals
+        // so warnings during POST parsing are captured
+        let output_writer = BufferedOutputWriter::new();
+        vm.set_output_writer(Box::new(output_writer.clone()));
+        
+        let error_handler = crate::phpt::output_writer::BufferedErrorHandler::new(
+            output_writer.state.clone()
+        );
+        vm.set_error_handler(Box::new(error_handler));
+
         // Set up HTTP superglobals from test sections
         self.setup_superglobals(&mut vm, test);
 
         // Set up $_SERVER superglobal with argv/argc
         let argv_warning = self.setup_server_superglobal(&mut vm, test);
-
-        let output_writer = BufferedOutputWriter::new();
-        vm.set_output_writer(Box::new(output_writer.clone()));
 
         if let Some(warning) = argv_warning {
             let mut writer = output_writer.clone();
@@ -187,14 +195,58 @@ impl PhptExecutor {
 
         // Parse and set $_POST
         if let Some(ref post_data) = test.sections.post {
-            let post_array = self.parse_query_string(post_data, vm);
-            let post_sym = vm.context.interner.intern(b"_POST");
-            vm.context.globals.insert(post_sym, post_array);
+            // Check post_max_size
+            let post_max_size = vm.context.config.ini_settings.get("post_max_size")
+                .and_then(|v| self.parse_size_ini_value(v))
+                .unwrap_or(8 * 1024 * 1024); // Default 8MB
+            
+            let content_length = post_data.len();
+            
+            if content_length > post_max_size {
+                use crate::vm::engine::ErrorLevel;
+                let msg = format!(
+                    "PHP Request Startup: POST Content-Length of {} bytes exceeds the limit of {} bytes in Unknown",
+                    content_length, post_max_size
+                );
+                vm.report_error(ErrorLevel::Warning, &msg);
+                // Set empty $_POST array
+                let empty_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(IndexMap::new()))));
+                let post_sym = vm.context.interner.intern(b"_POST");
+                vm.context.globals.insert(post_sym, empty_array);
+            } else {
+                let post_array = self.parse_query_string(post_data, vm);
+                let post_sym = vm.context.interner.intern(b"_POST");
+                vm.context.globals.insert(post_sym, post_array);
+            }
         }
 
         // Parse POST_RAW if present (multipart/form-data)
         if let Some(ref post_raw) = test.sections.post_raw {
-            self.parse_post_raw(post_raw, vm);
+            // Check post_max_size
+            let post_max_size = vm.context.config.ini_settings.get("post_max_size")
+                .and_then(|v| self.parse_size_ini_value(v))
+                .unwrap_or(8 * 1024 * 1024); // Default 8MB
+            
+            // Content-Length is the body size (excluding the Content-Type header line)
+            let lines: Vec<&str> = post_raw.lines().collect();
+            let body_content = if lines.len() > 1 {
+                lines[1..].join("\n")
+            } else {
+                String::new()
+            };
+            let content_length = body_content.len();
+            
+            if content_length > post_max_size {
+                use crate::vm::engine::ErrorLevel;
+                let msg = format!(
+                    "PHP Request Startup: POST Content-Length of {} bytes exceeds the limit of {} bytes in Unknown",
+                    content_length, post_max_size
+                );
+                vm.report_error(ErrorLevel::Warning, &msg);
+                // Don't parse POST data when size exceeded
+            } else {
+                self.parse_post_raw(post_raw, vm);
+            }
         }
 
         // Parse and set $_COOKIE
@@ -260,7 +312,9 @@ impl PhptExecutor {
             }
             let decoded_value = Self::url_decode(value);
 
-            self.insert_query_pair(&mut result, &decoded_key, &decoded_value, vm);
+            // Convert decoded key bytes to string for parsing
+            let key_str = String::from_utf8_lossy(&decoded_key).to_string();
+            self.insert_query_pair(&mut result, &key_str, &decoded_value, vm);
         }
 
         let array_data = ArrayData::from(result);
@@ -272,7 +326,7 @@ impl PhptExecutor {
         &self,
         result: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
         key: &str,
-        value: &str,
+        value: &[u8],
         vm: &mut VM,
     ) {
         let (base, mut segments) = Self::parse_key_parts(key);
@@ -304,23 +358,36 @@ impl PhptExecutor {
             if chars[i] == '[' {
                 i += 1; // skip '['
                 let mut segment = String::new();
-                let mut depth = 1;
 
-                // Find matching ']' by tracking depth
-                while i < chars.len() && depth > 0 {
+                // Find matching ']'
+                // PHP rule: if we see '[' inside the segment, the next ']' closes it
+                // and we stop parsing (ignore rest)
+                let mut found_inner_bracket = false;
+                while i < chars.len() {
                     if chars[i] == '[' {
-                        depth += 1;
+                        found_inner_bracket = true;
                         segment.push(chars[i]);
+                        i += 1;
                     } else if chars[i] == ']' {
-                        depth -= 1;
-                        if depth > 0 {
-                            segment.push(chars[i]);
+                        if found_inner_bracket {
+                            // This ] closes the inner [, stop here (don't include this ])
+                            // Skip to the outer closing ]
+                            while i < chars.len() && chars[i] != ']' {
+                                i += 1;
+                            }
+                            if i < chars.len() {
+                                i += 1; // skip the outer ]
+                            }
+                            break;
+                        } else {
+                            // This is the outer closing ]
+                            i += 1; // skip it
+                            break;
                         }
-                        // depth == 0: found matching ']', don't include it
                     } else {
                         segment.push(chars[i]);
+                        i += 1;
                     }
-                    i += 1;
                 }
 
                 segments.push(segment);
@@ -337,7 +404,7 @@ impl PhptExecutor {
         &self,
         map: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
         parts: &[String],
-        value: &str,
+        value: &[u8],
         vm: &mut VM,
     ) {
         use crate::core::value::{ArrayData, ArrayKey, Val};
@@ -355,7 +422,7 @@ impl PhptExecutor {
         };
 
         if is_last {
-            let val = Val::String(Rc::new(value.as_bytes().to_vec()));
+            let val = Val::String(Rc::new(value.to_vec()));
             let handle = vm.arena.alloc(val);
             map.insert(array_key, handle);
             return;
@@ -423,13 +490,14 @@ impl PhptExecutor {
                     _ => c
                 }
             }).collect::<String>();
-            let decoded_value = Self::url_decode(value);
+            // Cookie values are taken as-is (as bytes), no URL decoding
+            let value_bytes = value.as_bytes().to_vec();
 
             let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
             
             // PHP keeps the FIRST value when there are duplicate cookie names
             if !result.contains_key(&array_key) {
-                let val = Val::String(Rc::new(decoded_value.as_bytes().to_vec()));
+                let val = Val::String(Rc::new(value_bytes));
                 let val_handle = vm.arena.alloc(val);
                 result.insert(array_key, val_handle);
             }
@@ -440,23 +508,28 @@ impl PhptExecutor {
         vm.arena.alloc(array_val)
     }
 
-    fn url_decode(s: &str) -> String {
-        let mut result = String::new();
+    fn url_decode(s: &str) -> Vec<u8> {
+        let mut result = Vec::new();
         let mut chars = s.chars().peekable();
 
         while let Some(ch) = chars.next() {
             match ch {
-                '+' => result.push(' '),
+                '+' => result.push(b' '),
                 '%' => {
                     let hex: String = chars.by_ref().take(2).collect();
                     if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                        result.push(byte as char);
+                        result.push(byte);
                     } else {
-                        result.push('%');
-                        result.push_str(&hex);
+                        result.push(b'%');
+                        result.extend_from_slice(hex.as_bytes());
                     }
                 }
-                _ => result.push(ch),
+                _ => {
+                    // For non-ASCII or multi-byte UTF-8, encode as bytes
+                    let mut buf = [0u8; 4];
+                    let encoded = ch.encode_utf8(&mut buf);
+                    result.extend_from_slice(encoded.as_bytes());
+                }
             }
         }
 
@@ -486,13 +559,24 @@ impl PhptExecutor {
                 let boundary_value = &boundary_rest[..end_pos];
                 // Remove quotes if present
                 let boundary_trimmed = boundary_value.trim();
+                
+                // Check for invalid quoted boundary (opening quote without closing quote)
+                if boundary_trimmed.starts_with('"') && (!boundary_trimmed.ends_with('"') || boundary_trimmed.len() == 1) {
+                    use crate::vm::engine::ErrorLevel;
+                    vm.report_error(ErrorLevel::Warning, "PHP Request Startup: Invalid boundary in multipart/form-data POST data in Unknown");
+                    return;
+                }
+                
                 if boundary_trimmed.starts_with('"') && boundary_trimmed.ends_with('"') && boundary_trimmed.len() > 1 {
                     &boundary_trimmed[1..boundary_trimmed.len()-1]
                 } else {
                     boundary_trimmed
                 }
             } else {
-                return; // No boundary found
+                // No boundary found - emit warning and return
+                use crate::vm::engine::ErrorLevel;
+                vm.report_error(ErrorLevel::Warning, "PHP Request Startup: Missing boundary in multipart/form-data POST data in Unknown");
+                return;
             }
         } else {
             return;
@@ -549,16 +633,16 @@ impl PhptExecutor {
                     // Extract name and filename
                     for segment in header.split(';') {
                         let segment = segment.trim();
-                        // Match name="..." but not filename="..."
-                        if segment.starts_with("name=\"") {
-                            let name_value = &segment[6..];
-                            if let Some(end_quote) = name_value.find('"') {
-                                field_name = Some(name_value[..end_quote].to_string());
-                            }
-                        } else if segment.starts_with("filename=\"") {
-                            let filename_value = &segment[10..];
-                            if let Some(end_quote) = filename_value.find('"') {
-                                filename = Some(filename_value[..end_quote].to_string());
+                        
+                        // Parse name=value, name='value', or name="value"
+                        if let Some(eq_pos) = segment.find('=') {
+                            let key = segment[..eq_pos].trim();
+                            let value = &segment[eq_pos + 1..];
+                            
+                            if key == "name" {
+                                field_name = Some(Self::parse_disposition_value(value));
+                            } else if key == "filename" {
+                                filename = Some(Self::parse_disposition_value(value));
                             }
                         }
                     }
@@ -572,11 +656,25 @@ impl PhptExecutor {
             };
             
             // Body content (join remaining lines)
-            let content = body_lines.join("\n");
-            let content_trimmed = content.trim_end();
+            let mut content = body_lines.join("\n");
+            // Remove only the final newline (before boundary), not all trailing whitespace
+            if content.ends_with('\n') {
+                content.pop();
+            }
+            let content_trimmed = &content;
+            
+            // Check file_uploads INI setting
+            let file_uploads_enabled = vm.context.config.ini_settings.get("file_uploads")
+                .map(|v| v != "0" && v.to_lowercase() != "off" && v.to_lowercase() != "false")
+                .unwrap_or(true); // Default is enabled
             
             if let Some(fname) = filename {
                 // This is a file upload
+                if !file_uploads_enabled {
+                    // file_uploads is disabled - skip file uploads, don't add to $_FILES
+                    continue;
+                }
+                
                 if fname.is_empty() {
                     // Empty filename - error code 4 (UPLOAD_ERR_NO_FILE)
                     let mut file_info = IndexMap::new();
@@ -590,6 +688,33 @@ impl PhptExecutor {
                     let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
                     files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
                 } else {
+                    // Check upload_max_filesize
+                    let upload_max_filesize = vm.context.config.ini_settings.get("upload_max_filesize")
+                        .and_then(|v| self.parse_size_ini_value(v))
+                        .unwrap_or(2 * 1024 * 1024); // Default 2MB
+                    
+                    let file_size = content_trimmed.len();
+                    
+                    if file_size > upload_max_filesize {
+                        // File exceeds upload_max_filesize - error code 1 (UPLOAD_ERR_INI_SIZE)
+                        let fname_bytes = Rc::new(fname.clone().into_bytes());
+                        let mut file_info = IndexMap::new();
+                        file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
+                            vm.arena.alloc(Val::String(fname_bytes.clone())));
+                        file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), 
+                            vm.arena.alloc(Val::String(fname_bytes)));
+                        file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
+                            vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                        file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
+                            vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
+                        file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(1)));
+                        file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(0)));
+                        
+                        let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
+                        files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                        continue;
+                    }
+                    
                     // Create temporary file
                     use std::io::Write;
                     let tmp_dir = std::env::temp_dir();
@@ -701,7 +826,9 @@ impl PhptExecutor {
         } else if allow_get_derivation && (test.sections.get.is_some() || test.sections.cgi) {
             // Handle argv/argc from GET query string (for tests like 011.phpt)
             let args: Vec<String> = if let Some(ref get_data) = test.sections.get {
-                get_data.split('+').map(Self::url_decode).collect()
+                get_data.split('+')
+                    .map(|s| String::from_utf8_lossy(&Self::url_decode(s)).to_string())
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -799,6 +926,94 @@ impl PhptExecutor {
             .map_err(|e| format!("Failed to flush output: {:?}", e))?;
 
         Ok(())
+    }
+    
+    /// Parse INI size value (e.g., "1", "1K", "1M", "1G")
+    fn parse_size_ini_value(&self, value: &str) -> Option<usize> {
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        
+        let (num_str, multiplier) = if value.ends_with('G') || value.ends_with('g') {
+            (&value[..value.len()-1], 1024 * 1024 * 1024)
+        } else if value.ends_with('M') || value.ends_with('m') {
+            (&value[..value.len()-1], 1024 * 1024)
+        } else if value.ends_with('K') || value.ends_with('k') {
+            (&value[..value.len()-1], 1024)
+        } else {
+            (value, 1)
+        };
+        
+        num_str.parse::<usize>().ok().map(|n| n * multiplier)
+    }
+    
+    /// Parse Content-Disposition parameter value with proper quote and escape handling
+    /// Handles: unquoted, 'single-quoted', "double-quoted" with escape sequences
+    fn parse_disposition_value(s: &str) -> String {
+        let s = s.trim();
+        if s.is_empty() {
+            return String::new();
+        }
+        
+        // Check for quotes
+        let first_char = s.chars().next().unwrap();
+        
+        if first_char == '"' || first_char == '\'' {
+            // Quoted value - parse with escape handling
+            let quote_char = first_char;
+            let mut result = String::new();
+            let mut chars = s.chars().skip(1); // Skip opening quote
+            
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    // Escape sequence
+                    if let Some(next_ch) = chars.next() {
+                        match next_ch {
+                            '\\' => result.push('\\'),
+                            '\'' if quote_char == '\'' => result.push('\''),
+                            '"' if quote_char == '"' => result.push('"'),
+                            // For other escapes within quotes, PHP keeps backslash+char
+                            _ => {
+                                result.push('\\');
+                                result.push(next_ch);
+                            }
+                        }
+                    } else {
+                        result.push('\\');
+                    }
+                } else if ch == quote_char {
+                    // Closing quote - done
+                    break;
+                } else {
+                    result.push(ch);
+                }
+            }
+            result
+        } else {
+            // Unquoted value - only \\ is an escape sequence
+            let mut result = String::new();
+            let mut chars = s.chars();
+            
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    if let Some(next_ch) = chars.next() {
+                        if next_ch == '\\' {
+                            result.push('\\');
+                        } else {
+                            // Not an escape - keep both characters
+                            result.push('\\');
+                            result.push(next_ch);
+                        }
+                    } else {
+                        result.push('\\');
+                    }
+                } else {
+                    result.push(ch);
+                }
+            }
+            result
+        }
     }
 }
 
