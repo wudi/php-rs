@@ -1012,11 +1012,7 @@ impl VM {
             .current_location()
             .unwrap_or_else(|| ("Unknown".to_string(), 0));
         let error_line = error_line as i64;
-        let formatted_message = if error_line > 0 {
-            format!("{} in {} on line {}", message, error_file, error_line)
-        } else {
-            message.to_string()
-        };
+        let formatted_message = format!("{} in {} on line {}", message, error_file, error_line);
 
         // Store this as the last error regardless of error_reporting level
         self.context.last_error = Some(crate::runtime::context::ErrorInfo {

@@ -109,11 +109,8 @@ impl PhptExecutor {
     fn execute_test_code(&self, test: &PhptTest) -> TestResult {
         let mut vm = VM::new_with_sapi(self.engine_context.clone(), crate::sapi::SapiMode::Cli);
 
-        // Apply INI settings from --INI-- section
-        self.apply_ini_settings(&mut vm, test);
-
-        // Set up output writer and error handler BEFORE setup_superglobals
-        // so warnings during POST parsing are captured
+        // Set up output writer and error handler FIRST
+        // so warnings during INI application and POST parsing are captured
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer.clone()));
         
@@ -121,6 +118,9 @@ impl PhptExecutor {
             output_writer.state.clone()
         );
         vm.set_error_handler(Box::new(error_handler));
+
+        // Apply INI settings from --INI-- section (may emit warnings)
+        self.apply_ini_settings(&mut vm, test);
 
         // Set up HTTP superglobals from test sections
         self.setup_superglobals(&mut vm, test);
@@ -1156,19 +1156,27 @@ impl PhptExecutor {
         }
         
         // Apply memory_limit clamping based on max_memory_limit
-        if let Some(max_memory_limit_str) = vm.context.config.ini_settings.get("max_memory_limit") {
-            if let Some(max_memory_limit) = self.parse_size_ini_value(max_memory_limit_str) {
-                if let Some(memory_limit_str) = vm.context.config.ini_settings.get("memory_limit") {
+        if let Some(max_memory_limit_str) = vm.context.config.ini_settings.get("max_memory_limit").cloned() {
+            if let Some(max_memory_limit) = self.parse_size_ini_value(&max_memory_limit_str) {
+                if let Some(memory_limit_str) = vm.context.config.ini_settings.get("memory_limit").cloned() {
                     // Parse memory_limit - handle -1 as unlimited
                     if memory_limit_str == "-1" {
-                        // Clamp unlimited to max_memory_limit
+                        // Silently clamp -1 to max_memory_limit (no warning for -1)
                         vm.context.config.ini_settings.insert(
                             "memory_limit".to_string(),
                             max_memory_limit_str.clone()
                         );
-                    } else if let Some(memory_limit) = self.parse_size_ini_value(memory_limit_str) {
-                        // Clamp to max_memory_limit if exceeds
+                    } else if let Some(memory_limit) = self.parse_size_ini_value(&memory_limit_str) {
                         if memory_limit > max_memory_limit {
+                            // Emit warning when exceeding max
+                            use crate::vm::engine::ErrorLevel;
+                            let msg = format!(
+                                "Failed to set memory_limit to {} bytes. Setting to max_memory_limit instead (currently: {} bytes)",
+                                memory_limit, max_memory_limit
+                            );
+                            vm.trigger_error(ErrorLevel::Warning, &msg);
+                            
+                            // Clamp to max_memory_limit
                             vm.context.config.ini_settings.insert(
                                 "memory_limit".to_string(),
                                 max_memory_limit_str.clone()

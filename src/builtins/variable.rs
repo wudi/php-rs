@@ -784,6 +784,11 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         _ => return Err("ini_set() expects string parameter".into()),
     };
 
+    // max_memory_limit cannot be changed at runtime
+    if option == "max_memory_limit" {
+        return Ok(vm.arena.alloc(Val::Bool(false)));
+    }
+
     let new_value = match &vm.arena.get(args[1]).value {
         Val::String(s) => String::from_utf8_lossy(s).to_string(),
         Val::Int(i) => i.to_string(),
@@ -797,11 +802,73 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         .cloned()
         .unwrap_or_else(|| "".to_string());
 
-    // Store the new value
-    vm.context.config.ini_settings.insert(option, new_value);
+    // Handle memory_limit clamping if max_memory_limit is set
+    let final_value = if option == "memory_limit" {
+        if let Some(max_memory_limit_str) = vm.context.config.ini_settings.get("max_memory_limit").cloned() {
+            if let Some(max_memory_limit) = parse_size_value(&max_memory_limit_str) {
+                let attempted_limit = if new_value == "-1" {
+                    None // -1 means unlimited
+                } else {
+                    parse_size_value(&new_value)
+                };
+                
+                match attempted_limit {
+                    None => {
+                        // -1 (unlimited) - silently clamp to max_memory_limit (no warning)
+                        max_memory_limit_str
+                    }
+                    Some(limit) if limit > max_memory_limit => {
+                        // Exceeds max - clamp to max_memory_limit with warning
+                        use crate::vm::engine::ErrorLevel;
+                        vm.trigger_error(
+                            ErrorLevel::Warning,
+                            &format!(
+                                "Failed to set memory_limit to {} bytes. Setting to max_memory_limit instead (currently: {} bytes)",
+                                limit, max_memory_limit
+                            )
+                        );
+                        max_memory_limit_str
+                    }
+                    Some(_) => {
+                        // Within limits
+                        new_value
+                    }
+                }
+            } else {
+                new_value
+            }
+        } else {
+            new_value
+        }
+    } else {
+        new_value
+    };
+
+    // Store the final value
+    vm.context.config.ini_settings.insert(option, final_value);
 
     // Return the old value
     Ok(vm.arena.alloc(Val::String(Rc::new(old_value.as_bytes().to_vec()))))
+}
+
+/// Parse size value like "128M", "1G", etc.
+fn parse_size_value(value: &str) -> Option<usize> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    
+    let (num_str, multiplier) = if value.ends_with('G') || value.ends_with('g') {
+        (&value[..value.len()-1], 1024 * 1024 * 1024)
+    } else if value.ends_with('M') || value.ends_with('m') {
+        (&value[..value.len()-1], 1024 * 1024)
+    } else if value.ends_with('K') || value.ends_with('k') {
+        (&value[..value.len()-1], 1024)
+    } else {
+        (value, 1)
+    };
+    
+    num_str.parse::<usize>().ok().map(|n| n * multiplier)
 }
 
 pub fn php_error_reporting(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
