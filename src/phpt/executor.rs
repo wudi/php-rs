@@ -1,5 +1,4 @@
 use crate::compiler::emitter::Emitter;
-use crate::core::value::{ArrayData, Val};
 use crate::parser::lexer::Lexer;
 use crate::parser::parser::Parser as PhpParser;
 use crate::phpt::matcher::{match_output, ExpectationType};
@@ -405,6 +404,7 @@ impl PhptExecutor {
         }
 
         // Parse bracket segments
+        let mut has_trailing_chars = false;
         while i < chars.len() {
             if chars[i] == '[' {
                 i += 1; // skip opening '['
@@ -426,9 +426,15 @@ impl PhptExecutor {
                 // Extra ']' outside brackets - ignore
                 i += 1;
             } else {
-                // Other characters after brackets - shouldn't happen with well-formed input
+                // Other characters after brackets - malformed for file uploads
+                has_trailing_chars = true;
                 i += 1;
             }
+        }
+
+        if has_trailing_chars {
+            // Return empty segments to signal malformed input
+            return (base, vec![]);
         }
 
         (base, segments)
@@ -525,8 +531,8 @@ impl PhptExecutor {
                 }
             }).collect::<String>();
             
-            // Cookie values ARE URL decoded (unlike what I initially thought)
-            let value_bytes = Self::url_decode(value);
+            // Cookie values use percent-encoding only (RFC 6265), not + for space
+            let value_bytes = Self::cookie_decode(value);
 
             let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
             
@@ -550,6 +556,34 @@ impl PhptExecutor {
         while let Some(ch) = chars.next() {
             match ch {
                 '+' => result.push(b' '),
+                '%' => {
+                    let hex: String = chars.by_ref().take(2).collect();
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        result.push(byte);
+                    } else {
+                        result.push(b'%');
+                        result.extend_from_slice(hex.as_bytes());
+                    }
+                }
+                _ => {
+                    // For non-ASCII or multi-byte UTF-8, encode as bytes
+                    let mut buf = [0u8; 4];
+                    let encoded = ch.encode_utf8(&mut buf);
+                    result.extend_from_slice(encoded.as_bytes());
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Decode cookie values using RFC 6265 rules (percent-encoding only, + is NOT space)
+    fn cookie_decode(s: &str) -> Vec<u8> {
+        let mut result = Vec::new();
+        let mut chars = s.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            match ch {
                 '%' => {
                     let hex: String = chars.by_ref().take(2).collect();
                     if let Ok(byte) = u8::from_str_radix(&hex, 16) {
@@ -623,9 +657,17 @@ impl PhptExecutor {
         let delimiter = format!("--{}", boundary);
         let end_delimiter = format!("--{}--", boundary);
         
+        // Check if the multipart data ends with proper closing boundary
+        let has_proper_ending = body.trim_end().ends_with(&end_delimiter) || 
+                                 body.trim_end().ends_with(&format!("{}\r\n", end_delimiter)) ||
+                                 body.trim_end().ends_with(&format!("{}\n", end_delimiter));
+        
         let mut post_map = IndexMap::new();
         // Track file uploads: Vec<(field_name, name, full_path, type, tmp_name, error, size)>
         let mut file_uploads: Vec<(String, String, String, String, String, i64, i64)> = Vec::new();
+        
+        // Track MAX_FILE_SIZE from form data (client-side hint for file size limit)
+        let mut max_file_size: Option<usize> = None;
         
         // Get max_input_nesting_level for validation
         let max_nesting_level = vm.context.config.ini_settings.get("max_input_nesting_level")
@@ -638,10 +680,14 @@ impl PhptExecutor {
             .unwrap_or(20);
         
         // Split by boundary
-        for (_idx, part) in body.split(&delimiter).enumerate() {
+        let parts: Vec<&str> = body.split(&delimiter).collect();
+        for (idx, part) in parts.iter().enumerate() {
             if part.trim().is_empty() || part.trim() == end_delimiter.trim() || part.starts_with("--") {
                 continue;
             }
+            
+            // Check if this is the last part
+            let is_last_part = idx == parts.len() - 1;
             
             // Split headers and body
             // Note: Parts often start with an empty line after the boundary delimiter
@@ -693,8 +739,15 @@ impl PhptExecutor {
                         }
                     }
                 } else if header.starts_with("Content-Type:") {
-                    content_type = Some(header["Content-Type:".len()..].trim().to_string());
+                    let ct = header["Content-Type:".len()..].trim();
+                    // Remove trailing semicolons and whitespace
+                    content_type = Some(ct.trim_end_matches(';').trim().to_string());
                 }
+            }
+            
+            // Skip parts with garbled headers (no name and no filename)
+            if field_name.is_none() && filename.is_none() {
+                continue;
             }
             
             // For anonymous uploads (no name, only filename), use numeric index
@@ -731,11 +784,17 @@ impl PhptExecutor {
                     continue;
                 }
                 
-                // For file uploads, reject malformed names (unclosed brackets)
+                // For file uploads, reject malformed names (unclosed brackets or double [[)
                 // parse_key_parts returns empty segments for flattened names
                 // If the original name had brackets but segments is empty, it was flattened due to malformation
-                if name.contains('[') && segments.is_empty() {
-                    // Malformed name (unclosed brackets) - skip this file upload
+                // Also reject if any segment starts with '[' (indicates double [[)
+                let has_malformed_brackets = name.contains('[') && (
+                    segments.is_empty() || 
+                    segments.iter().any(|s| s.starts_with('['))
+                );
+                
+                if has_malformed_brackets {
+                    // Malformed name (unclosed brackets or double [[) - skip this file upload
                     continue;
                 }
                 
@@ -759,18 +818,43 @@ impl PhptExecutor {
                         0
                     ));
                 } else {
-                    // Check upload_max_filesize
+                    // Extract basename from filename (for 'name' field)
+                    // Full path is preserved in 'full_path' field
+                    let basename = fname.rsplit(&['/', '\\'][..])
+                        .next()
+                        .unwrap_or(&fname)
+                        .to_string();
+                    
+                    let file_size = content_trimmed.len();
+                    
+                    // Check MAX_FILE_SIZE (client-side hint) first
+                    // Error code 2 = UPLOAD_ERR_FORM_SIZE
+                    if let Some(max_size) = max_file_size {
+                        if file_size > max_size {
+                            file_uploads.push((
+                                name.clone(),
+                                basename.clone(),
+                                fname.clone(),
+                                String::new(),
+                                String::new(),
+                                2, // UPLOAD_ERR_FORM_SIZE
+                                0
+                            ));
+                            continue;
+                        }
+                    }
+                    
+                    // Check upload_max_filesize (server-side limit)
+                    // Error code 1 = UPLOAD_ERR_INI_SIZE
                     let upload_max_filesize = vm.context.config.ini_settings.get("upload_max_filesize")
                         .and_then(|v| self.parse_size_ini_value(v))
                         .unwrap_or(2 * 1024 * 1024); // Default 2MB
-                    
-                    let file_size = content_trimmed.len();
                     
                     if file_size > upload_max_filesize {
                         // File exceeds upload_max_filesize - error code 1 (UPLOAD_ERR_INI_SIZE)
                         file_uploads.push((
                             name.clone(),
-                            fname.clone(),
+                            basename.clone(),
                             fname.clone(),
                             String::new(),
                             String::new(),
@@ -799,18 +883,41 @@ impl PhptExecutor {
                     let tmp_path_string = tmp_path.to_string_lossy().into_owned();
                     vm.context.uploaded_files.insert(tmp_path_string.clone());
                     
+                    // Check if this is a partial upload (last part with no proper ending)
+                    let error_code = if is_last_part && !has_proper_ending {
+                        3 // UPLOAD_ERR_PARTIAL - file was only partially uploaded
+                    } else {
+                        0 // No error
+                    };
+                    
+                    // For partial uploads, don't save the file
+                    let (final_tmp_name, final_size) = if error_code == 3 {
+                        (String::new(), 0)
+                    } else {
+                        (tmp_path_string, size)
+                    };
+                    
                     file_uploads.push((
                         name.clone(),
-                        fname.clone(),
-                        fname,
-                        content_type.clone().unwrap_or_default(),
-                        tmp_path_string,
-                        0, // No error
-                        size
+                        basename,        // name field: basename only
+                        fname,           // full_path field: preserve directory structure
+                        if error_code == 3 { String::new() } else { content_type.clone().unwrap_or_default() },
+                        final_tmp_name,
+                        error_code,
+                        final_size
                     ));
                 }
             } else {
                 // Regular form field
+                
+                // Check if this is MAX_FILE_SIZE field
+                if name == "MAX_FILE_SIZE" {
+                    // Parse the value as file size limit
+                    if let Ok(size) = content_trimmed.parse::<usize>() {
+                        max_file_size = Some(size);
+                    }
+                }
+                
                 let value_handle = vm.arena.alloc(Val::String(Rc::new(content_trimmed.as_bytes().to_vec())));
                 post_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), value_handle);
             }
@@ -1039,6 +1146,37 @@ impl PhptExecutor {
     fn apply_ini_settings(&self, vm: &mut VM, test: &PhptTest) {
         for (key, value) in &test.sections.ini {
             vm.context.config.ini_settings.insert(key.clone(), value.clone());
+            
+            // Apply special INI settings that need to be parsed
+            if key == "error_reporting" {
+                if let Some(level) = self.parse_error_reporting_level(value) {
+                    vm.context.config.error_reporting = level;
+                }
+            }
+        }
+        
+        // Apply memory_limit clamping based on max_memory_limit
+        if let Some(max_memory_limit_str) = vm.context.config.ini_settings.get("max_memory_limit") {
+            if let Some(max_memory_limit) = self.parse_size_ini_value(max_memory_limit_str) {
+                if let Some(memory_limit_str) = vm.context.config.ini_settings.get("memory_limit") {
+                    // Parse memory_limit - handle -1 as unlimited
+                    if memory_limit_str == "-1" {
+                        // Clamp unlimited to max_memory_limit
+                        vm.context.config.ini_settings.insert(
+                            "memory_limit".to_string(),
+                            max_memory_limit_str.clone()
+                        );
+                    } else if let Some(memory_limit) = self.parse_size_ini_value(memory_limit_str) {
+                        // Clamp to max_memory_limit if exceeds
+                        if memory_limit > max_memory_limit {
+                            vm.context.config.ini_settings.insert(
+                                "memory_limit".to_string(),
+                                max_memory_limit_str.clone()
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1079,6 +1217,104 @@ impl PhptExecutor {
             .map_err(|e| format!("Failed to flush output: {:?}", e))?;
 
         Ok(())
+    }
+    
+    /// Parse error_reporting level from INI value
+    /// Supports expressions like "E_ALL", "E_ALL & ~E_NOTICE", "E_ALL ^ E_WARNING", etc.
+    fn parse_error_reporting_level(&self, value: &str) -> Option<u32> {
+        // PHP error level constants
+        const E_ERROR: u32 = 1;
+        const E_WARNING: u32 = 2;
+        const E_PARSE: u32 = 4;
+        const E_NOTICE: u32 = 8;
+        const E_CORE_ERROR: u32 = 16;
+        const E_CORE_WARNING: u32 = 32;
+        const E_COMPILE_ERROR: u32 = 64;
+        const E_COMPILE_WARNING: u32 = 128;
+        const E_USER_ERROR: u32 = 256;
+        const E_USER_WARNING: u32 = 512;
+        const E_USER_NOTICE: u32 = 1024;
+        const E_STRICT: u32 = 2048;
+        const E_RECOVERABLE_ERROR: u32 = 4096;
+        const E_DEPRECATED: u32 = 8192;
+        const E_USER_DEPRECATED: u32 = 16384;
+        const E_ALL: u32 = 32767;
+        
+        // First try to parse as a numeric value
+        if let Ok(level) = value.trim().parse::<u32>() {
+            return Some(level);
+        }
+        
+        // Parse simple expressions like "E_ALL ^ E_WARNING"
+        // This is a simplified parser that handles common patterns
+        let value = value.trim();
+        
+        // Replace constant names with values for simple evaluation
+        let with_values = value
+            .replace("E_ALL", &E_ALL.to_string())
+            .replace("E_ERROR", &E_ERROR.to_string())
+            .replace("E_WARNING", &E_WARNING.to_string())
+            .replace("E_PARSE", &E_PARSE.to_string())
+            .replace("E_NOTICE", &E_NOTICE.to_string())
+            .replace("E_CORE_ERROR", &E_CORE_ERROR.to_string())
+            .replace("E_CORE_WARNING", &E_CORE_WARNING.to_string())
+            .replace("E_COMPILE_ERROR", &E_COMPILE_ERROR.to_string())
+            .replace("E_COMPILE_WARNING", &E_COMPILE_WARNING.to_string())
+            .replace("E_USER_ERROR", &E_USER_ERROR.to_string())
+            .replace("E_USER_WARNING", &E_USER_WARNING.to_string())
+            .replace("E_USER_NOTICE", &E_USER_NOTICE.to_string())
+            .replace("E_STRICT", &E_STRICT.to_string())
+            .replace("E_RECOVERABLE_ERROR", &E_RECOVERABLE_ERROR.to_string())
+            .replace("E_DEPRECATED", &E_DEPRECATED.to_string())
+            .replace("E_USER_DEPRECATED", &E_USER_DEPRECATED.to_string());
+        
+        // Simple expression evaluator for bitwise operations
+        // Supports: &, |, ^, ~, parentheses
+        self.evaluate_bitwise_expression(&with_values)
+    }
+    
+    /// Simple bitwise expression evaluator
+    fn evaluate_bitwise_expression(&self, expr: &str) -> Option<u32> {
+        // For now, handle simple cases like "32767 ^ 2" (E_ALL ^ E_WARNING)
+        let expr = expr.trim();
+        
+        // Handle XOR (^)
+        if let Some(pos) = expr.find('^') {
+            let left = self.evaluate_bitwise_expression(expr[..pos].trim())?;
+            let right = self.evaluate_bitwise_expression(expr[pos+1..].trim())?;
+            return Some(left ^ right);
+        }
+        
+        // Handle AND (&)
+        if let Some(pos) = expr.find('&') {
+            // Check if it's &~ (AND NOT)
+            let after_amp = expr[pos+1..].trim();
+            if after_amp.starts_with('~') {
+                let left = self.evaluate_bitwise_expression(expr[..pos].trim())?;
+                let right = self.evaluate_bitwise_expression(after_amp[1..].trim())?;
+                return Some(left & !right);
+            } else {
+                let left = self.evaluate_bitwise_expression(expr[..pos].trim())?;
+                let right = self.evaluate_bitwise_expression(after_amp)?;
+                return Some(left & right);
+            }
+        }
+        
+        // Handle OR (|)
+        if let Some(pos) = expr.find('|') {
+            let left = self.evaluate_bitwise_expression(expr[..pos].trim())?;
+            let right = self.evaluate_bitwise_expression(expr[pos+1..].trim())?;
+            return Some(left | right);
+        }
+        
+        // Handle NOT (~)
+        if expr.starts_with('~') {
+            let value = self.evaluate_bitwise_expression(expr[1..].trim())?;
+            return Some(!value);
+        }
+        
+        // Parse as number
+        expr.parse::<u32>().ok()
     }
     
     /// Parse INI size value (e.g., "1", "1K", "1M", "1G")

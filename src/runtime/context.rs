@@ -33,12 +33,20 @@ pub struct PhpConfig {
 
 impl Default for PhpConfig {
     fn default() -> Self {
+        let mut ini_settings = HashMap::new();
+        
+        // Set default encoding settings
+        ini_settings.insert("default_charset".to_string(), "UTF-8".to_string());
+        ini_settings.insert("input_encoding".to_string(), "".to_string());
+        ini_settings.insert("internal_encoding".to_string(), "".to_string());
+        ini_settings.insert("output_encoding".to_string(), "".to_string());
+        
         Self {
             error_reporting: 32767, // E_ALL
             max_execution_time: 300,
             timezone: "UTC".to_string(),
             working_dir: None,
-            ini_settings: HashMap::new(),
+            ini_settings,
         }
     }
 }

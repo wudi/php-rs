@@ -829,19 +829,24 @@ pub fn php_scandir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 /// sys_get_temp_dir() - Get directory path used for temporary files
 /// Reference: $PHP_SRC_PATH/ext/standard/file.c - PHP_FUNCTION(sys_get_temp_dir)
 pub fn php_sys_get_temp_dir(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
-    let temp_dir = std::env::temp_dir();
+    // Check for sys_temp_dir INI setting first
+    let temp_dir_path = if let Some(ini_temp_dir) = vm.context.config.ini_settings.get("sys_temp_dir") {
+        std::path::PathBuf::from(ini_temp_dir)
+    } else {
+        std::env::temp_dir()
+    };
 
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
         Ok(vm.arena.alloc(Val::String(Rc::new(
-            temp_dir.as_os_str().as_bytes().to_vec(),
+            temp_dir_path.as_os_str().as_bytes().to_vec(),
         ))))
     }
 
     #[cfg(not(unix))]
     {
-        let path_str = temp_dir.to_string_lossy().into_owned();
+        let path_str = temp_dir_path.to_string_lossy().into_owned();
         Ok(vm.arena.alloc(Val::String(Rc::new(path_str.into_bytes()))))
     }
 }

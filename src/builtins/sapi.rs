@@ -289,6 +289,9 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         None => (false, last_char),
     };
     
+    // Check if the last char is a valid multiplier
+    let last_char_is_multiplier = matches!(last_char, 'k' | 'K' | 'm' | 'M' | 'g' | 'G');
+    
     // Check if it's a simple single-character suffix or multi-character
     let is_single_char = trimmed_suffix.len() == 1;
     
@@ -303,6 +306,18 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         return Ok(vm.arena.alloc(Val::Int(result)));
     }
     
+    // If the last character is NOT a valid multiplier, don't apply any multiplier
+    // e.g., "1gb" or "14.2mb" - the 'b' at the end makes it invalid
+    if !last_char_is_multiplier {
+        vm.trigger_error(
+            ErrorLevel::Warning,
+            &format!("Invalid quantity \"{}\": unknown multiplier \"{}\", interpreting as \"{}\" for backwards compatibility",
+                trimmed, last_char, number)
+        );
+        let result = if is_negative { -number } else { number };
+        return Ok(vm.arena.alloc(Val::Int(result)));
+    }
+    
     let factor: i64 = match multiplier_char {
         'k' | 'K' => 1024,
         'm' | 'M' => 1024 * 1024,
@@ -310,27 +325,14 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         _ => unreachable!(),
     };
     
-    // If multi-character suffix, emit warning
+    // If multi-character suffix, emit warning (but still apply multiplier since last char is valid)
     if !is_single_char {
-        // Check if the last char is the same as the multiplier we found
-        if last_char == multiplier_char {
-            // e.g., "1gb" where last char is 'b' (invalid) but we found 'g'
-            vm.trigger_error(
-                ErrorLevel::Warning,
-                &format!("Invalid quantity \"{}\": unknown multiplier \"{}\", interpreting as \"{}\" for backwards compatibility",
-                    trimmed, last_char, number)
-            );
-            // Don't use the multiplier - just return the number
-            let result = if is_negative { -number } else { number };
-            return Ok(vm.arena.alloc(Val::Int(result)));
-        } else {
-            // e.g., "14.2bm" - we have a valid multiplier 'm' but also junk 'b'
-            vm.trigger_error(
-                ErrorLevel::Warning,
-                &format!("Invalid quantity \"{}\", interpreting as \"{}{}\" for backwards compatibility",
-                    trimmed, number, multiplier_char)
-            );
-        }
+        // e.g., "14.2bm" - we have junk 'b' before the valid multiplier 'm'
+        vm.trigger_error(
+            ErrorLevel::Warning,
+            &format!("Invalid quantity \"{}\", interpreting as \"{} {}\" for backwards compatibility",
+                trimmed, number, multiplier_char)
+        );
     }
 
     // Calculate result with overflow check
