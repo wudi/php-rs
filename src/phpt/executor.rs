@@ -195,18 +195,18 @@ impl PhptExecutor {
 
         // Parse and set $_POST
         if let Some(ref post_data) = test.sections.post {
-            // Check post_max_size
-            let post_max_size = vm.context.config.ini_settings.get("post_max_size")
-                .and_then(|v| self.parse_size_ini_value(v))
-                .unwrap_or(8 * 1024 * 1024); // Default 8MB
+            // Check post_max_size (0 means unlimited)
+            let post_max_size = self.parse_post_max_size(vm);
             
             let content_length = post_data.len();
+            let exceeds_limit = post_max_size.map_or(false, |limit| content_length > limit);
             
-            if content_length > post_max_size {
+            if exceeds_limit {
                 use crate::vm::engine::ErrorLevel;
+                let limit_str = post_max_size.unwrap();
                 let msg = format!(
                     "PHP Request Startup: POST Content-Length of {} bytes exceeds the limit of {} bytes in Unknown",
-                    content_length, post_max_size
+                    content_length, limit_str
                 );
                 vm.report_error(ErrorLevel::Warning, &msg);
                 // Set empty $_POST array
@@ -222,10 +222,8 @@ impl PhptExecutor {
 
         // Parse POST_RAW if present (multipart/form-data)
         if let Some(ref post_raw) = test.sections.post_raw {
-            // Check post_max_size
-            let post_max_size = vm.context.config.ini_settings.get("post_max_size")
-                .and_then(|v| self.parse_size_ini_value(v))
-                .unwrap_or(8 * 1024 * 1024); // Default 8MB
+            // Check post_max_size (0 means unlimited)
+            let post_max_size = self.parse_post_max_size(vm);
             
             // Content-Length is the body size (excluding the Content-Type header line)
             let lines: Vec<&str> = post_raw.lines().collect();
@@ -235,12 +233,14 @@ impl PhptExecutor {
                 String::new()
             };
             let content_length = body_content.len();
+            let exceeds_limit = post_max_size.map_or(false, |limit| content_length > limit);
             
-            if content_length > post_max_size {
+            if exceeds_limit {
                 use crate::vm::engine::ErrorLevel;
+                let limit_str = post_max_size.unwrap();
                 let msg = format!(
                     "PHP Request Startup: POST Content-Length of {} bytes exceeds the limit of {} bytes in Unknown",
-                    content_length, post_max_size
+                    content_length, limit_str
                 );
                 vm.report_error(ErrorLevel::Warning, &msg);
                 // Don't parse POST data when size exceeded
@@ -298,6 +298,11 @@ impl PhptExecutor {
         use std::rc::Rc;
 
         let mut result = IndexMap::new();
+        
+        // Get max_input_nesting_level (default 64)
+        let max_nesting_level = vm.context.config.ini_settings.get("max_input_nesting_level")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(64);
 
         for pair in query.split('&') {
             let (key, value) = if let Some(pos) = pair.find('=') {
@@ -314,7 +319,7 @@ impl PhptExecutor {
 
             // Convert decoded key bytes to string for parsing
             let key_str = String::from_utf8_lossy(&decoded_key).to_string();
-            self.insert_query_pair(&mut result, &key_str, &decoded_value, vm);
+            self.insert_query_pair(&mut result, &key_str, &decoded_value, max_nesting_level, vm);
         }
 
         let array_data = ArrayData::from(result);
@@ -327,6 +332,7 @@ impl PhptExecutor {
         result: &mut indexmap::IndexMap<crate::core::value::ArrayKey, crate::core::value::Handle>,
         key: &str,
         value: &[u8],
+        max_nesting_level: usize,
         vm: &mut VM,
     ) {
         let (base, mut segments) = Self::parse_key_parts(key);
@@ -337,6 +343,12 @@ impl PhptExecutor {
         let mut parts = Vec::with_capacity(1 + segments.len());
         parts.push(base);
         parts.append(&mut segments);
+        
+        // Check nesting level - parts.len() is the total depth
+        if parts.len() > max_nesting_level {
+            // Exceeds max nesting - discard this value
+            return;
+        }
 
         self.insert_parts(result, &parts, value, vm);
     }
@@ -353,46 +365,68 @@ impl PhptExecutor {
             i += 1;
         }
 
+        // PHP's bracket parsing rules:
+        // - Parse segments left to right
+        // - '[' opens a segment, next ']' closes it (content can include '[')
+        // - Extra ']' outside segments are ignored
+        // - Only unclosed '[' (segment started but never closed) is malformed
+        
+        // Check if there's an unclosed '[' by simulating the segment parsing
+        let has_trailing_unclosed = {
+            let mut temp_i = i;
+            let mut unclosed = false;
+            while temp_i < chars.len() {
+                if chars[temp_i] == '[' {
+                    temp_i += 1; // Skip opening '['
+                    // Find closing ']'
+                    while temp_i < chars.len() && chars[temp_i] != ']' {
+                        temp_i += 1;
+                    }
+                    if temp_i >= chars.len() {
+                        // Reached end without finding ']' - unclosed!
+                        unclosed = true;
+                        break;
+                    }
+                    temp_i += 1; // Skip closing ']'
+                } else {
+                    temp_i += 1; // Skip other characters (including extra ']')
+                }
+            }
+            unclosed
+        };
+
+        if has_trailing_unclosed {
+            // Flatten: convert [ and spaces/dots to _
+            let flattened = key.chars().map(|c| match c {
+                '[' | ' ' | '.' => '_',
+                _ => c
+            }).collect::<String>();
+            return (flattened, vec![]);
+        }
+
         // Parse bracket segments
         while i < chars.len() {
             if chars[i] == '[' {
-                i += 1; // skip '['
+                i += 1; // skip opening '['
                 let mut segment = String::new();
 
-                // Find matching ']'
-                // PHP rule: if we see '[' inside the segment, the next ']' closes it
-                // and we stop parsing (ignore rest)
-                let mut found_inner_bracket = false;
-                while i < chars.len() {
-                    if chars[i] == '[' {
-                        found_inner_bracket = true;
-                        segment.push(chars[i]);
-                        i += 1;
-                    } else if chars[i] == ']' {
-                        if found_inner_bracket {
-                            // This ] closes the inner [, stop here (don't include this ])
-                            // Skip to the outer closing ]
-                            while i < chars.len() && chars[i] != ']' {
-                                i += 1;
-                            }
-                            if i < chars.len() {
-                                i += 1; // skip the outer ]
-                            }
-                            break;
-                        } else {
-                            // This is the outer closing ]
-                            i += 1; // skip it
-                            break;
-                        }
-                    } else {
-                        segment.push(chars[i]);
-                        i += 1;
-                    }
+                // Collect characters until we find the closing ']'
+                // Characters inside (including '[') become the key
+                while i < chars.len() && chars[i] != ']' {
+                    segment.push(chars[i]);
+                    i += 1;
+                }
+                
+                if i < chars.len() {
+                    i += 1; // skip closing ']'
                 }
 
                 segments.push(segment);
+            } else if chars[i] == ']' {
+                // Extra ']' outside brackets - ignore
+                i += 1;
             } else {
-                // Stray character after brackets - ignore (PHP ignores trailing ])
+                // Other characters after brackets - shouldn't happen with well-formed input
                 i += 1;
             }
         }
@@ -490,8 +524,9 @@ impl PhptExecutor {
                     _ => c
                 }
             }).collect::<String>();
-            // Cookie values are taken as-is (as bytes), no URL decoding
-            let value_bytes = value.as_bytes().to_vec();
+            
+            // Cookie values ARE URL decoded (unlike what I initially thought)
+            let value_bytes = Self::url_decode(value);
 
             let array_key = ArrayKey::Str(Rc::new(normalized_key.as_bytes().to_vec()));
             
@@ -589,7 +624,18 @@ impl PhptExecutor {
         let end_delimiter = format!("--{}--", boundary);
         
         let mut post_map = IndexMap::new();
-        let mut files_map = IndexMap::new();
+        // Track file uploads: Vec<(field_name, name, full_path, type, tmp_name, error, size)>
+        let mut file_uploads: Vec<(String, String, String, String, String, i64, i64)> = Vec::new();
+        
+        // Get max_input_nesting_level for validation
+        let max_nesting_level = vm.context.config.ini_settings.get("max_input_nesting_level")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(64);
+        
+        // Get max_file_uploads limit
+        let max_file_uploads = vm.context.config.ini_settings.get("max_file_uploads")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(20);
         
         // Split by boundary
         for (_idx, part) in body.split(&delimiter).enumerate() {
@@ -651,9 +697,8 @@ impl PhptExecutor {
                 }
             }
             
-            let Some(name) = field_name else {
-                continue
-            };
+            // For anonymous uploads (no name, only filename), use numeric index
+            let name = field_name.unwrap_or_else(|| file_uploads.len().to_string());
             
             // Body content (join remaining lines)
             let mut content = body_lines.join("\n");
@@ -671,22 +716,48 @@ impl PhptExecutor {
             if let Some(fname) = filename {
                 // This is a file upload
                 if !file_uploads_enabled {
-                    // file_uploads is disabled - skip file uploads, don't add to $_FILES
+                    // file_uploads is disabled - skip file uploads
+                    continue;
+                }
+                
+                // Check max_file_uploads limit
+                if file_uploads.len() >= max_file_uploads {
+                    continue;
+                }
+                
+                // Parse field name and check nesting level  
+                let (base, mut segments) = Self::parse_key_parts(&name);
+                if base.is_empty() {
+                    continue;
+                }
+                
+                // For file uploads, reject malformed names (unclosed brackets)
+                // parse_key_parts returns empty segments for flattened names
+                // If the original name had brackets but segments is empty, it was flattened due to malformation
+                if name.contains('[') && segments.is_empty() {
+                    // Malformed name (unclosed brackets) - skip this file upload
+                    continue;
+                }
+                
+                let mut parts = vec![base.clone()];
+                parts.append(&mut segments);
+                
+                if parts.len() > max_nesting_level {
+                    // Exceeds max nesting - skip this file
                     continue;
                 }
                 
                 if fname.is_empty() {
                     // Empty filename - error code 4 (UPLOAD_ERR_NO_FILE)
-                    let mut file_info = IndexMap::new();
-                    file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(4)));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(0)));
-                    
-                    let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
-                    files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                    file_uploads.push((
+                        name.clone(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        4, // UPLOAD_ERR_NO_FILE
+                        0
+                    ));
                 } else {
                     // Check upload_max_filesize
                     let upload_max_filesize = vm.context.config.ini_settings.get("upload_max_filesize")
@@ -697,28 +768,21 @@ impl PhptExecutor {
                     
                     if file_size > upload_max_filesize {
                         // File exceeds upload_max_filesize - error code 1 (UPLOAD_ERR_INI_SIZE)
-                        let fname_bytes = Rc::new(fname.clone().into_bytes());
-                        let mut file_info = IndexMap::new();
-                        file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
-                            vm.arena.alloc(Val::String(fname_bytes.clone())));
-                        file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), 
-                            vm.arena.alloc(Val::String(fname_bytes)));
-                        file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
-                            vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                        file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
-                            vm.arena.alloc(Val::String(Rc::new(Vec::new()))));
-                        file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(1)));
-                        file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(0)));
-                        
-                        let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
-                        files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                        file_uploads.push((
+                            name.clone(),
+                            fname.clone(),
+                            fname.clone(),
+                            String::new(),
+                            String::new(),
+                            1, // UPLOAD_ERR_INI_SIZE
+                            0
+                        ));
                         continue;
                     }
                     
                     // Create temporary file
                     use std::io::Write;
                     let tmp_dir = std::env::temp_dir();
-                    // Use timestamp + process ID + field name to make unique
                     let timestamp = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -735,20 +799,15 @@ impl PhptExecutor {
                     let tmp_path_string = tmp_path.to_string_lossy().into_owned();
                     vm.context.uploaded_files.insert(tmp_path_string.clone());
                     
-                    let mut file_info = IndexMap::new();
-                    file_info.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
-                        vm.arena.alloc(Val::String(Rc::new(fname.clone().into_bytes()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), 
-                        vm.arena.alloc(Val::String(Rc::new(fname.into_bytes()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
-                        vm.arena.alloc(Val::String(Rc::new(content_type.unwrap_or_default().into_bytes()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
-                        vm.arena.alloc(Val::String(Rc::new(tmp_path_string.into_bytes()))));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(0)));
-                    file_info.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(size)));
-                    
-                    let file_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(file_info))));
-                    files_map.insert(ArrayKey::Str(Rc::new(name.into_bytes())), file_array);
+                    file_uploads.push((
+                        name.clone(),
+                        fname.clone(),
+                        fname,
+                        content_type.clone().unwrap_or_default(),
+                        tmp_path_string,
+                        0, // No error
+                        size
+                    ));
                 }
             } else {
                 // Regular form field
@@ -762,6 +821,100 @@ impl PhptExecutor {
             let post_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(post_map))));
             let post_sym = vm.context.interner.intern(b"_POST");
             vm.context.globals.insert(post_sym, post_array);
+        }
+        
+        // Build inverted $_FILES structure from collected uploads
+        // PHP inverts the structure: $_FILES['file']['name'][0] not $_FILES['file[0]']['name']
+        // Group uploads by base field name while preserving order
+        let mut files_builder: IndexMap<String, Vec<(Vec<String>, String, String, String, String, i64, i64)>> = IndexMap::new();
+        
+        // Group uploads by base field name
+        for (field_name, name, full_path, mime_type, tmp_name, error, size) in file_uploads {
+            let (base, segments) = Self::parse_key_parts(&field_name);
+            if base.is_empty() {
+                continue;
+            }
+            
+            files_builder.entry(base.clone())
+                .or_insert_with(Vec::new)
+                .push((segments, name, full_path, mime_type, tmp_name, error, size));
+        }
+        
+        // Build the final $_FILES structure
+        let mut files_map = IndexMap::new();
+        for (base_name, uploads) in files_builder {
+            // Check if this is a scalar upload or array upload
+            let is_array = uploads.iter().any(|(segments, _, _, _, _, _, _)| !segments.is_empty());
+            
+            if is_array {
+                // Build inverted structure for array uploads
+                let mut props = IndexMap::new();
+                for prop_name in ["name", "full_path", "type", "tmp_name", "error", "size"] {
+                    // Use ArrayData to handle proper index auto-increment
+                    let mut prop_data = ArrayData::new();
+                    for (segments, name, full_path, mime_type, tmp_name, error, size) in &uploads {
+                        let value = match prop_name {
+                            "name" => vm.arena.alloc(Val::String(Rc::new(name.clone().into_bytes()))),
+                            "full_path" => vm.arena.alloc(Val::String(Rc::new(full_path.clone().into_bytes()))),
+                            "type" => vm.arena.alloc(Val::String(Rc::new(mime_type.clone().into_bytes()))),
+                            "tmp_name" => vm.arena.alloc(Val::String(Rc::new(tmp_name.clone().into_bytes()))),
+                            "error" => vm.arena.alloc(Val::Int(*error)),
+                            "size" => vm.arena.alloc(Val::Int(*size)),
+                            _ => unreachable!()
+                        };
+                        if segments.is_empty() {
+                            // This shouldn't happen in array mode, but handle it
+                            prop_data.insert(ArrayKey::Int(0), value);
+                        } else {
+                            // Use first segment as key
+                            let key = if segments[0].is_empty() {
+                                // Empty bracket - use next auto index
+                                ArrayKey::Int(prop_data.next_index())
+                            } else if let Ok(idx) = segments[0].parse::<i64>() {
+                                ArrayKey::Int(idx)
+                            } else {
+                                ArrayKey::Str(Rc::new(segments[0].as_bytes().to_vec()))
+                            };
+                            prop_data.insert(key, value);
+                        }
+                    }
+                    props.insert(
+                        ArrayKey::Str(Rc::new(prop_name.as_bytes().to_vec())),
+                        vm.arena.alloc(Val::Array(Rc::new(prop_data)))
+                    );
+                }
+                files_map.insert(
+                    ArrayKey::Str(Rc::new(base_name.into_bytes())),
+                    vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(props))))
+                );
+            } else {
+                // Scalar upload
+                if let Some((_, name, full_path, mime_type, tmp_name, error, size)) = uploads.first() {
+                    let mut props = IndexMap::new();
+                    props.insert(ArrayKey::Str(Rc::new(b"name".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(name.clone().into_bytes()))));
+                    props.insert(ArrayKey::Str(Rc::new(b"full_path".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(full_path.clone().into_bytes()))));
+                    props.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(mime_type.clone().into_bytes()))));
+                    props.insert(ArrayKey::Str(Rc::new(b"tmp_name".to_vec())), 
+                        vm.arena.alloc(Val::String(Rc::new(tmp_name.clone().into_bytes()))));
+                    props.insert(ArrayKey::Str(Rc::new(b"error".to_vec())), vm.arena.alloc(Val::Int(*error)));
+                    props.insert(ArrayKey::Str(Rc::new(b"size".to_vec())), vm.arena.alloc(Val::Int(*size)));
+                    
+                    // Use numeric key for anonymous uploads (when base_name is a number)
+                    let key = if let Ok(idx) = base_name.parse::<i64>() {
+                        ArrayKey::Int(idx)
+                    } else {
+                        ArrayKey::Str(Rc::new(base_name.into_bytes()))
+                    };
+                    
+                    files_map.insert(
+                        key,
+                        vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(props))))
+                    );
+                }
+            }
         }
         
         // Set $_FILES
@@ -929,6 +1082,7 @@ impl PhptExecutor {
     }
     
     /// Parse INI size value (e.g., "1", "1K", "1M", "1G")
+    /// Returns None if parsing fails, Some(0) for unlimited, Some(size) otherwise
     fn parse_size_ini_value(&self, value: &str) -> Option<usize> {
         let value = value.trim();
         if value.is_empty() {
@@ -946,6 +1100,13 @@ impl PhptExecutor {
         };
         
         num_str.parse::<usize>().ok().map(|n| n * multiplier)
+    }
+    
+    /// Parse post_max_size value - 0 means unlimited
+    fn parse_post_max_size(&self, vm: &VM) -> Option<usize> {
+        vm.context.config.ini_settings.get("post_max_size")
+            .and_then(|v| self.parse_size_ini_value(v))
+            .and_then(|size| if size == 0 { None } else { Some(size) })
     }
     
     /// Parse Content-Disposition parameter value with proper quote and escape handling
