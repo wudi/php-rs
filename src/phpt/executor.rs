@@ -479,12 +479,11 @@ impl PhptExecutor {
             if let Some(boundary_pos) = content_type_line.find("boundary=") {
                 let boundary_start = boundary_pos + "boundary=".len();
                 let boundary_rest = &content_type_line[boundary_start..];
-                // Boundary value may be quoted or followed by semicolon
-                let boundary_value = if let Some(semicolon_pos) = boundary_rest.find(';') {
-                    &boundary_rest[..semicolon_pos]
-                } else {
-                    boundary_rest
-                };
+                // Boundary value may be quoted or followed by semicolon or comma
+                let end_pos = boundary_rest.find(';')
+                    .or_else(|| boundary_rest.find(','))
+                    .unwrap_or(boundary_rest.len());
+                let boundary_value = &boundary_rest[..end_pos];
                 // Remove quotes if present
                 let boundary_trimmed = boundary_value.trim();
                 if boundary_trimmed.starts_with('"') && boundary_trimmed.ends_with('"') && boundary_trimmed.len() > 1 {
