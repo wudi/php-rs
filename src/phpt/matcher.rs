@@ -49,23 +49,35 @@ fn expectf_to_regex(format_str: &str) -> String {
             if let Some(&next) = chars.peek() {
                 match next {
                     's' => {
-                        // %s - any string (non-greedy)
-                        pattern.push_str(r".*?");
+                        // %s - one or more non-newline characters
+                        pattern.push_str(r"[^\r\n]+");
+                        chars.next();
+                    }
+                    'S' => {
+                        // %S - zero or more non-newline characters
+                        pattern.push_str(r"[^\r\n]*");
                         chars.next();
                     }
                     'd' => {
-                        // %d - signed integer
-                        pattern.push_str(r"-?\d+");
+                        // %d - unsigned integer
+                        pattern.push_str(r"\d+");
                         chars.next();
                     }
                     'i' => {
-                        // %i - unsigned integer
-                        pattern.push_str(r"\d+");
+                        // %i - signed integer
+                        pattern.push_str(r"[+-]?\d+");
+                        chars.next();
+                    }
+                    'x' => {
+                        // %x - hexadecimal digits
+                        pattern.push_str(r"[0-9a-fA-F]+");
                         chars.next();
                     }
                     'f' => {
                         // %f - float
-                        pattern.push_str(r"-?\d+\.?\d*");
+                        // Simplified version without lookahead (which Rust regex doesn't support)
+                        // Matches: 123, 123.456, .456, 123e10, 123.456e10, .456e10, etc.
+                        pattern.push_str(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[Ee][+-]?\d+)?");
                         chars.next();
                     }
                     'c' => {
@@ -79,18 +91,23 @@ fn expectf_to_regex(format_str: &str) -> String {
                         chars.next();
                     }
                     'a' => {
-                        // %a - any sequence (greedy)
-                        pattern.push_str(".*");
+                        // %a - one or more characters (non-greedy)
+                        pattern.push_str(".+?");
                         chars.next();
                     }
                     'A' => {
-                        // %A - any sequence including newlines
-                        pattern.push_str(r"[\s\S]*");
+                        // %A - zero or more characters (non-greedy, including newlines)
+                        pattern.push_str(".*?");
                         chars.next();
                     }
                     'w' => {
                         // %w - optional whitespace
                         pattern.push_str(r"\s*");
+                        chars.next();
+                    }
+                    '0' => {
+                        // %0 - null byte
+                        pattern.push_str(r"\x00");
                         chars.next();
                     }
                     'r' => {
@@ -116,15 +133,16 @@ fn expectf_to_regex(format_str: &str) -> String {
             pattern.push(ch);
         } else {
             // Escape regex special characters
-            if "\\^$.|?*+()[{".contains(ch) {
+            // Same as PHP's preg_quote with '/' delimiter
+            if "\\^$.|?*+()[{:/".contains(ch) {
                 pattern.push('\\');
             }
             pattern.push(ch);
         }
     }
 
-    // Anchor the pattern and normalize whitespace
-    format!("^{}$", normalize_output(&pattern))
+    // Anchor the pattern (no normalization needed for the pattern itself)
+    format!("^{}$", pattern)
 }
 
 /// Match output against regex pattern
@@ -161,10 +179,17 @@ mod tests {
 
     #[test]
     fn test_expectf_integer() {
-        let format = "Value: %d".to_string();
-        assert!(match_output("Value: 42", ExpectationType::Format(format.clone())));
-        assert!(match_output("Value: -42", ExpectationType::Format(format.clone())));
-        assert!(!match_output("Value: abc", ExpectationType::Format(format)));
+        // %d is unsigned integer
+        let format_unsigned = "Value: %d".to_string();
+        assert!(match_output("Value: 42", ExpectationType::Format(format_unsigned.clone())));
+        assert!(!match_output("Value: -42", ExpectationType::Format(format_unsigned.clone())));
+        assert!(!match_output("Value: abc", ExpectationType::Format(format_unsigned)));
+        
+        // %i is signed integer
+        let format_signed = "Value: %i".to_string();
+        assert!(match_output("Value: 42", ExpectationType::Format(format_signed.clone())));
+        assert!(match_output("Value: -42", ExpectationType::Format(format_signed.clone())));
+        assert!(!match_output("Value: abc", ExpectationType::Format(format_signed)));
     }
 
     #[test]
@@ -172,6 +197,8 @@ mod tests {
         let format = "Pi: %f".to_string();
         assert!(match_output("Pi: 3.14159", ExpectationType::Format(format.clone())));
         assert!(match_output("Pi: 3", ExpectationType::Format(format.clone())));
+        assert!(match_output("Pi: -3.14", ExpectationType::Format(format.clone())));
+        assert!(match_output("Pi: 1.5e10", ExpectationType::Format(format.clone())));
     }
 
     #[test]

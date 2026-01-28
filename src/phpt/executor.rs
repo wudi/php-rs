@@ -79,7 +79,7 @@ impl PhptExecutor {
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer.clone()));
 
-        if let Err(e) = self.execute_source(skipif_code, &mut vm) {
+        if let Err(e) = self.execute_source(skipif_code, &mut vm, None) {
             return Err(format!("Failed to execute SKIPIF: {}", e));
         }
 
@@ -134,7 +134,13 @@ impl PhptExecutor {
             let _ = writer.write(warning.as_bytes());
         }
 
-        if let Err(e) = self.execute_source(&test.sections.file, &mut vm) {
+        // Generate .php filename from test file path
+        let php_filename = test.file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| format!("{}.php", s));
+        
+        if let Err(e) = self.execute_source(&test.sections.file, &mut vm, php_filename.as_deref()) {
             return TestResult::Error {
                 error: format!("Execution error: {}", e),
             };
@@ -176,7 +182,7 @@ impl PhptExecutor {
         let output_writer = BufferedOutputWriter::new();
         vm.set_output_writer(Box::new(output_writer));
 
-        self.execute_source(clean_code, &mut vm)
+        self.execute_source(clean_code, &mut vm, None)
             .map_err(|e| format!("CLEAN failed: {}", e))
     }
 
@@ -669,6 +675,9 @@ impl PhptExecutor {
         // Track MAX_FILE_SIZE from form data (client-side hint for file size limit)
         let mut max_file_size: Option<usize> = None;
         
+        // Track if we've emitted a garbled headers warning
+        let mut has_garbled_warning = false;
+        
         // Get max_input_nesting_level for validation
         let max_nesting_level = vm.context.config.ini_settings.get("max_input_nesting_level")
             .and_then(|v| v.parse::<usize>().ok())
@@ -747,6 +756,12 @@ impl PhptExecutor {
             
             // Skip parts with garbled headers (no name and no filename)
             if field_name.is_none() && filename.is_none() {
+                // Emit warning only once for garbled headers
+                if !has_garbled_warning {
+                    use crate::vm::engine::ErrorLevel;
+                    vm.report_error(ErrorLevel::Warning, "PHP Request Startup: File Upload Mime headers garbled");
+                    has_garbled_warning = true;
+                }
                 continue;
             }
             
@@ -1055,6 +1070,7 @@ impl PhptExecutor {
         let mut warn_get_derivation = false;
 
         // Populate argv and argc from --ARGS-- section (CLI mode)
+        // In CLI mode, these are always populated regardless of register_argc_argv
         if let Some(ref args_str) = test.sections.args {
             // Split args by whitespace
             let args: Vec<&str> = args_str.split_whitespace().collect();
@@ -1062,8 +1078,13 @@ impl PhptExecutor {
             // Create argv array - first element is script name
             let mut argv_map = IndexMap::new();
 
-            // argv[0] is the script name
-            let script_name = Val::String(Rc::new(b"test.php".to_vec()));
+            // argv[0] is the script name - use test file name with .php extension
+            let script_basename = test.file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("test");
+            let script_name_str = format!("{}.php", script_basename);
+            let script_name = Val::String(Rc::new(script_name_str.as_bytes().to_vec()));
             let script_handle = vm.arena.alloc(script_name);
             argv_map.insert(ArrayKey::Int(0), script_handle);
 
@@ -1084,7 +1105,8 @@ impl PhptExecutor {
             argv_handle = Some(handle);
             argc_handle = Some(argc);
         } else if allow_get_derivation && (test.sections.get.is_some() || test.sections.cgi) {
-            // Handle argv/argc from GET query string (for tests like 011.phpt)
+            // Handle argv/argc from GET query string only if register_argc_argv is enabled
+            // This is controlled by allow_get_derivation which checks register_argc_argv
             let args: Vec<String> = if let Some(ref get_data) = test.sections.get {
                 get_data.split('+')
                     .map(|s| String::from_utf8_lossy(&Self::url_decode(s)).to_string())
@@ -1111,6 +1133,9 @@ impl PhptExecutor {
             warn_get_derivation = true;
         }
 
+        // Add argc/argv to $_SERVER
+        // When populated from ARGS (CLI), always add
+        // When populated from GET, only add if register_argc_argv is enabled (controlled by allow_get_derivation)
         if let Some(argv) = argv_handle {
             server_map.insert(ArrayKey::Str(Rc::new(b"argv".to_vec())), argv);
         }
@@ -1188,7 +1213,7 @@ impl PhptExecutor {
         }
     }
 
-    fn execute_source(&self, source: &str, vm: &mut VM) -> Result<(), String> {
+    fn execute_source(&self, source: &str, vm: &mut VM, file_path: Option<&str>) -> Result<(), String> {
         let source_bytes = source.as_bytes();
         let arena = Bump::new();
         let lexer = Lexer::new(source_bytes);
@@ -1206,7 +1231,10 @@ impl PhptExecutor {
         }
 
         // Compile
-        let emitter = Emitter::new(source_bytes, &mut vm.context.interner);
+        let mut emitter = Emitter::new(source_bytes, &mut vm.context.interner);
+        if let Some(path) = file_path {
+            emitter = emitter.with_file_path(path);
+        }
         let (chunk, has_error) = emitter.compile(program.statements);
 
         if has_error {

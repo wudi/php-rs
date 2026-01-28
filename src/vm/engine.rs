@@ -1012,7 +1012,14 @@ impl VM {
             .current_location()
             .unwrap_or_else(|| ("Unknown".to_string(), 0));
         let error_line = error_line as i64;
-        let formatted_message = format!("{} in {} on line {}", message, error_file, error_line);
+        
+        // Check if message already ends with location info (e.g., "... in Unknown")
+        // If so, just append the line number. Otherwise, add full location.
+        let formatted_message = if message.ends_with(" in Unknown") {
+            format!("{} on line {}", message, error_line)
+        } else {
+            format!("{} in {} on line {}", message, error_file, error_line)
+        };
 
         // Store this as the last error regardless of error_reporting level
         self.context.last_error = Some(crate::runtime::context::ErrorInfo {
@@ -1086,12 +1093,15 @@ impl VM {
             }
             Ok(())
         } else {
-            // No buffering, write directly
+            // No buffering, write directly - this sends headers
+            self.context.headers_sent = true;
             self.output_writer.write(bytes)
         }
     }
 
     pub(crate) fn write_output_direct(&mut self, bytes: &[u8]) -> Result<(), VmError> {
+        // Direct output always sends headers
+        self.context.headers_sent = true;
         self.output_writer.write(bytes)
     }
 
@@ -1262,8 +1272,8 @@ impl VM {
                 .lookup(sym)
                 .map(String::from_utf8_lossy)
                 .unwrap_or_else(|| "unknown".into());
-            let msg = format!("Undefined variable: ${}", var_name);
-            self.report_error(ErrorLevel::Notice, &msg);
+            let msg = format!("Undefined variable ${}", var_name);
+            self.report_error(ErrorLevel::Warning, &msg);
         }
     }
 
@@ -2978,8 +2988,26 @@ impl VM {
 
         self.push_frame(initial_frame);
         let result = self.run_loop(0);
+        self.run_header_callback();
         self.run_shutdown_functions();
         result
+    }
+
+    fn run_header_callback(&mut self) {
+        // Only call the callback if headers haven't been sent yet
+        if self.context.headers_sent {
+            return;
+        }
+        
+        if let Some(callback) = self.context.header_callback.take() {
+            let args = ArgList::new();
+            if let Err(err) = self.call_callable(callback, args) {
+                self.report_error(
+                    ErrorLevel::Warning,
+                    &format!("header_register_callback() error: {}", err),
+                );
+            }
+        }
     }
 
     fn run_shutdown_functions(&mut self) {
@@ -5192,13 +5220,13 @@ impl VM {
                         if let Some(val_handle) = map.map.get(&key) {
                             self.operand_stack.push(*val_handle);
                         } else {
-                            // Emit notice for undefined array key
+                            // Emit warning for undefined array key (PHP 8+)
                             let key_str = match &key {
                                 ArrayKey::Int(i) => i.to_string(),
                                 ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
                             };
                             self.report_error(
-                                ErrorLevel::Notice,
+                                ErrorLevel::Warning,
                                 &format!("Undefined array key \"{}\"", key_str),
                             );
                             let null_handle = self.arena.alloc(Val::Null);
@@ -5224,7 +5252,7 @@ impl VM {
                                 }
                             };
                             self.report_error(
-                                ErrorLevel::Notice,
+                                ErrorLevel::Warning,
                                 &format!("Undefined array key \"{}\"", key_str),
                             );
                             let null_handle = self.arena.alloc(Val::Null);
@@ -8023,8 +8051,8 @@ impl VM {
                     let var_name = String::from_utf8_lossy(
                         self.context.interner.lookup(sym).unwrap_or(b"unknown"),
                     );
-                    let msg = format!("Undefined variable: ${}", var_name);
-                    self.report_error(ErrorLevel::Notice, &msg);
+                    let msg = format!("Undefined variable ${}", var_name);
+                    self.report_error(ErrorLevel::Warning, &msg);
                     let null = self.arena.alloc(Val::Null);
                     self.operand_stack.push(null);
                 }
@@ -8055,8 +8083,8 @@ impl VM {
                     let var_name = String::from_utf8_lossy(
                         self.context.interner.lookup(sym).unwrap_or(b"unknown"),
                     );
-                    let msg = format!("Undefined variable: ${}", var_name);
-                    self.error_handler.report(ErrorLevel::Notice, &msg);
+                    let msg = format!("Undefined variable ${}", var_name);
+                    self.error_handler.report(ErrorLevel::Warning, &msg);
                     frame.locals.insert(sym, null);
                     self.operand_stack.push(null);
                 }
@@ -8356,7 +8384,7 @@ impl VM {
                                     ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
                                 };
                                 self.report_error(
-                                    ErrorLevel::Notice,
+                                    ErrorLevel::Warning,
                                     &format!("Undefined array key \"{}\"", key_str),
                                 );
                             }
@@ -11335,13 +11363,13 @@ impl VM {
                     if let Some(val) = map.map.get(&key) {
                         current_handle = *val;
                     } else {
-                        // Undefined index: emit notice and return NULL
+                        // Undefined index: emit warning and return NULL (PHP 8+)
                         let key_str = match &key {
                             ArrayKey::Int(i) => i.to_string(),
                             ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
                         };
                         self.report_error(
-                            ErrorLevel::Notice,
+                            ErrorLevel::Warning,
                             &format!("Undefined array key \"{}\"", key_str),
                         );
                         return Ok(self.arena.alloc(Val::Null));
