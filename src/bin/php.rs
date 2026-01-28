@@ -24,13 +24,21 @@ struct Cli {
     #[arg(short = 'a', long)]
     interactive: bool,
 
+    /// Do not use php.ini
+    #[arg(short = 'n', long = "no-php-ini")]
+    no_php_ini: bool,
+
     /// Define INI entry (e.g., -d foo=bar)
     #[arg(short = 'd', value_name = "foo[=bar]", action = clap::ArgAction::Append)]
     define: Vec<String>,
 
-    /// Script file to run
-    #[arg(name = "FILE")]
+    /// Script file to run (via -f/--file)
+    #[arg(short = 'f', long = "file", value_name = "FILE", conflicts_with = "positional_file")]
     file: Option<PathBuf>,
+
+    /// Script file to run
+    #[arg(value_name = "FILE")]
+    positional_file: Option<PathBuf>,
 
     /// Arguments to pass to the script
     #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
@@ -40,9 +48,11 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    let file = cli.file.or(cli.positional_file);
+
     if cli.interactive {
         run_repl()?;
-    } else if let Some(file) = cli.file {
+    } else if let Some(file) = file {
         run_file(file, cli.args)?;
     } else {
         // If no arguments, show help
