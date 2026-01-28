@@ -3,7 +3,6 @@ pub mod compiler;
 pub mod core;
 pub mod fcgi;
 pub mod parser;
-pub mod phpt;
 pub mod runtime;
 pub mod sapi;
 pub mod vm;
