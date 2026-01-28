@@ -30,10 +30,6 @@ Always consult the PHP source code before implementing new features to ensure ac
 ### Testing
 - `cargo test` - Run full test suite (unit + integration)
 - `cargo test --test array_functions` - Run single integration test file
-- `cargo run --bin php-test -- <file.phpt>` - Run single .phpt test
-- `cargo run --bin php-test -- <directory> -r` - Run all .phpt tests recursively
-- `cargo run --bin php-test -- <directory> -r -f <pattern>` - Run filtered .phpt tests
-- `cargo run --bin php-test -- <directory> -s -v` - Show all tests with verbose output
 - `cargo fmt` - Format code with rustfmt
 
 ### PHP Reflection Tools
@@ -91,7 +87,6 @@ Always consult the PHP source code before implementing new features to ensure ac
 **Binaries** (`src/bin/`)
 - `php.rs` - CLI entry point
 - `php-fpm.rs` - FPM entry point
-- `php-test.rs` - .phpt test runner for PHP compatibility testing
 - `dump_bytecode.rs` - Debug tool for bytecode inspection
 
 **PHPT Test Runner** (`src/phpt/`)
@@ -105,10 +100,7 @@ Always consult the PHP source code before implementing new features to ensure ac
 
 - **Integration tests**: `tests/*.rs` - Feature-level tests (e.g., `array_functions.rs`, `strict_types_eval.rs`)
 - **Parser tests**: `src/parser/tests/` with snapshots in `src/parser/tests/snapshots/`
-- **.phpt tests**: PHP's native test format, can be run with `php-test` binary
-  - Official PHP tests available at `$PHP_SRC_PATH/tests/`
-  - Supports all standard .phpt sections (EXPECT, EXPECTF, EXPECTREGEX, SKIPIF, etc.)
-  - Use for validating php-rs compatibility with official PHP behavior
+- **PHPT tests**: `cargo run --bin php -- $PHP_SRC_PATH/run-tests.php $PHP_SRC_PATH` to run official PHP .phpt tests for compatibility verification
 - Tests should verify PHP compatibility behavior
 
 ## Development Workflow
@@ -125,7 +117,7 @@ Always consult the PHP source code before implementing new features to ensure ac
 1. Implement feature in Rust following project standards
 2. Add tests covering edge cases (both Rust integration tests and .phpt tests if available)
 3. Run full test suite to ensure no regressions (`cargo test`)
-4. Run relevant .phpt tests from PHP source if applicable (`cargo run --bin php-test -- ...`)
+4. Run relevant .phpt tests from PHP source if applicable (`cargo run --bin php -- $PHP_SRC_PATH/run-tests.php $PHP_SRC_PATH`)
 5. Remove temporary code, docs, or debug statements
 
 ### Key Principles
@@ -156,38 +148,3 @@ Extension-related crates are scoped to specific modules. New dependencies should
 - Commit messages should use short, imperative subjects (e.g., "Add array unpack tests")
 - Reasons required for incomplete/partial completion; no summary needed for complete work
 - Parser behavior changes should include or update snapshot files
-
-## PHPT Test Runner
-
-The `php-test` binary runs PHP's native `.phpt` test format to validate php-rs compatibility:
-
-**Basic Usage:**
-```bash
-# Run single test
-cargo run --bin php-test -- test.phpt
-
-# Run all tests in directory
-cargo run --bin php-test -- $PHP_SRC_PATH/tests/basic/
-
-# Recursive search
-cargo run --bin php-test -- $PHP_SRC_PATH/tests/ -r
-
-# Filter by pattern
-cargo run --bin php-test -- $PHP_SRC_PATH/tests/ -r -f array
-
-# Show all results with verbose diffs
-cargo run --bin php-test -- $PHP_SRC_PATH/tests/basic/ -s -v
-```
-
-**Supported .phpt Sections:**
-- `--TEST--` - Test description (required)
-- `--FILE--` - PHP code to execute (required)
-- `--EXPECT--` - Exact expected output
-- `--EXPECTF--` - Expected output with format specifiers (%s, %d, %i, %f, %c, %e, %a, %A, %w, %r...%r)
-- `--EXPECTREGEX--` - Expected output as regex pattern
-- `--SKIPIF--` - Conditional skip logic
-- `--INI--` - INI settings (partial support)
-- `--ENV--` - Environment variables
-- `--ARGS--` - Command-line arguments (not yet implemented)
-- `--CLEAN--` - Cleanup code
-- `--XLEAK--`, `--CREDITS--` - Informational (ignored)

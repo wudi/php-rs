@@ -92,7 +92,3 @@ path = "src/bin/php.rs"
 [[bin]]
 name = "php-fpm"
 path = "src/bin/php-fpm.rs"
-
-[[bin]]
-name = "php-test"
-path = "src/bin/php-test.rs"
