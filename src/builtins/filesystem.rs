@@ -700,10 +700,17 @@ pub fn php_unlink(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let path_bytes = handle_to_path(vm, args[0])?;
     let path = bytes_to_path(&path_bytes)?;
 
-    fs::remove_file(&path)
-        .map_err(|e| format!("unlink({}): {}", String::from_utf8_lossy(&path_bytes), e))?;
-
-    Ok(vm.arena.alloc(Val::Bool(true)))
+    match fs::remove_file(&path) {
+        Ok(_) => Ok(vm.arena.alloc(Val::Bool(true))),
+        Err(e) => {
+            // Emit warning like PHP does, then return false
+            vm.trigger_error(
+                crate::vm::engine::ErrorLevel::Warning,
+                &format!("unlink({}): {}", String::from_utf8_lossy(&path_bytes), e),
+            );
+            Ok(vm.arena.alloc(Val::Bool(false)))
+        }
+    }
 }
 
 /// rename(oldname, newname) - Rename a file or directory
@@ -1928,6 +1935,127 @@ pub fn php_disk_total_space(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
 
     // This requires platform-specific syscalls
     Err("disk_total_space(): Not yet implemented".into())
+}
+
+/// Directory handle resource for opendir/readdir/closedir
+#[derive(Debug)]
+pub struct DirHandle {
+    pub path: PathBuf,
+    pub entries: RefCell<Vec<String>>,
+    pub position: RefCell<usize>,
+}
+
+/// opendir(path [, context]) - Open directory handle
+/// Reference: $PHP_SRC_PATH/ext/standard/dir.c - PHP_FUNCTION(opendir)
+pub fn php_opendir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("opendir() expects at least 1 parameter".into());
+    }
+
+    let path_bytes = handle_to_path(vm, args[0])?;
+    let path = bytes_to_path(&path_bytes)?;
+
+    // Read directory entries
+    let entries: Vec<String> = fs::read_dir(&path)
+        .map_err(|e| {
+            format!(
+                "opendir({}): failed to open dir: {}",
+                path.display(),
+                e
+            )
+        })?
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                e.file_name().into_string().ok()
+            })
+        })
+        .collect();
+
+    let resource = DirHandle {
+        path: path.clone(),
+        entries: RefCell::new(entries),
+        position: RefCell::new(0),
+    };
+
+    Ok(vm.arena.alloc(Val::Resource(Rc::new(resource))))
+}
+
+/// readdir([resource]) - Read entry from directory handle
+/// Reference: $PHP_SRC_PATH/ext/standard/dir.c - PHP_FUNCTION(readdir)
+pub fn php_readdir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("readdir() expects at least 1 parameter".into());
+    }
+
+    let result = {
+        let val = vm.arena.get(args[0]);
+        match &val.value {
+            Val::Resource(rc) => {
+                if let Some(dir_handle) = rc.downcast_ref::<DirHandle>() {
+                    let mut pos = dir_handle.position.borrow_mut();
+                    let entries = dir_handle.entries.borrow();
+                    
+                    if *pos < entries.len() {
+                        let entry = entries[*pos].clone();
+                        *pos += 1;
+                        Some(entry)
+                    } else {
+                        None
+                    }
+                } else {
+                    return Err("readdir(): supplied argument is not a valid Directory resource".into());
+                }
+            }
+            _ => return Err("readdir(): supplied argument is not a valid Directory resource".into()),
+        }
+    };
+
+    match result {
+        Some(entry) => Ok(vm.arena.alloc(Val::String(Rc::new(entry.into_bytes())))),
+        None => Ok(vm.arena.alloc(Val::Bool(false))),
+    }
+}
+
+/// closedir([resource]) - Close directory handle
+/// Reference: $PHP_SRC_PATH/ext/standard/dir.c - PHP_FUNCTION(closedir)
+pub fn php_closedir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("closedir() expects at least 1 parameter".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    match &val.value {
+        Val::Resource(rc) => {
+            if rc.is::<DirHandle>() {
+                // Resource will be dropped when last reference goes away
+                Ok(vm.arena.alloc(Val::Null))
+            } else {
+                Err("closedir(): supplied argument is not a valid Directory resource".into())
+            }
+        }
+        _ => Err("closedir(): supplied argument is not a valid Directory resource".into()),
+    }
+}
+
+/// rewinddir([resource]) - Rewind directory handle
+/// Reference: $PHP_SRC_PATH/ext/standard/dir.c - PHP_FUNCTION(rewinddir)
+pub fn php_rewinddir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("rewinddir() expects at least 1 parameter".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    match &val.value {
+        Val::Resource(rc) => {
+            if let Some(dir_handle) = rc.downcast_ref::<DirHandle>() {
+                *dir_handle.position.borrow_mut() = 0;
+                Ok(vm.arena.alloc(Val::Null))
+            } else {
+                Err("rewinddir(): supplied argument is not a valid Directory resource".into())
+            }
+        }
+        _ => Err("rewinddir(): supplied argument is not a valid Directory resource".into()),
+    }
 }
 
 /// is_uploaded_file(filename) - Check if file was uploaded via HTTP POST
