@@ -1401,6 +1401,25 @@ pub fn php_microtime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     }
 }
 
+/// sleep(int $seconds): int
+/// Delays execution for the given number of seconds
+/// Reference: $PHP_SRC_PATH/ext/standard/unixtime.c - PHP_FUNCTION(sleep)
+pub fn php_sleep(_vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("sleep() expects exactly 1 parameter".into());
+    }
+
+    let val = _vm.arena.get(args[0]);
+    let seconds = match &val.value {
+        Val::Int(i) if *i >= 0 => *i as u64,
+        Val::Int(_) => return Err("sleep(): Number of seconds must be non-negative".into()),
+        _ => return Err("sleep(): expects parameter 1 to be int".into()),
+    };
+
+    std::thread::sleep(std::time::Duration::from_secs(seconds));
+    Ok(_vm.arena.alloc(Val::Int(0)))
+}
+
 /// hrtime(bool $as_number = false): array|int
 /// Returns high resolution time
 /// Reference: $PHP_SRC_PATH/ext/standard/hrtime.c

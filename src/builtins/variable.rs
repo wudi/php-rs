@@ -616,6 +616,15 @@ pub fn php_is_scalar(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     Ok(vm.arena.alloc(Val::Bool(is)))
 }
 
+pub fn php_is_resource(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("is_resource() expects exactly 1 parameter".into());
+    }
+    let val = vm.arena.get(args[0]);
+    let is = matches!(val.value, Val::Resource(_));
+    Ok(vm.arena.alloc(Val::Bool(is)))
+}
+
 pub fn php_getenv(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() > 2 {
         return Err(format!(
@@ -1385,4 +1394,115 @@ impl<'a> UnserializeParser<'a> {
             }
         }
     }
+}
+
+/// strval($value): string
+/// Get string value of a variable
+/// Reference: $PHP_SRC_PATH/ext/standard/type.c - PHP_FUNCTION(strval)
+pub fn php_strval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("strval() expects exactly 1 parameter".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    let str_val = match &val.value {
+        Val::String(s) => s.to_vec(),
+        Val::Int(i) => i.to_string().into_bytes(),
+        Val::Float(f) => f.to_string().into_bytes(),
+        Val::Bool(true) => b"1".to_vec(),
+        Val::Bool(false) => b"".to_vec(),
+        Val::Null => b"".to_vec(),
+        Val::Array(_) => b"Array".to_vec(),
+        Val::Object(_) => b"Object".to_vec(),
+        _ => return Err(format!("strval(): Cannot convert {} to string", val.value.type_name())),
+    };
+
+    Ok(vm.arena.alloc(Val::String(Rc::new(str_val))))
+}
+
+/// intval($value, $base = 10): int
+/// Get integer value of a variable
+/// Reference: $PHP_SRC_PATH/ext/standard/type.c - PHP_FUNCTION(intval)
+pub fn php_intval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() || args.len() > 2 {
+        return Err("intval() expects 1 or 2 parameters".into());
+    }
+
+    let base = if args.len() > 1 {
+        match &vm.arena.get(args[1]).value {
+            Val::Int(i) => *i as i32,
+            _ => 10,
+        }
+    } else {
+        10
+    };
+
+    if base < 2 || base > 36 {
+        return Err("intval(): Invalid base".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    let int_val = match &val.value {
+        Val::Int(i) => *i,
+        Val::Float(f) => *f as i64,
+        Val::Bool(b) => if *b { 1 } else { 0 },
+        Val::Null => 0,
+        Val::String(s) => {
+            let s_str = String::from_utf8_lossy(s);
+            if base == 10 {
+                s_str.trim_start().parse::<i64>().unwrap_or(0)
+            } else {
+                i64::from_str_radix(s_str.trim_start(), base as u32).unwrap_or(0)
+            }
+        }
+        _ => 0,
+    };
+
+    Ok(vm.arena.alloc(Val::Int(int_val)))
+}
+
+/// floatval($value): float
+/// Get float value of a variable
+/// Reference: $PHP_SRC_PATH/ext/standard/type.c - PHP_FUNCTION(floatval)
+pub fn php_floatval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("floatval() expects exactly 1 parameter".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    let float_val = match &val.value {
+        Val::Float(f) => *f,
+        Val::Int(i) => *i as f64,
+        Val::Bool(b) => if *b { 1.0 } else { 0.0 },
+        Val::Null => 0.0,
+        Val::String(s) => {
+            let s_str = String::from_utf8_lossy(s);
+            s_str.trim_start().parse::<f64>().unwrap_or(0.0)
+        }
+        _ => 0.0,
+    };
+
+    Ok(vm.arena.alloc(Val::Float(float_val)))
+}
+
+/// boolval($value): bool
+/// Get boolean value of a variable
+/// Reference: $PHP_SRC_PATH/ext/standard/type.c - PHP_FUNCTION(boolval)
+pub fn php_boolval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("boolval() expects exactly 1 parameter".into());
+    }
+
+    let val = vm.arena.get(args[0]);
+    let bool_val = match &val.value {
+        Val::Bool(b) => *b,
+        Val::Int(i) => *i != 0,
+        Val::Float(f) => *f != 0.0 && !f.is_nan(),
+        Val::String(s) => !s.is_empty() && &**s != b"0",
+        Val::Null => false,
+        Val::Array(arr) => !arr.map.is_empty(),
+        _ => true,
+    };
+
+    Ok(vm.arena.alloc(Val::Bool(bool_val)))
 }

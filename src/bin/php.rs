@@ -24,6 +24,10 @@ struct Cli {
     #[arg(short = 'a', long)]
     interactive: bool,
 
+    /// Define INI entry (e.g., -d foo=bar)
+    #[arg(short = 'd', value_name = "foo[=bar]", action = clap::ArgAction::Append)]
+    define: Vec<String>,
+
     /// Script file to run
     #[arg(name = "FILE")]
     file: Option<PathBuf>,

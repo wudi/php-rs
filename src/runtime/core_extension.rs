@@ -215,6 +215,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"is_float", variable::php_is_float);
         registry.register_function(b"is_numeric", variable::php_is_numeric);
         registry.register_function(b"is_scalar", variable::php_is_scalar);
+        registry.register_function(b"is_resource", variable::php_is_resource);
         registry.register_function(b"define", variable::php_define);
         registry.register_function(b"defined", variable::php_defined);
         registry.register_function(b"constant", variable::php_constant);
@@ -229,6 +230,11 @@ impl Extension for CoreExtension {
         registry.register_function(b"error_get_last", variable::php_error_get_last);
         registry.register_function(b"serialize", variable::php_serialize);
         registry.register_function(b"unserialize", variable::php_unserialize);
+        registry.register_function(b"strval", variable::php_strval);
+        registry.register_function(b"intval", variable::php_intval);
+        registry.register_function(b"floatval", variable::php_floatval);
+        registry.register_function(b"doubleval", variable::php_floatval); // Alias for floatval
+        registry.register_function(b"boolval", variable::php_boolval);
 
         // HTTP functions
         registry.register_function(b"header", http::php_header);
@@ -252,6 +258,9 @@ impl Extension for CoreExtension {
         registry.register_function(b"abs", math::php_abs);
         registry.register_function(b"max", math::php_max);
         registry.register_function(b"min", math::php_min);
+        registry.register_function(b"round", math::php_round);
+        registry.register_function(b"floor", math::php_floor);
+        registry.register_function(b"ceil", math::php_ceil);
 
         // BCMath functions
         registry.register_function(b"bcadd", bcmath::bcadd);
@@ -414,6 +423,11 @@ impl Extension for CoreExtension {
         registry.register_function(b"is_uploaded_file", filesystem::php_is_uploaded_file);
         registry.register_function(b"move_uploaded_file", filesystem::php_move_uploaded_file);
 
+        // Stream functions
+        registry.register_function_with_by_ref(b"stream_select", filesystem::php_stream_select, vec![0, 1, 2]);
+        registry.register_function(b"stream_get_contents", filesystem::php_stream_get_contents);
+        registry.register_function(b"stream_set_blocking", filesystem::php_stream_set_blocking);
+
         // Execution functions
         registry.register_function(b"escapeshellarg", exec::php_escapeshellarg);
         registry.register_function(b"escapeshellcmd", exec::php_escapeshellcmd);
@@ -421,7 +435,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"passthru", exec::php_passthru);
         registry.register_function(b"shell_exec", exec::php_shell_exec);
         registry.register_function(b"system", exec::php_system);
-        registry.register_function(b"proc_open", exec::php_proc_open);
+        registry.register_function_with_by_ref(b"proc_open", exec::php_proc_open, vec![2]);
         registry.register_function(b"proc_close", exec::php_proc_close);
         registry.register_function(b"proc_terminate", exec::php_proc_terminate);
         registry.register_function(b"proc_nice", exec::php_proc_nice);

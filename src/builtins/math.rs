@@ -142,3 +142,73 @@ fn compare_values(vm: &VM, a: Handle, b: Handle) -> i32 {
         _ => 0,
     }
 }
+
+/// round(float $num, int $precision = 0, int $mode = PHP_ROUND_HALF_UP): float
+/// Rounds a float
+/// Reference: $PHP_SRC_PATH/ext/standard/math.c - PHP_FUNCTION(round)
+pub fn php_round(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.is_empty() {
+        return Err("round() expects at least 1 parameter".into());
+    }
+
+    let num = match &vm.arena.get(args[0]).value {
+        Val::Float(f) => *f,
+        Val::Int(i) => *i as f64,
+        _ => return Err("round(): Argument #1 must be of type float".into()),
+    };
+
+    let precision = if args.len() > 1 {
+        match &vm.arena.get(args[1]).value {
+            Val::Int(i) => *i as i32,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+
+    let result = if precision == 0 {
+        num.round()
+    } else if precision > 0 {
+        let multiplier = 10_f64.powi(precision);
+        (num * multiplier).round() / multiplier
+    } else {
+        let divisor = 10_f64.powi(-precision);
+        (num / divisor).round() * divisor
+    };
+
+    Ok(vm.arena.alloc(Val::Float(result)))
+}
+
+/// floor(float $num): float
+/// Round fractions down
+/// Reference: $PHP_SRC_PATH/ext/standard/math.c - PHP_FUNCTION(floor)
+pub fn php_floor(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("floor() expects exactly 1 parameter".into());
+    }
+
+    let num = match &vm.arena.get(args[0]).value {
+        Val::Float(f) => *f,
+        Val::Int(i) => *i as f64,
+        _ => return Err("floor(): Argument #1 must be of type float".into()),
+    };
+
+    Ok(vm.arena.alloc(Val::Float(num.floor())))
+}
+
+/// ceil(float $num): float
+/// Round fractions up
+/// Reference: $PHP_SRC_PATH/ext/standard/math.c - PHP_FUNCTION(ceil)
+pub fn php_ceil(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
+    if args.len() != 1 {
+        return Err("ceil() expects exactly 1 parameter".into());
+    }
+
+    let num = match &vm.arena.get(args[0]).value {
+        Val::Float(f) => *f,
+        Val::Int(i) => *i as f64,
+        _ => return Err("ceil(): Argument #1 must be of type float".into()),
+    };
+
+    Ok(vm.arena.alloc(Val::Float(num.ceil())))
+}
