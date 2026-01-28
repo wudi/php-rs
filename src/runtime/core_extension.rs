@@ -291,6 +291,27 @@ impl Extension for CoreExtension {
         registry.register_constant(b"DEBUG_BACKTRACE_PROVIDE_OBJECT", Val::Int(1 << 0));
         registry.register_constant(b"DEBUG_BACKTRACE_IGNORE_ARGS", Val::Int(1 << 1));
 
+        // Math constants
+        registry.register_constant(b"M_E", Val::Float(std::f64::consts::E));
+        registry.register_constant(b"M_LOG2E", Val::Float(std::f64::consts::LOG2_E));
+        registry.register_constant(b"M_LOG10E", Val::Float(std::f64::consts::LOG10_E));
+        registry.register_constant(b"M_LN2", Val::Float(std::f64::consts::LN_2));
+        registry.register_constant(b"M_LN10", Val::Float(std::f64::consts::LN_10));
+        registry.register_constant(b"M_PI", Val::Float(std::f64::consts::PI));
+        registry.register_constant(b"M_PI_2", Val::Float(std::f64::consts::FRAC_PI_2));
+        registry.register_constant(b"M_PI_4", Val::Float(std::f64::consts::FRAC_PI_4));
+        registry.register_constant(b"M_1_PI", Val::Float(std::f64::consts::FRAC_1_PI));
+        registry.register_constant(b"M_2_PI", Val::Float(std::f64::consts::FRAC_2_PI));
+        registry.register_constant(b"M_SQRTPI", Val::Float(1.7724538509055160));
+        registry.register_constant(b"M_2_SQRTPI", Val::Float(std::f64::consts::FRAC_2_SQRT_PI));
+        registry.register_constant(b"M_LNPI", Val::Float(1.1447298858494002));
+        registry.register_constant(b"M_EULER", Val::Float(0.5772156649015329));
+        registry.register_constant(b"M_SQRT2", Val::Float(std::f64::consts::SQRT_2));
+        registry.register_constant(b"M_SQRT1_2", Val::Float(std::f64::consts::FRAC_1_SQRT_2));
+        registry.register_constant(b"M_SQRT3", Val::Float(1.7320508075688772));
+        registry.register_constant(b"INF", Val::Float(f64::INFINITY));
+        registry.register_constant(b"NAN", Val::Float(f64::NAN));
+
         // Function handling functions
         registry.register_function(b"func_get_args", function::php_func_get_args);
         registry.register_function(b"func_num_args", function::php_func_num_args);
@@ -371,6 +392,10 @@ impl Extension for CoreExtension {
         registry.register_function(b"glob", filesystem::php_glob);
         registry.register_function(b"getcwd", filesystem::php_getcwd);
         registry.register_function(b"chdir", filesystem::php_chdir);
+        registry.register_function(b"opendir", filesystem::php_opendir);
+        registry.register_function(b"readdir", filesystem::php_readdir);
+        registry.register_function(b"closedir", filesystem::php_closedir);
+        registry.register_function(b"rewinddir", filesystem::php_rewinddir);
 
         // Filesystem functions - Path operations
         registry.register_function(b"basename", filesystem::php_basename);
@@ -1349,6 +1374,7 @@ impl Extension for CoreExtension {
         registry.register_function(b"ob_get_status", output_control::php_ob_get_status);
         registry.register_function(b"ob_implicit_flush", output_control::php_ob_implicit_flush);
         registry.register_function(b"ob_list_handlers", output_control::php_ob_list_handlers);
+        registry.register_function(b"flush", output_control::php_flush);
         registry.register_function(
             b"output_add_rewrite_var",
             output_control::php_output_add_rewrite_var,

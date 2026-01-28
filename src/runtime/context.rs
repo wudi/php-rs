@@ -554,6 +554,20 @@ impl RequestContext {
         let build_date = chrono::Local::now().format("%b %e %Y %H:%M:%S").to_string();
         self.insert_builtin_constant(b"PHP_BUILD_DATE", Val::String(Rc::new(build_date.as_bytes().to_vec())));
 
+        // PHP_BINARY - path to the current PHP executable
+        let php_binary = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "/usr/local/bin/php".to_string());
+        self.insert_builtin_constant(b"PHP_BINARY", Val::String(Rc::new(php_binary.as_bytes().to_vec())));
+
+        // PHP_BINDIR - directory containing the PHP executable
+        let php_bindir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|parent| parent.to_string_lossy().to_string()))
+            .unwrap_or_else(|| "/usr/local/bin".to_string());
+        self.insert_builtin_constant(b"PHP_BINDIR", Val::String(Rc::new(php_bindir.as_bytes().to_vec())));
+
         // System constants
         self.insert_builtin_constant(b"PHP_OS", Val::String(Rc::new(b"Darwin".to_vec())));
         self.insert_builtin_constant(b"PHP_SAPI", Val::String(Rc::new(b"cli".to_vec())));
