@@ -2177,7 +2177,9 @@ impl<'src> Emitter<'src> {
                         self.push_op(OpCode::Cast(1)); // Bool
                     }
                     BinaryOp::Coalesce => {
+                        self.push_op(OpCode::SuppressUndefined(true));
                         self.emit_expr(left);
+                        self.push_op(OpCode::SuppressUndefined(false));
                         let end_jump = self.chunk.code.len();
                         self.push_op(OpCode::Coalesce(0));
                         self.emit_expr(right);
@@ -2365,6 +2367,10 @@ impl<'src> Emitter<'src> {
                                     self.push_op(OpCode::PreInc);
                                 }
                             }
+                            Expr::ArrayDimFetch { .. } => {
+                                self.emit_expr_for_write(expr);
+                                self.push_op(OpCode::PreInc);
+                            }
                             Expr::PropertyFetch {
                                 target, property, ..
                             } => {
@@ -2401,6 +2407,10 @@ impl<'src> Emitter<'src> {
                                     self.push_op(OpCode::MakeVarRef(sym));
                                     self.push_op(OpCode::PreDec);
                                 }
+                            }
+                            Expr::ArrayDimFetch { .. } => {
+                                self.emit_expr_for_write(expr);
+                                self.push_op(OpCode::PreDec);
                             }
                             Expr::PropertyFetch {
                                 target, property, ..
@@ -2449,6 +2459,10 @@ impl<'src> Emitter<'src> {
                             self.push_op(OpCode::PostInc);
                         }
                     }
+                    Expr::ArrayDimFetch { .. } => {
+                        self.emit_expr_for_write(var);
+                        self.push_op(OpCode::PostInc);
+                    }
                     Expr::PropertyFetch {
                         target, property, ..
                     } => {
@@ -2484,6 +2498,10 @@ impl<'src> Emitter<'src> {
                             self.push_op(OpCode::MakeVarRef(sym));
                             self.push_op(OpCode::PostDec);
                         }
+                    }
+                    Expr::ArrayDimFetch { .. } => {
+                        self.emit_expr_for_write(var);
+                        self.push_op(OpCode::PostDec);
                     }
                     Expr::PropertyFetch {
                         target, property, ..

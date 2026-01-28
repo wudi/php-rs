@@ -333,6 +333,7 @@ pub struct VM {
     pub(crate) var_handle_map: HashMap<Handle, Symbol>,
     pending_undefined: HashMap<Handle, Symbol>,
     pub(crate) suppress_undefined_notice: bool,
+    pub(crate) suppress_undefined_stack: Vec<bool>,
     handling_user_error: bool,
     pub execution_start_time: SystemTime,
     /// Track if we're currently executing finally blocks to prevent recursion
@@ -869,6 +870,7 @@ impl VM {
             var_handle_map: HashMap::new(),
             pending_undefined: HashMap::new(),
             suppress_undefined_notice: false,
+            suppress_undefined_stack: Vec::new(),
             handling_user_error: false,
             execution_start_time: SystemTime::now(),
             executing_finally: false,
@@ -3779,72 +3781,48 @@ impl VM {
                     .operand_stack
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
-                if self.arena.get(handle).is_ref {
-                    let val = &self.arena.get(handle).value;
-                    let new_val = match val {
-                        Val::Int(i) => Val::Int(i + 1),
-                        _ => Val::Null,
-                    };
-                    self.arena.get_mut(handle).value = new_val.clone();
-                    let res_handle = self.arena.alloc(new_val);
-                    self.operand_stack.push(res_handle);
-                } else {
-                    return Err(VmError::RuntimeError("PreInc on non-reference".into()));
-                }
+                let current_val = self.arena.get(handle).value.clone();
+                use crate::vm::inc_dec::increment_value;
+                let new_val = increment_value(current_val, &mut *self.error_handler)?;
+                self.arena.get_mut(handle).value = new_val.clone();
+                let res_handle = self.arena.alloc(new_val);
+                self.operand_stack.push(res_handle);
             }
             OpCode::PreDec => {
                 let handle = self
                     .operand_stack
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
-                if self.arena.get(handle).is_ref {
-                    let val = &self.arena.get(handle).value;
-                    let new_val = match val {
-                        Val::Int(i) => Val::Int(i - 1),
-                        _ => Val::Null,
-                    };
-                    self.arena.get_mut(handle).value = new_val.clone();
-                    let res_handle = self.arena.alloc(new_val);
-                    self.operand_stack.push(res_handle);
-                } else {
-                    return Err(VmError::RuntimeError("PreDec on non-reference".into()));
-                }
+                let current_val = self.arena.get(handle).value.clone();
+                use crate::vm::inc_dec::decrement_value;
+                let new_val = decrement_value(current_val, &mut *self.error_handler)?;
+                self.arena.get_mut(handle).value = new_val.clone();
+                let res_handle = self.arena.alloc(new_val);
+                self.operand_stack.push(res_handle);
             }
             OpCode::PostInc => {
                 let handle = self
                     .operand_stack
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
-                if self.arena.get(handle).is_ref {
-                    let val = self.arena.get(handle).value.clone();
-                    let new_val = match &val {
-                        Val::Int(i) => Val::Int(i + 1),
-                        _ => Val::Null,
-                    };
-                    self.arena.get_mut(handle).value = new_val;
-                    let res_handle = self.arena.alloc(val); // Return OLD value
-                    self.operand_stack.push(res_handle);
-                } else {
-                    return Err(VmError::RuntimeError("PostInc on non-reference".into()));
-                }
+                let current_val = self.arena.get(handle).value.clone();
+                use crate::vm::inc_dec::increment_value;
+                let new_val = increment_value(current_val.clone(), &mut *self.error_handler)?;
+                self.arena.get_mut(handle).value = new_val;
+                let res_handle = self.arena.alloc(current_val); // Return OLD value
+                self.operand_stack.push(res_handle);
             }
             OpCode::PostDec => {
                 let handle = self
                     .operand_stack
                     .pop()
                     .ok_or(VmError::RuntimeError("Stack underflow".into()))?;
-                if self.arena.get(handle).is_ref {
-                    let val = self.arena.get(handle).value.clone();
-                    let new_val = match &val {
-                        Val::Int(i) => Val::Int(i - 1),
-                        _ => Val::Null,
-                    };
-                    self.arena.get_mut(handle).value = new_val;
-                    let res_handle = self.arena.alloc(val); // Return OLD value
-                    self.operand_stack.push(res_handle);
-                } else {
-                    return Err(VmError::RuntimeError("PostDec on non-reference".into()));
-                }
+                let current_val = self.arena.get(handle).value.clone();
+                use crate::vm::inc_dec::decrement_value;
+                let new_val = decrement_value(current_val.clone(), &mut *self.error_handler)?;
+                self.arena.get_mut(handle).value = new_val;
+                let res_handle = self.arena.alloc(current_val); // Return OLD value
+                self.operand_stack.push(res_handle);
             }
             OpCode::MakeVarRef(sym) => {
                 let frame = self.frames.last_mut().unwrap();
@@ -4004,6 +3982,15 @@ impl VM {
                     self.context.config.error_reporting = 0;
                 } else if let Some(level) = self.silence_stack.pop() {
                     self.context.config.error_reporting = level;
+                }
+            }
+            OpCode::SuppressUndefined(flag) => {
+                if flag {
+                    let prev = self.suppress_undefined_notice;
+                    self.suppress_undefined_stack.push(prev);
+                    self.suppress_undefined_notice = true;
+                } else if let Some(prev) = self.suppress_undefined_stack.pop() {
+                    self.suppress_undefined_notice = prev;
                 }
             }
             OpCode::BeginSilence => {
@@ -5225,10 +5212,12 @@ impl VM {
                                 ArrayKey::Int(i) => i.to_string(),
                                 ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
                             };
-                            self.report_error(
-                                ErrorLevel::Warning,
-                                &format!("Undefined array key \"{}\"", key_str),
-                            );
+                            if !self.suppress_undefined_notice {
+                                self.report_error(
+                                    ErrorLevel::Warning,
+                                    &format!("Undefined array key \"{}\"", key_str),
+                                );
+                            }
                             let null_handle = self.arena.alloc(Val::Null);
                             self.operand_stack.push(null_handle);
                         }
@@ -5251,10 +5240,12 @@ impl VM {
                                     String::from_utf8_lossy(s).to_string()
                                 }
                             };
-                            self.report_error(
-                                ErrorLevel::Warning,
-                                &format!("Undefined array key \"{}\"", key_str),
-                            );
+                            if !self.suppress_undefined_notice {
+                                self.report_error(
+                                    ErrorLevel::Warning,
+                                    &format!("Undefined array key \"{}\"", key_str),
+                                );
+                            }
                             let null_handle = self.arena.alloc(Val::Null);
                             self.operand_stack.push(null_handle);
                         }
@@ -8378,7 +8369,7 @@ impl VM {
                             self.operand_stack.push(*val_handle);
                         } else {
                             // Emit notice for FetchDimR, but not for isset/empty (FetchDimIs) or unset
-                            if is_fetch_r {
+                            if is_fetch_r && !self.suppress_undefined_notice {
                                 let key_str = match &key {
                                     ArrayKey::Int(i) => i.to_string(),
                                     ArrayKey::Str(s) => String::from_utf8_lossy(s).to_string(),
@@ -8404,7 +8395,7 @@ impl VM {
                             let handle = self.deep_clone_val(val);
                             self.operand_stack.push(handle);
                         } else {
-                            if is_fetch_r {
+                            if is_fetch_r && !self.suppress_undefined_notice {
                                 let key_str = match &const_key {
                                     crate::core::value::ConstArrayKey::Int(i) => i.to_string(),
                                     crate::core::value::ConstArrayKey::Str(s) => {

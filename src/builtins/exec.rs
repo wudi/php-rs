@@ -404,12 +404,16 @@ pub fn php_proc_close(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 /// - "pid" (int): Process ID (Unix only, -1 on Windows)
 /// - "running" (bool): Whether the process is still running
 /// - "exitcode" (int): Exit code if process has terminated, -1 otherwise
+/// - "signaled" (bool): True if exited due to a signal (Unix)
+/// - "stopped" (bool): True if process is stopped (Unix)
+/// - "termsig" (int): Terminating signal number (Unix, 0 otherwise)
+/// - "stopsig" (int): Stop signal number (Unix, 0 otherwise)
 pub fn php_proc_get_status(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.is_empty() {
         return Err("proc_get_status() expects exactly 1 parameter".into());
     }
 
-    let (command, pid, is_running, exit_code) = {
+    let (command, pid, is_running, exit_code, signaled, stopped, termsig, stopsig) = {
         let val = vm.arena.get(args[0]);
         let resource_rc = match &val.value {
             Val::Resource(rc) => rc.clone(),
@@ -435,13 +439,39 @@ pub fn php_proc_get_status(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
                 .try_wait()
                 .map_err(|e| format!("proc_get_status(): {}", e))?
             {
-                Some(status) => (
-                    proc.command.clone(),
-                    pid,
-                    false,
-                    status.code().unwrap_or(-1) as i64,
-                ),
-                None => (proc.command.clone(), pid, true, -1),
+                Some(status) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        let termsig = status.signal().unwrap_or(0) as i64;
+                        let signaled = termsig != 0;
+                        (
+                            proc.command.clone(),
+                            pid,
+                            false,
+                            status.code().unwrap_or(-1) as i64,
+                            signaled,
+                            false,
+                            termsig,
+                            0,
+                        )
+                    }
+
+                    #[cfg(not(unix))]
+                    {
+                        (
+                            proc.command.clone(),
+                            pid,
+                            false,
+                            status.code().unwrap_or(-1) as i64,
+                            false,
+                            false,
+                            0,
+                            0,
+                        )
+                    }
+                }
+                None => (proc.command.clone(), pid, true, -1, false, false, 0, 0),
             }
         } else {
             return Err(
@@ -471,6 +501,26 @@ pub fn php_proc_get_status(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
     arr.insert(
         ArrayKey::Str(Rc::new(b"exitcode".to_vec())),
         vm.arena.alloc(Val::Int(exit_code)),
+    );
+
+    arr.insert(
+        ArrayKey::Str(Rc::new(b"signaled".to_vec())),
+        vm.arena.alloc(Val::Bool(signaled)),
+    );
+
+    arr.insert(
+        ArrayKey::Str(Rc::new(b"stopped".to_vec())),
+        vm.arena.alloc(Val::Bool(stopped)),
+    );
+
+    arr.insert(
+        ArrayKey::Str(Rc::new(b"termsig".to_vec())),
+        vm.arena.alloc(Val::Int(termsig)),
+    );
+
+    arr.insert(
+        ArrayKey::Str(Rc::new(b"stopsig".to_vec())),
+        vm.arena.alloc(Val::Int(stopsig)),
     );
 
     Ok(vm.arena.alloc(Val::Array(Rc::new(arr))))

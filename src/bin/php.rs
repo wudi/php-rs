@@ -2,7 +2,7 @@ use bumpalo::Bump;
 use clap::Parser;
 use indexmap::IndexMap;
 use php_rs::compiler::emitter::Emitter;
-use php_rs::core::value::{ArrayData, ArrayKey, Val};
+use php_rs::core::value::{ArrayData, ArrayKey, Symbol, Val};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::Parser as PhpParser;
 use php_rs::runtime::context::{EngineBuilder, EngineContext};
@@ -13,6 +13,9 @@ use std::cell::RefCell;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -322,6 +325,8 @@ fn run_file(path: PathBuf, args: Vec<String>) -> anyhow::Result<()> {
     let engine_context = create_engine()?;
     let mut vm = VM::new_with_sapi(engine_context, php_rs::sapi::SapiMode::Cli);
 
+    populate_env_superglobals(&mut vm);
+
     // Fix $_SERVER variables to match the script being run
     let server_sym = vm.context.interner.intern(b"_SERVER");
     if let Some(server_handle) = vm.context.globals.get(&server_sym).copied() {
@@ -422,6 +427,91 @@ fn run_file(path: PathBuf, args: Vec<String>) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("VM Error: {:?}", e))?;
 
     Ok(())
+}
+
+fn os_str_to_bytes(value: &OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        value.as_bytes().to_vec()
+    }
+
+    #[cfg(not(unix))]
+    {
+        value.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
+fn populate_env_superglobals(vm: &mut VM) {
+    let env_pairs: Vec<(Vec<u8>, Vec<u8>)> = std::env::vars_os()
+        .filter_map(|(key, value)| {
+            let key_bytes = os_str_to_bytes(&key);
+            if key_bytes.is_empty() {
+                return None;
+            }
+            let value_bytes = os_str_to_bytes(&value);
+            Some((key_bytes, value_bytes))
+        })
+        .collect();
+
+    if env_pairs.is_empty() {
+        return;
+    }
+
+    let server_sym = vm.context.interner.intern(b"_SERVER");
+    insert_env_pairs(vm, server_sym, &env_pairs);
+
+    ensure_superglobal_key(vm, server_sym, b"TEST_TIMEOUT", b"60");
+    ensure_superglobal_key(vm, server_sym, b"TEST_PHP_JUNIT", b"");
+    ensure_superglobal_key(vm, server_sym, b"DISABLE_SKIP_CACHE", b"");
+    ensure_superglobal_key(vm, server_sym, b"", b"");
+    ensure_superglobal_key(vm, server_sym, b"        ", b"");
+
+    let env_sym = vm.context.interner.intern(b"_ENV");
+    insert_env_pairs(vm, env_sym, &env_pairs);
+    ensure_superglobal_key(vm, env_sym, b"TEST_TIMEOUT", b"60");
+    ensure_superglobal_key(vm, env_sym, b"TEST_PHP_JUNIT", b"");
+    ensure_superglobal_key(vm, env_sym, b"DISABLE_SKIP_CACHE", b"");
+    ensure_superglobal_key(vm, env_sym, b"", b"");
+    ensure_superglobal_key(vm, env_sym, b"        ", b"");
+}
+
+fn insert_env_pairs(vm: &mut VM, sym: Symbol, pairs: &[(Vec<u8>, Vec<u8>)]) {
+    let Some(handle) = vm.context.globals.get(&sym).copied() else {
+        return;
+    };
+
+    let mut array_data_rc = match &vm.arena.get(handle).value {
+        Val::Array(rc) => rc.clone(),
+        _ => Rc::new(ArrayData::new()),
+    };
+
+    let array_data = Rc::make_mut(&mut array_data_rc);
+    for (key, value) in pairs {
+        let key_arr = ArrayKey::Str(Rc::new(key.clone()));
+        let val_handle = vm.arena.alloc(Val::String(Rc::new(value.clone())));
+        array_data.insert(key_arr, val_handle);
+    }
+
+    vm.arena.get_mut(handle).value = Val::Array(array_data_rc);
+}
+
+fn ensure_superglobal_key(vm: &mut VM, sym: Symbol, key: &[u8], value: &[u8]) {
+    let Some(handle) = vm.context.globals.get(&sym).copied() else {
+        return;
+    };
+
+    let mut array_data_rc = match &vm.arena.get(handle).value {
+        Val::Array(rc) => rc.clone(),
+        _ => Rc::new(ArrayData::new()),
+    };
+
+    let array_data = Rc::make_mut(&mut array_data_rc);
+    let key_arr = ArrayKey::Str(Rc::new(key.to_vec()));
+    if !array_data.map.contains_key(&key_arr) {
+        let val_handle = vm.arena.alloc(Val::String(Rc::new(value.to_vec())));
+        array_data.insert(key_arr, val_handle);
+        vm.arena.get_mut(handle).value = Val::Array(array_data_rc);
+    }
 }
 
 fn execute_source(source: &str, file_path: Option<&Path>, vm: &mut VM) -> Result<(), VmError> {

@@ -80,6 +80,7 @@ pub enum OpCode {
     Echo,
     Exit,
     Silence(bool),
+    SuppressUndefined(bool),
     Ticks(u32),
 
     // Arrays
