@@ -1571,7 +1571,10 @@ pub fn php_array_map(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             }
             Val::ConstArray(const_arr) => {
                 let mut map = IndexMap::new();
-                let entries: Vec<_> = const_arr.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let entries: Vec<_> = const_arr
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 for (key, val) in entries {
                     let runtime_key = match key {
                         ConstArrayKey::Int(i) => ArrayKey::Int(i),

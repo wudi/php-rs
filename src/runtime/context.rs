@@ -34,13 +34,13 @@ pub struct PhpConfig {
 impl Default for PhpConfig {
     fn default() -> Self {
         let mut ini_settings = HashMap::new();
-        
+
         // Set default encoding settings
         ini_settings.insert("default_charset".to_string(), "UTF-8".to_string());
         ini_settings.insert("input_encoding".to_string(), "".to_string());
         ini_settings.insert("internal_encoding".to_string(), "".to_string());
         ini_settings.insert("output_encoding".to_string(), "".to_string());
-        
+
         Self {
             error_reporting: 32767, // E_ALL
             max_execution_time: 300,
@@ -552,27 +552,39 @@ impl RequestContext {
 
         // Build date constant (format: "Jan 26 2026 12:00:00")
         let build_date = chrono::Local::now().format("%b %e %Y %H:%M:%S").to_string();
-        self.insert_builtin_constant(b"PHP_BUILD_DATE", Val::String(Rc::new(build_date.as_bytes().to_vec())));
+        self.insert_builtin_constant(
+            b"PHP_BUILD_DATE",
+            Val::String(Rc::new(build_date.as_bytes().to_vec())),
+        );
 
         // PHP_BINARY - path to the current PHP executable
         let php_binary = std::env::current_exe()
             .ok()
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .unwrap_or_else(|| "/usr/local/bin/php".to_string());
-        self.insert_builtin_constant(b"PHP_BINARY", Val::String(Rc::new(php_binary.as_bytes().to_vec())));
+        self.insert_builtin_constant(
+            b"PHP_BINARY",
+            Val::String(Rc::new(php_binary.as_bytes().to_vec())),
+        );
 
         // PHP_BINDIR - directory containing the PHP executable
         let php_bindir = std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|parent| parent.to_string_lossy().to_string()))
+            .and_then(|p| {
+                p.parent()
+                    .map(|parent| parent.to_string_lossy().to_string())
+            })
             .unwrap_or_else(|| "/usr/local/bin".to_string());
-        self.insert_builtin_constant(b"PHP_BINDIR", Val::String(Rc::new(php_bindir.as_bytes().to_vec())));
+        self.insert_builtin_constant(
+            b"PHP_BINDIR",
+            Val::String(Rc::new(php_bindir.as_bytes().to_vec())),
+        );
 
         // System constants
         self.insert_builtin_constant(b"PHP_OS", Val::String(Rc::new(b"Darwin".to_vec())));
         self.insert_builtin_constant(b"PHP_SAPI", Val::String(Rc::new(b"cli".to_vec())));
         self.insert_builtin_constant(b"PHP_EOL", Val::String(Rc::new(b"\n".to_vec())));
-        
+
         // PHP_OS_FAMILY constant (Windows, BSD, Darwin, Solaris, Linux, Unknown)
         let os_family = if cfg!(target_os = "windows") {
             "Windows"
@@ -580,14 +592,20 @@ impl RequestContext {
             "Darwin"
         } else if cfg!(target_os = "linux") {
             "Linux"
-        } else if cfg!(target_os = "freebsd") || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd") {
+        } else if cfg!(target_os = "freebsd")
+            || cfg!(target_os = "openbsd")
+            || cfg!(target_os = "netbsd")
+        {
             "BSD"
         } else if cfg!(target_os = "solaris") {
             "Solaris"
         } else {
             "Unknown"
         };
-        self.insert_builtin_constant(b"PHP_OS_FAMILY", Val::String(Rc::new(os_family.as_bytes().to_vec())));
+        self.insert_builtin_constant(
+            b"PHP_OS_FAMILY",
+            Val::String(Rc::new(os_family.as_bytes().to_vec())),
+        );
 
         let int_size = std::mem::size_of::<i64>() as i64;
         self.insert_builtin_constant(b"PHP_INT_SIZE", Val::Int(int_size));

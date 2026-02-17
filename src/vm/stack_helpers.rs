@@ -49,7 +49,10 @@ impl VM {
                 } else {
                     (0, "unknown".to_string())
                 };
-                VmError::RuntimeError(format!("Stack underflow during pop at IP {} in {}", ip, file))
+                VmError::RuntimeError(format!(
+                    "Stack underflow during pop at IP {} in {}",
+                    ip, file
+                ))
             })
     }
 

@@ -137,9 +137,9 @@ pub fn php_header_register_callback(vm: &mut VM, args: &[Handle]) -> Result<Hand
 
     // Validate that the argument is callable
     let callback = args[0];
-    
+
     // Store the callback in request context
     vm.context.header_callback = Some(callback);
-    
+
     Ok(vm.arena.alloc(Val::Bool(true)))
 }

@@ -10,12 +10,12 @@ use php_rs::vm::engine::{OutputWriter, StdoutWriter, VM, VmError};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 use std::cell::RefCell;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -36,7 +36,12 @@ struct Cli {
     define: Vec<String>,
 
     /// Script file to run (via -f/--file)
-    #[arg(short = 'f', long = "file", value_name = "FILE", conflicts_with = "positional_file")]
+    #[arg(
+        short = 'f',
+        long = "file",
+        value_name = "FILE",
+        conflicts_with = "positional_file"
+    )]
     file: Option<PathBuf>,
 
     /// Script file to run
@@ -197,10 +202,10 @@ fn load_readline_history(path: &Path, editor: &mut DefaultEditor) -> anyhow::Res
     if !path.exists() {
         return Ok(());
     }
-    
+
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
-    
+
     for line in reader.lines() {
         let line = line?;
         // Skip the _HiStOrY_V2_ header
@@ -212,35 +217,35 @@ fn load_readline_history(path: &Path, editor: &mut DefaultEditor) -> anyhow::Res
             let _ = editor.add_history_entry(&decoded);
         }
     }
-    
+
     Ok(())
 }
 
 /// Save readline history file (compatible with PHP's .php_history format)
 fn save_readline_history(path: &Path, editor: &DefaultEditor) -> anyhow::Result<()> {
     let mut file = fs::File::create(path)?;
-    
+
     // Write the readline v2 header
     writeln!(file, "_HiStOrY_V2_")?;
-    
+
     // Write history entries
     let history = editor.history();
     for entry in history.iter() {
         let encoded = encode_readline_history_line(entry);
         writeln!(file, "{}", encoded)?;
     }
-    
+
     Ok(())
 }
 
 fn run_repl() -> anyhow::Result<()> {
     let mut rl = DefaultEditor::new()?;
-    
+
     // Use ~/.php_history for REPL history (compatible with PHP's readline format)
     let history_path = std::env::var("HOME")
         .map(|home| PathBuf::from(home).join(".php_history"))
         .unwrap_or_else(|_| PathBuf::from(".php_history"));
-    
+
     // Load history in readline format
     if let Err(e) = load_readline_history(&history_path, &mut rl) {
         eprintln!("Warning: Could not load history: {}", e);
@@ -303,12 +308,12 @@ fn run_repl() -> anyhow::Result<()> {
             }
         }
     }
-    
+
     // Save history in readline format
     if let Err(e) = save_readline_history(&history_path, &rl) {
         eprintln!("Warning: Could not save history: {}", e);
     }
-    
+
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 use crate::builtins::exec::{PipeKind, PipeResource};
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
-use glob::{glob_with, MatchOptions, Pattern};
+use glob::{MatchOptions, Pattern, glob_with};
 use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::ffi::CString;
@@ -162,7 +162,7 @@ pub fn php_fopen(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 return Err("fopen(php://stdin): Not yet implemented".into());
             }
             "stdout" | "output" => {
-                // For now, return error - stdout requires special handling  
+                // For now, return error - stdout requires special handling
                 return Err("fopen(php://stdout): Not yet implemented".into());
             }
             "stderr" => {
@@ -229,7 +229,9 @@ pub fn php_fclose(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let is_resource = {
         let val = vm.arena.get(args[0]);
         match &val.value {
-            Val::Resource(rc) => rc.is::<FileHandle>() || rc.is::<PipeResource>() || rc.is::<MemoryStream>(),
+            Val::Resource(rc) => {
+                rc.is::<FileHandle>() || rc.is::<PipeResource>() || rc.is::<MemoryStream>()
+            }
             _ => false,
         }
     };
@@ -318,13 +320,13 @@ pub fn php_fread(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if let Some(ms) = resource_rc.downcast_ref::<MemoryStream>() {
         let mut pos = ms.position.borrow_mut();
         let buffer = ms.buffer.borrow();
-        
+
         let available = buffer.len().saturating_sub(*pos);
         let to_read = length.min(available);
-        
+
         let result = buffer[*pos..*pos + to_read].to_vec();
         *pos += to_read;
-        
+
         return Ok(vm.arena.alloc(Val::String(Rc::new(result))));
     }
 
@@ -407,19 +409,19 @@ pub fn php_fwrite(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         } else {
             &data
         };
-        
+
         let mut buffer = ms.buffer.borrow_mut();
         let mut pos = ms.position.borrow_mut();
-        
+
         // Extend buffer if needed
         if *pos + write_data.len() > buffer.len() {
             buffer.resize(*pos + write_data.len(), 0);
         }
-        
+
         // Write data at current position
         buffer[*pos..*pos + write_data.len()].copy_from_slice(write_data);
         *pos += write_data.len();
-        
+
         return Ok(vm.arena.alloc(Val::Int(write_data.len() as i64)));
     }
 
@@ -575,9 +577,8 @@ pub fn php_glob(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             }
         }
         Err(_) => {
-            let fallback = glob_fallback(&pattern, options).ok_or_else(|| {
-                vm.arena.alloc(Val::Bool(false))
-            });
+            let fallback =
+                glob_fallback(&pattern, options).ok_or_else(|| vm.arena.alloc(Val::Bool(false)));
             match fallback {
                 Ok(fallback_paths) => {
                     for path in fallback_paths {
@@ -636,7 +637,12 @@ fn glob_fallback(pattern: &str, options: MatchOptions) -> Option<Vec<PathBuf>> {
     let base = glob_base_path(&sanitized);
     let mut matches = Vec::new();
 
-    fn walk_dir(path: &PathBuf, matches: &mut Vec<PathBuf>, matcher: &Pattern, options: MatchOptions) {
+    fn walk_dir(
+        path: &PathBuf,
+        matches: &mut Vec<PathBuf>,
+        matcher: &Pattern,
+        options: MatchOptions,
+    ) {
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
@@ -929,11 +935,12 @@ pub fn php_scandir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 /// Reference: $PHP_SRC_PATH/ext/standard/file.c - PHP_FUNCTION(sys_get_temp_dir)
 pub fn php_sys_get_temp_dir(vm: &mut VM, _args: &[Handle]) -> Result<Handle, String> {
     // Check for sys_temp_dir INI setting first
-    let temp_dir_path = if let Some(ini_temp_dir) = vm.context.config.ini_settings.get("sys_temp_dir") {
-        std::path::PathBuf::from(ini_temp_dir)
-    } else {
-        std::env::temp_dir()
-    };
+    let temp_dir_path =
+        if let Some(ini_temp_dir) = vm.context.config.ini_settings.get("sys_temp_dir") {
+            std::path::PathBuf::from(ini_temp_dir)
+        } else {
+            std::env::temp_dir()
+        };
 
     #[cfg(unix)]
     {
@@ -1339,7 +1346,7 @@ pub fn php_rewind(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             *fh.eof.borrow_mut() = false;
             return Ok(vm.arena.alloc(Val::Bool(true)));
         }
-        
+
         if let Some(ms) = rc.downcast_ref::<MemoryStream>() {
             *ms.position.borrow_mut() = 0;
             return Ok(vm.arena.alloc(Val::Bool(true)));
@@ -1711,14 +1718,14 @@ pub fn php_umask(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 Val::Int(m) => *m as libc::mode_t,
                 _ => return Err("umask(): Argument must be integer".into()),
             };
-            
+
             unsafe {
                 let old_mask = libc::umask(new_mask);
                 Ok(vm.arena.alloc(Val::Int(old_mask as i64)))
             }
         }
     }
-    
+
     #[cfg(not(unix))]
     {
         // Windows doesn't have umask, just return 0
@@ -2054,18 +2061,8 @@ pub fn php_opendir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     // Read directory entries
     let entries: Vec<String> = fs::read_dir(&path)
-        .map_err(|e| {
-            format!(
-                "opendir({}): failed to open dir: {}",
-                path.display(),
-                e
-            )
-        })?
-        .filter_map(|entry| {
-            entry.ok().and_then(|e| {
-                e.file_name().into_string().ok()
-            })
-        })
+        .map_err(|e| format!("opendir({}): failed to open dir: {}", path.display(), e))?
+        .filter_map(|entry| entry.ok().and_then(|e| e.file_name().into_string().ok()))
         .collect();
 
     let resource = DirHandle {
@@ -2091,7 +2088,7 @@ pub fn php_readdir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                 if let Some(dir_handle) = rc.downcast_ref::<DirHandle>() {
                     let mut pos = dir_handle.position.borrow_mut();
                     let entries = dir_handle.entries.borrow();
-                    
+
                     if *pos < entries.len() {
                         let entry = entries[*pos].clone();
                         *pos += 1;
@@ -2100,10 +2097,14 @@ pub fn php_readdir(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                         None
                     }
                 } else {
-                    return Err("readdir(): supplied argument is not a valid Directory resource".into());
+                    return Err(
+                        "readdir(): supplied argument is not a valid Directory resource".into(),
+                    );
                 }
             }
-            _ => return Err("readdir(): supplied argument is not a valid Directory resource".into()),
+            _ => {
+                return Err("readdir(): supplied argument is not a valid Directory resource".into());
+            }
         }
     };
 
@@ -2171,7 +2172,7 @@ pub fn php_is_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, Stri
 
     // Check if this file is in the list of uploaded files
     let is_uploaded = vm.context.uploaded_files.contains(path_str.as_ref());
-    
+
     Ok(vm.arena.alloc(Val::Bool(is_uploaded)))
 }
 
@@ -2186,19 +2187,19 @@ pub fn php_move_uploaded_file(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
 
     let from_bytes = handle_to_path(vm, args[0])?;
     let _from_path = bytes_to_path(&from_bytes)?;
-    
+
     let to_bytes = handle_to_path(vm, args[1])?;
     let _to_path = bytes_to_path(&to_bytes)?;
 
     // Check if the source file is an uploaded file
     // TODO: Verify file is in uploaded_files list
     // For now, just return false since we don't track uploads yet
-    
+
     // When multipart parsing is implemented:
     // 1. Check if from_path is in vm.context.uploaded_files
     // 2. If yes, move the file and remove from uploaded_files list
     // 3. Return true/false based on success
-    
+
     Ok(vm.arena.alloc(Val::Bool(false)))
 }
 
@@ -2216,20 +2217,20 @@ pub fn php_stream_select(vm: &mut VM, args: &[Handle]) -> Result<Handle, String>
     // Parameters are by-ref: read, write, except arrays and timeout values
     // For a simplified implementation, assume all streams in read array are ready
     // This allows the test runner to proceed with reading output
-    
+
     // TODO: Properly implement stream monitoring using:
-    // - Unix: select() or poll() system calls  
+    // - Unix: select() or poll() system calls
     // - Windows: WaitForMultipleObjects or similar
     // - Parse timeout from args[3] (seconds) and args[4] (microseconds)
     // - Actually check stream readiness and modify arrays accordingly
-    
+
     // Count streams in the read array (args[0])
     let mut ready_count = 0;
     let read_val = vm.arena.get(args[0]);
     if let Val::Array(arr) = &read_val.value {
         ready_count = arr.map.len() as i64;
     }
-    
+
     Ok(vm.arena.alloc(Val::Int(ready_count)))
 }
 
@@ -2248,7 +2249,11 @@ pub fn php_stream_get_contents(vm: &mut VM, args: &[Handle]) -> Result<Handle, S
             Val::Null => None,
             Val::Int(i) if *i >= 0 => Some(*i as usize),
             Val::Int(i) if *i == -1 => None,
-            _ => return Err("stream_get_contents(): Length must be non-negative integer or null".into()),
+            _ => {
+                return Err(
+                    "stream_get_contents(): Length must be non-negative integer or null".into(),
+                );
+            }
         }
     } else {
         None
@@ -2270,7 +2275,9 @@ pub fn php_stream_get_contents(vm: &mut VM, args: &[Handle]) -> Result<Handle, S
         if let Val::Resource(rc) = &val.value {
             rc.clone()
         } else {
-            return Err("stream_get_contents(): supplied argument is not a valid stream resource".into());
+            return Err(
+                "stream_get_contents(): supplied argument is not a valid stream resource".into(),
+            );
         }
     };
 
@@ -2311,16 +2318,16 @@ pub fn php_stream_get_contents(vm: &mut VM, args: &[Handle]) -> Result<Handle, S
         let buffer = ms.buffer.borrow();
         let pos = *ms.position.borrow();
         let available = buffer.len().saturating_sub(pos);
-        
+
         let to_read = if let Some(max) = max_length {
             max.min(available)
         } else {
             available
         };
-        
+
         let result = buffer[pos..pos + to_read].to_vec();
         *ms.position.borrow_mut() = pos + to_read;
-        
+
         return Ok(vm.arena.alloc(Val::String(Rc::new(result))));
     }
 
@@ -2384,7 +2391,9 @@ pub fn php_stream_set_blocking(vm: &mut VM, args: &[Handle]) -> Result<Handle, S
     // Validate that the first argument is a resource
     let val = vm.arena.get(args[0]);
     if !matches!(val.value, Val::Resource(_)) {
-        return Err("stream_set_blocking(): supplied argument is not a valid stream resource".into());
+        return Err(
+            "stream_set_blocking(): supplied argument is not a valid stream resource".into(),
+        );
     }
 
     // For now, we just return true - a full implementation would set O_NONBLOCK on the fd

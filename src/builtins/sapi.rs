@@ -15,7 +15,10 @@ use std::rc::Rc;
 /// Common values: "cli", "fpm-fcgi", "apache2handler", "cgi-fcgi", etc.
 pub fn php_sapi_name(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if !args.is_empty() {
-        return Err(format!("php_sapi_name() expects exactly 0 parameters, {} given", args.len()));
+        return Err(format!(
+            "php_sapi_name() expects exactly 0 parameters, {} given",
+            args.len()
+        ));
     }
 
     // Return "cli" for now - the most common SAPI mode
@@ -36,9 +39,7 @@ pub fn php_uname(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         "a"
     } else {
         match &vm.arena.get(args[0]).value {
-            Val::String(s) => {
-                std::str::from_utf8(s).unwrap_or("a")
-            }
+            Val::String(s) => std::str::from_utf8(s).unwrap_or("a"),
             _ => "a",
         }
     };
@@ -46,12 +47,13 @@ pub fn php_uname(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let uname_info = match mode {
         "s" => std::env::consts::OS,
         "n" => "localhost", // hostname - simplified
-        "r" => "", // release - not easily available in Rust
-        "v" => "", // version - not easily available in Rust
+        "r" => "",          // release - not easily available in Rust
+        "v" => "",          // version - not easily available in Rust
         "m" => std::env::consts::ARCH,
         _ => {
             // "a" or default - all info
-            &format!("{} localhost {} {}",
+            &format!(
+                "{} localhost {} {}",
                 std::env::consts::OS,
                 std::env::consts::ARCH,
                 std::env::consts::FAMILY
@@ -68,7 +70,10 @@ pub fn php_uname(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 /// Reference: $PHP_SRC_PATH/ext/standard/proc_open.c
 pub fn php_getmypid(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if !args.is_empty() {
-        return Err(format!("getmypid() expects exactly 0 parameters, {} given", args.len()));
+        return Err(format!(
+            "getmypid() expects exactly 0 parameters, {} given",
+            args.len()
+        ));
     }
 
     let pid = std::process::id() as i64;
@@ -84,7 +89,10 @@ pub fn php_getmypid(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 /// timeout mechanism. We currently don't enforce this limit.
 pub fn php_set_time_limit(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() != 1 {
-        return Err(format!("set_time_limit() expects exactly 1 parameter, {} given", args.len()));
+        return Err(format!(
+            "set_time_limit() expects exactly 1 parameter, {} given",
+            args.len()
+        ));
     }
 
     let _seconds = match &vm.arena.get(args[0]).value {
@@ -94,7 +102,13 @@ pub fn php_set_time_limit(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
             let s_str = String::from_utf8_lossy(s);
             s_str.parse::<i64>().unwrap_or(0)
         }
-        Val::Bool(b) => if *b { 1 } else { 0 },
+        Val::Bool(b) => {
+            if *b {
+                1
+            } else {
+                0
+            }
+        }
         Val::Null => 0,
         _ => return Err("set_time_limit() expects parameter 1 to be int".to_string()),
     };
@@ -110,7 +124,10 @@ pub fn php_set_time_limit(vm: &mut VM, args: &[Handle]) -> Result<Handle, String
 /// Reference: $PHP_SRC_PATH/ext/standard/head.c
 pub fn php_ignore_user_abort(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if args.len() > 1 {
-        return Err(format!("ignore_user_abort() expects at most 1 parameter, {} given", args.len()));
+        return Err(format!(
+            "ignore_user_abort() expects at most 1 parameter, {} given",
+            args.len()
+        ));
     }
 
     // Get current setting (simplified - we don't track this yet)
@@ -119,7 +136,13 @@ pub fn php_ignore_user_abort(vm: &mut VM, args: &[Handle]) -> Result<Handle, Str
     if !args.is_empty() {
         // Set new value
         let _new_value = match &vm.arena.get(args[0]).value {
-            Val::Bool(b) => if *b { 1 } else { 0 },
+            Val::Bool(b) => {
+                if *b {
+                    1
+                } else {
+                    0
+                }
+            }
             Val::Int(i) => *i,
             _ => 0,
         };
@@ -134,7 +157,10 @@ pub fn php_ignore_user_abort(vm: &mut VM, args: &[Handle]) -> Result<Handle, Str
 /// Reference: $PHP_SRC_PATH/ext/standard/head.c
 pub fn php_connection_aborted(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if !args.is_empty() {
-        return Err(format!("connection_aborted() expects exactly 0 parameters, {} given", args.len()));
+        return Err(format!(
+            "connection_aborted() expects exactly 0 parameters, {} given",
+            args.len()
+        ));
     }
 
     // Simplified: always return 0 (not aborted)
@@ -147,7 +173,10 @@ pub fn php_connection_aborted(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
 /// Reference: $PHP_SRC_PATH/ext/standard/head.c
 pub fn php_connection_status(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     if !args.is_empty() {
-        return Err(format!("connection_status() expects exactly 0 parameters, {} given", args.len()));
+        return Err(format!(
+            "connection_status() expects exactly 0 parameters, {} given",
+            args.len()
+        ));
     }
 
     // Simplified: always return 0 (NORMAL)
@@ -170,9 +199,12 @@ pub fn php_connection_status(vm: &mut VM, args: &[Handle]) -> Result<Handle, Str
 /// Examples: "128M" -> 134217728, "1G" -> 1073741824, "512K" -> 524288
 pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     use crate::vm::engine::ErrorLevel;
-    
+
     if args.len() != 1 {
-        return Err(format!("ini_parse_quantity() expects exactly 1 parameter, {} given", args.len()));
+        return Err(format!(
+            "ini_parse_quantity() expects exactly 1 parameter, {} given",
+            args.len()
+        ));
     }
 
     let input = match &vm.arena.get(args[0]).value {
@@ -197,7 +229,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     };
 
     let rest = &trimmed[pos..];
-    
+
     // Check for base prefix (0x, 0o, 0b)
     let (base, digits_start) = if rest.starts_with("0x") || rest.starts_with("0X") {
         (16, 2)
@@ -208,10 +240,10 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     } else {
         (10, 0)
     };
-    
+
     pos += digits_start;
     let rest = &trimmed[pos..];
-    
+
     // Find where the numeric portion ends (digits or decimal point)
     let mut digit_end = 0;
     let mut has_decimal = false;
@@ -219,10 +251,11 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         if ch == '.' && !has_decimal && base == 10 {
             has_decimal = true;
             digit_end = i + 1;
-        } else if (base == 10 && ch.is_ascii_digit()) ||
-                  (base == 16 && ch.is_ascii_hexdigit()) ||
-                  (base == 8 && ch >= '0' && ch <= '7') ||
-                  (base == 2 && (ch == '0' || ch == '1')) {
+        } else if (base == 10 && ch.is_ascii_digit())
+            || (base == 16 && ch.is_ascii_hexdigit())
+            || (base == 8 && ch >= '0' && ch <= '7')
+            || (base == 2 && (ch == '0' || ch == '1'))
+        {
             digit_end = i + 1;
         } else {
             break;
@@ -238,7 +271,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     }
 
     let number_part = &rest[..digit_end];
-    
+
     // Parse the number (handle floats by truncating to integer)
     let number: i64 = if has_decimal {
         // For floats, just take the integer part
@@ -248,7 +281,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
             Err(_) => {
                 vm.trigger_error(
                     ErrorLevel::Warning,
-                    &format!("Invalid quantity \"{}\": parse error, using 0", trimmed)
+                    &format!("Invalid quantity \"{}\": parse error, using 0", trimmed),
                 );
                 return Ok(vm.arena.alloc(Val::Int(0)));
             }
@@ -259,7 +292,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
             Err(_) => {
                 vm.trigger_error(
                     ErrorLevel::Warning,
-                    &format!("Invalid quantity \"{}\": number overflow, using 0", trimmed)
+                    &format!("Invalid quantity \"{}\": number overflow, using 0", trimmed),
                 );
                 return Ok(vm.arena.alloc(Val::Int(0)));
             }
@@ -268,7 +301,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
 
     // Skip whitespace between number and suffix
     let suffix_start = rest[digit_end..].trim_start();
-    
+
     if suffix_start.is_empty() {
         // No suffix
         let result = if is_negative { -number } else { number };
@@ -276,25 +309,27 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
     }
 
     let trimmed_suffix = suffix_start.trim();
-    
+
     // Find the LAST occurrence of a valid multiplier (k/m/g) scanning from the end
-    let last_valid_multiplier = trimmed_suffix.chars().rev()
+    let last_valid_multiplier = trimmed_suffix
+        .chars()
+        .rev()
         .find(|&c| matches!(c, 'k' | 'K' | 'm' | 'M' | 'g' | 'G'));
-    
+
     // The last character (what PHP reports in errors for multi-char suffixes)
     let last_char = trimmed_suffix.chars().last().unwrap();
-    
+
     let (has_valid_multiplier, multiplier_char) = match last_valid_multiplier {
         Some(c) => (true, c),
         None => (false, last_char),
     };
-    
+
     // Check if the last char is a valid multiplier
     let last_char_is_multiplier = matches!(last_char, 'k' | 'K' | 'm' | 'M' | 'g' | 'G');
-    
+
     // Check if it's a simple single-character suffix or multi-character
     let is_single_char = trimmed_suffix.len() == 1;
-    
+
     if !has_valid_multiplier {
         // No valid multiplier found
         vm.trigger_error(
@@ -305,7 +340,7 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         let result = if is_negative { -number } else { number };
         return Ok(vm.arena.alloc(Val::Int(result)));
     }
-    
+
     // If the last character is NOT a valid multiplier, don't apply any multiplier
     // e.g., "1gb" or "14.2mb" - the 'b' at the end makes it invalid
     if !last_char_is_multiplier {
@@ -317,27 +352,35 @@ pub fn php_ini_parse_quantity(vm: &mut VM, args: &[Handle]) -> Result<Handle, St
         let result = if is_negative { -number } else { number };
         return Ok(vm.arena.alloc(Val::Int(result)));
     }
-    
+
     let factor: i64 = match multiplier_char {
         'k' | 'K' => 1024,
         'm' | 'M' => 1024 * 1024,
         'g' | 'G' => 1024 * 1024 * 1024,
         _ => unreachable!(),
     };
-    
+
     // If multi-character suffix, emit warning (but still apply multiplier since last char is valid)
     if !is_single_char {
         // e.g., "14.2bm" - we have junk 'b' before the valid multiplier 'm'
         vm.trigger_error(
             ErrorLevel::Warning,
-            &format!("Invalid quantity \"{}\", interpreting as \"{} {}\" for backwards compatibility",
-                trimmed, number, multiplier_char)
+            &format!(
+                "Invalid quantity \"{}\", interpreting as \"{} {}\" for backwards compatibility",
+                trimmed, number, multiplier_char
+            ),
         );
     }
 
     // Calculate result with overflow check
     let result = match number.checked_mul(factor) {
-        Some(val) => if is_negative { -val } else { val },
+        Some(val) => {
+            if is_negative {
+                -val
+            } else {
+                val
+            }
+        }
         None => {
             vm.trigger_error(
                 ErrorLevel::Warning,

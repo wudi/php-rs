@@ -1439,7 +1439,7 @@ pub fn php_hrtime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap();
-    
+
     let secs = now.as_secs() as i64;
     let nanos = now.subsec_nanos() as i64;
 
@@ -1556,7 +1556,7 @@ pub fn php_strtotime(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
 fn parse_strtotime(input: &str, base_timestamp: i64, tz: Tz) -> Option<i64> {
     let input = input.trim().to_lowercase();
-    
+
     if input.is_empty() {
         return None;
     }
@@ -1565,14 +1565,18 @@ fn parse_strtotime(input: &str, base_timestamp: i64, tz: Tz) -> Option<i64> {
         chrono::LocalResult::Single(dt) => dt,
         _ => return None,
     };
-    
+
     // Convert to local timezone for base_dt calculations
     let base_dt = base_dt_utc.with_timezone(&tz).naive_local();
 
     // Unix timestamp format (@timestamp [timezone])
     // The timezone suffix is ignored - @ format is always interpreted as UTC timestamp
     if let Some(stripped) = input.strip_prefix('@') {
-        let ts_part = stripped.trim().split_whitespace().next().unwrap_or(stripped.trim());
+        let ts_part = stripped
+            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or(stripped.trim());
         if let Ok(ts) = ts_part.parse::<i64>() {
             return Some(ts);
         }
@@ -1592,12 +1596,12 @@ fn parse_strtotime(input: &str, base_timestamp: i64, tz: Tz) -> Option<i64> {
     if let Some(ts) = parse_weekday_reference(&input, &base_dt, tz) {
         return Some(ts);
     }
-    
+
     // Ordinal weekday references (1 Monday December 2008, first Monday December 2008)
     if let Some(ts) = parse_ordinal_weekday(&input, &base_dt, tz) {
         return Some(ts);
     }
-    
+
     // Scottish time phrases (back of 7, front of 7)
     if let Some(ts) = parse_scottish_time(&input, &base_dt, tz) {
         return Some(ts);
@@ -1678,10 +1682,10 @@ fn parse_weekday_reference(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
     if let Some(caps) = WEEKDAY_REFERENCE_RE.captures(input) {
         let direction = caps.get(1)?.as_str();
         let weekday_str = caps.get(2)?.as_str();
-        
+
         let target_weekday = parse_weekday(weekday_str)?;
         let current_weekday = base_dt.date().weekday();
-        
+
         let result_date = match direction {
             "next" => {
                 // PHP's "next" means: if target day hasn't occurred this week, use it; otherwise next week
@@ -1729,7 +1733,7 @@ fn parse_special_phrase(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Option<
     if let Some(caps) = SPECIAL_PHRASE_RE.captures(input) {
         let first_last = caps.get(1)?.as_str();
         let which_month = caps.get(2)?.as_str();
-        
+
         let target_date = match which_month {
             "next" => {
                 let next_month_dt = add_months(base_dt, 1)?;
@@ -1744,9 +1748,7 @@ fn parse_special_phrase(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Option<
         };
 
         let result_date = match first_last {
-            "first" => {
-                NaiveDate::from_ymd_opt(target_date.year(), target_date.month(), 1)?
-            }
+            "first" => NaiveDate::from_ymd_opt(target_date.year(), target_date.month(), 1)?,
             "last" => {
                 // Last day of month
                 let next_month = if target_date.month() == 12 {
@@ -1773,17 +1775,17 @@ fn parse_ordinal_weekday(input: &str, _base_dt: &NaiveDateTime, tz: Tz) -> Optio
         let weekday_str = caps.get(2)?.as_str();
         let month_str = caps.get(3).map(|m| m.as_str());
         let year_str = caps.get(4)?.as_str();
-        
+
         let target_weekday = parse_weekday(weekday_str)?;
         let year: i32 = year_str.parse().ok()?;
-        
+
         // Parse month if provided, otherwise default to current month from base
         let month = if let Some(m) = month_str {
             parse_month(m)?
         } else {
             _base_dt.month()
         };
-        
+
         // Parse ordinal: numeric (1,2,3) vs text (first, second, third)
         let ordinal_num = match ordinal_str {
             "first" => 1,
@@ -1793,16 +1795,19 @@ fn parse_ordinal_weekday(input: &str, _base_dt: &NaiveDateTime, tz: Tz) -> Optio
             "fifth" => 5,
             num => num.parse::<i32>().ok()?,
         };
-        
+
         // Find the Nth occurrence of the weekday in the given month
         let first_day = NaiveDate::from_ymd_opt(year, month, 1)?;
         let first_weekday = first_day.weekday();
-        
+
         // For numeric ordinals (1, 2, 3), PHP treats them specially:
         // "1 Monday" = first Monday OR current day if it's already Monday (i.e., the 1st)
         // For text ordinals (first, second), it's the Nth Monday counting from first occurrence
-        let is_text_ordinal = matches!(ordinal_str, "first" | "second" | "third" | "fourth" | "fifth");
-        
+        let is_text_ordinal = matches!(
+            ordinal_str,
+            "first" | "second" | "third" | "fourth" | "fifth"
+        );
+
         // Calculate days until first occurrence of target weekday
         let days_until_target = if first_weekday == target_weekday {
             0
@@ -1811,29 +1816,29 @@ fn parse_ordinal_weekday(input: &str, _base_dt: &NaiveDateTime, tz: Tz) -> Optio
         } else {
             7 - (first_weekday.num_days_from_monday() - target_weekday.num_days_from_monday())
         };
-        
+
         let first_occurrence = first_day + chrono::Duration::try_days(days_until_target as i64)?;
-        
+
         // For numeric ordinals: "1 Monday" means first occurrence OR if 1st is Monday, then 1st
         // For text ordinals: "first Monday" means skip first if 1st is Monday, then next Monday
         let weeks_to_add = if is_text_ordinal {
             // For text ordinals, if the 1st is the target weekday, we want the NEXT one
             if first_weekday == target_weekday {
-                ordinal_num  // Skip the first (which is the 1st), so add 'ordinal_num' weeks
+                ordinal_num // Skip the first (which is the 1st), so add 'ordinal_num' weeks
             } else {
-                ordinal_num - 1  // First occurrence counts, so (n-1) more weeks
+                ordinal_num - 1 // First occurrence counts, so (n-1) more weeks
             }
         } else {
             // For numeric ordinals, simpler: just n-1 weeks from first occurrence
             ordinal_num - 1
         };
-        
+
         let target_date = first_occurrence + chrono::Duration::try_weeks(weeks_to_add as i64)?;
-        
+
         let naive = target_date.and_hms_opt(0, 0, 0)?;
         return Some(tz.from_local_datetime(&naive).single()?.timestamp());
     }
-    
+
     None
 }
 
@@ -1845,29 +1850,30 @@ fn parse_scottish_time(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Option<i
         let direction = caps.get(1)?.as_str();
         let hour_str = caps.get(2)?.as_str();
         let hour: u32 = hour_str.parse().ok()?;
-        
+
         if hour > 23 {
             return None;
         }
-        
+
         let (actual_hour, minute) = match direction {
-            "back" => (hour, 15),     // quarter past
-            "front" => {               // quarter to
+            "back" => (hour, 15), // quarter past
+            "front" => {
+                // quarter to
                 if hour == 0 {
-                    (23, 45)  // front of 0 = 23:45
+                    (23, 45) // front of 0 = 23:45
                 } else {
                     (hour - 1, 45)
                 }
             }
             _ => return None,
         };
-        
+
         let today = base_dt.date();
         let time = NaiveTime::from_hms_opt(actual_hour, minute, 0)?;
         let dt = NaiveDateTime::new(today, time);
         return Some(tz.from_local_datetime(&dt).single()?.timestamp());
     }
-    
+
     None
 }
 
@@ -1891,20 +1897,20 @@ fn parse_month(s: &str) -> Option<u32> {
 
 fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Option<i64> {
     // Try various datetime formats
-    
+
     // Strip optional 't' or 'T' prefix for time formats (gnunocolon, iso8601nocolon)
     let (time_input, has_time_prefix) = if input.starts_with('t') || input.starts_with('T') {
         (&input[1..], true)
     } else {
         (input, false)
     };
-    
+
     // gnunocolon with optional 't': t?HHMM (4-5 chars total)
     // HHMM (4 digits): 1530 → 15:30:00 today, t1530 → same
     if has_time_prefix && time_input.len() == 4 && time_input.chars().all(|c| c.is_ascii_digit()) {
         if let (Ok(hour), Ok(minute)) = (
             time_input[..2].parse::<u32>(),
-            time_input[2..4].parse::<u32>()
+            time_input[2..4].parse::<u32>(),
         ) {
             if hour < 24 && minute < 60 {
                 let today = base_dt.date();
@@ -1915,14 +1921,14 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // iso8601nocolon with optional 't': t?HHMMSS (6-7 chars total)
     // HHMMSS (6 digits): 202613 → 20:26:13 today, t202613 → same
     if has_time_prefix && time_input.len() == 6 && time_input.chars().all(|c| c.is_ascii_digit()) {
         if let (Ok(hour), Ok(minute), Ok(second)) = (
             time_input[..2].parse::<u32>(),
             time_input[2..4].parse::<u32>(),
-            time_input[4..6].parse::<u32>()
+            time_input[4..6].parse::<u32>(),
         ) {
             if hour < 24 && minute < 60 && second < 60 {
                 let today = base_dt.date();
@@ -1933,15 +1939,13 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // Only try bare digit time formats if no 't' prefix
     if !has_time_prefix {
         // gnunocolon: HHMM (4 digits) → time today
         if input.len() == 4 && input.chars().all(|c| c.is_ascii_digit()) {
-            if let (Ok(hour), Ok(minute)) = (
-                input[..2].parse::<u32>(),
-                input[2..4].parse::<u32>()
-            ) {
+            if let (Ok(hour), Ok(minute)) = (input[..2].parse::<u32>(), input[2..4].parse::<u32>())
+            {
                 if hour < 24 && minute < 60 {
                     let today = base_dt.date();
                     if let Some(time) = NaiveTime::from_hms_opt(hour, minute, 0) {
@@ -1963,13 +1967,13 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 }
             }
         }
-        
+
         // iso8601nocolon: HHMMSS (6 digits) → time today
         if input.len() == 6 && input.chars().all(|c| c.is_ascii_digit()) {
             if let (Ok(hour), Ok(minute), Ok(second)) = (
                 input[..2].parse::<u32>(),
                 input[2..4].parse::<u32>(),
-                input[4..6].parse::<u32>()
+                input[4..6].parse::<u32>(),
             ) {
                 if hour < 24 && minute < 60 && second < 60 {
                     let today = base_dt.date();
@@ -1980,18 +1984,19 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 }
             }
         }
-        
+
         // pgydotd: YYYY-DDD or YYYY.DDD (8 chars with separator)
         if input.len() == 8 {
             let sep_pos = input.chars().position(|c| c == '-' || c == '.');
             if let Some(4) = sep_pos {
                 let year_part = &input[..4];
                 let doy_part = &input[5..];
-                if year_part.chars().all(|c| c.is_ascii_digit()) && doy_part.chars().all(|c| c.is_ascii_digit()) {
-                    if let (Ok(year), Ok(day_of_year)) = (
-                        year_part.parse::<i32>(),
-                        doy_part.parse::<u32>()
-                    ) {
+                if year_part.chars().all(|c| c.is_ascii_digit())
+                    && doy_part.chars().all(|c| c.is_ascii_digit())
+                {
+                    if let (Ok(year), Ok(day_of_year)) =
+                        (year_part.parse::<i32>(), doy_part.parse::<u32>())
+                    {
                         if day_of_year >= 1 && day_of_year <= 366 {
                             if let Some(date) = NaiveDate::from_yo_opt(year, day_of_year) {
                                 let naive = date.and_hms_opt(0, 0, 0)?;
@@ -2002,13 +2007,12 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 }
             }
         }
-        
+
         // pgydotd: YYYYDDD (7 digits), e.g., 2026113 = 2026 day 113 = April 23
         if input.len() == 7 && input.chars().all(|c| c.is_ascii_digit()) {
-            if let (Ok(year), Ok(day_of_year)) = (
-                input[..4].parse::<i32>(),
-                input[4..].parse::<u32>()
-            ) {
+            if let (Ok(year), Ok(day_of_year)) =
+                (input[..4].parse::<i32>(), input[4..].parse::<u32>())
+            {
                 if day_of_year >= 1 && day_of_year <= 366 {
                     if let Some(date) = NaiveDate::from_yo_opt(year, day_of_year) {
                         let naive = date.and_hms_opt(0, 0, 0)?;
@@ -2017,13 +2021,13 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 }
             }
         }
-        
+
         // datenocolon: YYYYMMDD (8 digits), e.g., 20260113 = 2026-01-13
         if input.len() == 8 && input.chars().all(|c| c.is_ascii_digit()) {
             if let (Ok(year), Ok(month), Ok(day)) = (
                 input[..4].parse::<i32>(),
                 input[4..6].parse::<u32>(),
-                input[6..8].parse::<u32>()
+                input[6..8].parse::<u32>(),
             ) {
                 if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                     let naive = date.and_hms_opt(0, 0, 0)?;
@@ -2031,7 +2035,7 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 }
             }
         }
-        
+
         // MySQL format: YYYYMMDDHHMMSS (14 digits)
         if input.len() == 14 && input.chars().all(|c| c.is_ascii_digit()) {
             if let (Ok(year), Ok(month), Ok(day), Ok(hour), Ok(minute), Ok(second)) = (
@@ -2040,7 +2044,7 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
                 input[6..8].parse::<u32>(),
                 input[8..10].parse::<u32>(),
                 input[10..12].parse::<u32>(),
-                input[12..14].parse::<u32>()
+                input[12..14].parse::<u32>(),
             ) {
                 if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                     if let Some(time) = NaiveTime::from_hms_opt(hour, minute, second) {
@@ -2051,7 +2055,7 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // Time-only formats (HH:MM:SS, HH:MM) - apply to base date
     // Try HH:MM:SS first
     if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M:%S") {
@@ -2059,14 +2063,14 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
         let dt = NaiveDateTime::new(date, time);
         return Some(tz.from_local_datetime(&dt).single()?.timestamp());
     }
-    
+
     // Try HH:MM
     if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M") {
         let date = base_dt.date();
         let dt = NaiveDateTime::new(date, time);
         return Some(tz.from_local_datetime(&dt).single()?.timestamp());
     }
-    
+
     // ISO 8601: 2024-01-15T14:30:00Z or 2024-01-15T14:30:00+00:00
     if let Ok(dt) = ChronoDateTime::parse_from_rfc3339(input) {
         return Some(dt.timestamp());
@@ -2106,26 +2110,26 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
         let naive = date.and_hms_opt(0, 0, 0)?;
         return Some(tz.from_local_datetime(&naive).single()?.timestamp());
     }
-    
+
     // Month-Day-Year: Jan-15-2006
     if let Ok(date) = NaiveDate::parse_from_str(input, "%b-%d-%Y") {
         let naive = date.and_hms_opt(0, 0, 0)?;
         return Some(tz.from_local_datetime(&naive).single()?.timestamp());
     }
-    
+
     // Year-Month-Day: 2006-Jan-15
     if let Ok(date) = NaiveDate::parse_from_str(input, "%Y-%b-%d") {
         let naive = date.and_hms_opt(0, 0, 0)?;
         return Some(tz.from_local_datetime(&naive).single()?.timestamp());
     }
-    
+
     // D-M-YYYY: 2-3-2004 (day-month-year with dashes)
     if let Some((day_str, rest)) = input.split_once('-') {
         if let Some((month_str, year_str)) = rest.split_once('-') {
             if let (Ok(day), Ok(month), Ok(year)) = (
                 day_str.parse::<u32>(),
                 month_str.parse::<u32>(),
-                year_str.parse::<i32>()
+                year_str.parse::<i32>(),
             ) {
                 if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                     let naive = date.and_hms_opt(0, 0, 0)?;
@@ -2134,14 +2138,14 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // D.M.YYYY: 2.3.2004 (day.month.year with dots)
     if let Some((day_str, rest)) = input.split_once('.') {
         if let Some((month_str, year_str)) = rest.split_once('.') {
             if let (Ok(day), Ok(month), Ok(year)) = (
                 day_str.parse::<u32>(),
                 month_str.parse::<u32>(),
-                year_str.parse::<i32>()
+                year_str.parse::<i32>(),
             ) {
                 if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                     let naive = date.and_hms_opt(0, 0, 0)?;
@@ -2150,7 +2154,7 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // Month-only format: "January" or "JAN" - use current year and day from base
     let parts: Vec<&str> = input.split_whitespace().collect();
     if parts.len() == 1 {
@@ -2177,7 +2181,7 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
             }
         }
     }
-    
+
     // Datetime with timezone suffix: "2005-07-14 22:30:41 GMT"
     // Try to strip common timezone abbreviations and parse the datetime part
     let tz_suffixes = [
@@ -2194,28 +2198,32 @@ fn parse_absolute_datetime(input: &str, base_dt: &NaiveDateTime, tz: Tz) -> Opti
         ("cst", -21600), // CST = UTC-6 (Central Standard Time, USA)
         ("cdt", -18000), // CDT = UTC-5
     ];
-    
+
     for (suffix, offset_seconds) in &tz_suffixes {
         if input.ends_with(suffix) {
             let datetime_part = input[..input.len() - suffix.len()].trim();
-            
+
             // Try various datetime formats
             if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_part, "%Y-%m-%d %H:%M:%S") {
                 // The datetime is in the specified timezone, so we subtract the offset to get UTC
                 return Some(dt.and_utc().timestamp() - offset_seconds);
             }
-            
+
             if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_part, "%Y-%m-%dT%H:%M:%S") {
                 return Some(dt.and_utc().timestamp() - offset_seconds);
             }
         }
     }
-    
+
     // ISO 8601 with timezone: 20060212T23:12:23UTC
     if input.contains('t') && (input.ends_with("utc") || input.ends_with("gmt")) {
-        let tz_len = if input.ends_with("utc") || input.ends_with("gmt") { 3 } else { 0 };
+        let tz_len = if input.ends_with("utc") || input.ends_with("gmt") {
+            3
+        } else {
+            0
+        };
         let datetime_part = &input[..input.len() - tz_len];
-        
+
         if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_part, "%Y%m%dt%H:%M:%S") {
             return Some(dt.and_utc().timestamp());
         }
@@ -2246,28 +2254,28 @@ fn add_months(dt: &NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
     let date = dt.date();
     let mut year = date.year();
     let mut month = date.month() as i32;
-    
+
     month += months as i32;
-    
+
     while month > 12 {
         month -= 12;
         year += 1;
     }
-    
+
     while month < 1 {
         month += 12;
         year -= 1;
     }
-    
+
     // PHP allows day overflow - if day is invalid for the month, it overflows to next month
     // e.g., Jan 31 + 1 month = March 2 (or March 3 depending on leap year)
     let day = date.day();
-    
+
     // Try to create the date; if it fails, add the excess days to the next month
     if let Some(new_date) = NaiveDate::from_ymd_opt(year, month as u32, day) {
         return Some(NaiveDateTime::new(new_date, dt.time()));
     }
-    
+
     // Day is too large for this month, so overflow
     // Get the last valid day of the target month
     let mut test_day = day;
@@ -2277,32 +2285,32 @@ fn add_months(dt: &NaiveDateTime, months: i64) -> Option<NaiveDateTime> {
         }
         test_day -= 1;
     }
-    
+
     // Calculate overflow days
     let overflow_days = (day - test_day) as i64;
-    
+
     // Create date with last valid day of month, then add overflow
     if let Some(base_date) = NaiveDate::from_ymd_opt(year, month as u32, test_day) {
         let result_date = base_date + chrono::Duration::try_days(overflow_days)?;
         return Some(NaiveDateTime::new(result_date, dt.time()));
     }
-    
+
     None
 }
 
 fn add_years(dt: &NaiveDateTime, years: i64) -> Option<NaiveDateTime> {
     let date = dt.date();
     let new_year = date.year() + years as i32;
-    
+
     // PHP allows day overflow for leap year handling
     // e.g., Feb 29 2024 + 1 year = March 1 2025
     let day = date.day();
     let month = date.month();
-    
+
     if let Some(new_date) = NaiveDate::from_ymd_opt(new_year, month, day) {
         return Some(NaiveDateTime::new(new_date, dt.time()));
     }
-    
+
     // Day doesn't exist in the target year (e.g., Feb 29 on non-leap year)
     // Calculate overflow
     let mut test_day = day;
@@ -2312,14 +2320,14 @@ fn add_years(dt: &NaiveDateTime, years: i64) -> Option<NaiveDateTime> {
         }
         test_day -= 1;
     }
-    
+
     let overflow_days = (day - test_day) as i64;
-    
+
     if let Some(base_date) = NaiveDate::from_ymd_opt(new_year, month, test_day) {
         let result_date = base_date + chrono::Duration::try_days(overflow_days)?;
         return Some(NaiveDateTime::new(result_date, dt.time()));
     }
-    
+
     None
 }
 

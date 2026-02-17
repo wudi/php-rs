@@ -651,18 +651,14 @@ fn decode_json_value(
                 Ok(vm.arena.alloc(Val::Null))
             }
         }
-        serde_json::Value::String(s) => Ok(vm.arena.alloc(Val::String(s.as_bytes().to_vec().into()))),
+        serde_json::Value::String(s) => {
+            Ok(vm.arena.alloc(Val::String(s.as_bytes().to_vec().into())))
+        }
         serde_json::Value::Array(items) => {
             let mut map = IndexMap::new();
             for (idx, item) in items.iter().enumerate() {
-                let handle = decode_json_value(
-                    vm,
-                    item,
-                    object_as_array,
-                    options,
-                    depth + 1,
-                    max_depth,
-                )?;
+                let handle =
+                    decode_json_value(vm, item, object_as_array, options, depth + 1, max_depth)?;
                 map.insert(ArrayKey::Int(idx as i64), handle);
             }
             let array_val = Val::Array(Rc::new(ArrayData::from(map)));
@@ -672,14 +668,8 @@ fn decode_json_value(
             if object_as_array {
                 let mut map = IndexMap::new();
                 for (key, val) in entries.iter() {
-                    let handle = decode_json_value(
-                        vm,
-                        val,
-                        object_as_array,
-                        options,
-                        depth + 1,
-                        max_depth,
-                    )?;
+                    let handle =
+                        decode_json_value(vm, val, object_as_array, options, depth + 1, max_depth)?;
                     map.insert(ArrayKey::Str(key.as_bytes().to_vec().into()), handle);
                 }
                 let array_val = Val::Array(Rc::new(ArrayData::from(map)));
@@ -687,14 +677,8 @@ fn decode_json_value(
             } else {
                 let mut props = IndexMap::new();
                 for (key, val) in entries.iter() {
-                    let handle = decode_json_value(
-                        vm,
-                        val,
-                        object_as_array,
-                        options,
-                        depth + 1,
-                        max_depth,
-                    )?;
+                    let handle =
+                        decode_json_value(vm, val, object_as_array, options, depth + 1, max_depth)?;
                     let key_sym = vm.context.interner.intern(key.as_bytes());
                     props.insert(key_sym, handle);
                 }

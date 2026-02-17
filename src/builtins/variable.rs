@@ -806,21 +806,30 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     };
 
     // Get old value before setting
-    let old_value = vm.context.config.ini_settings
+    let old_value = vm
+        .context
+        .config
+        .ini_settings
         .get(&option)
         .cloned()
         .unwrap_or_else(|| "".to_string());
 
     // Handle memory_limit clamping if max_memory_limit is set
     let final_value = if option == "memory_limit" {
-        if let Some(max_memory_limit_str) = vm.context.config.ini_settings.get("max_memory_limit").cloned() {
+        if let Some(max_memory_limit_str) = vm
+            .context
+            .config
+            .ini_settings
+            .get("max_memory_limit")
+            .cloned()
+        {
             if let Some(max_memory_limit) = parse_size_value(&max_memory_limit_str) {
                 let attempted_limit = if new_value == "-1" {
                     None // -1 means unlimited
                 } else {
                     parse_size_value(&new_value)
                 };
-                
+
                 match attempted_limit {
                     None => {
                         // -1 (unlimited) - silently clamp to max_memory_limit (no warning)
@@ -857,7 +866,9 @@ pub fn php_ini_set(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     vm.context.config.ini_settings.insert(option, final_value);
 
     // Return the old value
-    Ok(vm.arena.alloc(Val::String(Rc::new(old_value.as_bytes().to_vec()))))
+    Ok(vm
+        .arena
+        .alloc(Val::String(Rc::new(old_value.as_bytes().to_vec()))))
 }
 
 /// Parse size value like "128M", "1G", etc.
@@ -866,17 +877,17 @@ fn parse_size_value(value: &str) -> Option<usize> {
     if value.is_empty() {
         return None;
     }
-    
+
     let (num_str, multiplier) = if value.ends_with('G') || value.ends_with('g') {
-        (&value[..value.len()-1], 1024 * 1024 * 1024)
+        (&value[..value.len() - 1], 1024 * 1024 * 1024)
     } else if value.ends_with('M') || value.ends_with('m') {
-        (&value[..value.len()-1], 1024 * 1024)
+        (&value[..value.len() - 1], 1024 * 1024)
     } else if value.ends_with('K') || value.ends_with('k') {
-        (&value[..value.len()-1], 1024)
+        (&value[..value.len() - 1], 1024)
     } else {
         (value, 1)
     };
-    
+
     num_str.parse::<usize>().ok().map(|n| n * multiplier)
 }
 
@@ -1414,7 +1425,12 @@ pub fn php_strval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
         Val::Null => b"".to_vec(),
         Val::Array(_) => b"Array".to_vec(),
         Val::Object(_) => b"Object".to_vec(),
-        _ => return Err(format!("strval(): Cannot convert {} to string", val.value.type_name())),
+        _ => {
+            return Err(format!(
+                "strval(): Cannot convert {} to string",
+                val.value.type_name()
+            ));
+        }
     };
 
     Ok(vm.arena.alloc(Val::String(Rc::new(str_val))))
@@ -1445,7 +1461,13 @@ pub fn php_intval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let int_val = match &val.value {
         Val::Int(i) => *i,
         Val::Float(f) => *f as i64,
-        Val::Bool(b) => if *b { 1 } else { 0 },
+        Val::Bool(b) => {
+            if *b {
+                1
+            } else {
+                0
+            }
+        }
         Val::Null => 0,
         Val::String(s) => {
             let s_str = String::from_utf8_lossy(s);
@@ -1473,7 +1495,13 @@ pub fn php_floatval(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let float_val = match &val.value {
         Val::Float(f) => *f,
         Val::Int(i) => *i as f64,
-        Val::Bool(b) => if *b { 1.0 } else { 0.0 },
+        Val::Bool(b) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         Val::Null => 0.0,
         Val::String(s) => {
             let s_str = String::from_utf8_lossy(s);

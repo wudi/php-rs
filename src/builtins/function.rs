@@ -151,9 +151,7 @@ pub fn php_is_callable(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
                     let method_sym = vm.context.interner.intern(method_name);
                     match &vm.arena.get(target_handle).value {
                         Val::Object(obj_handle) => {
-                            if let Val::ObjPayload(obj_data) =
-                                &vm.arena.get(*obj_handle).value
-                            {
+                            if let Val::ObjPayload(obj_data) = &vm.arena.get(*obj_handle).value {
                                 vm.find_method(obj_data.class, method_sym).is_some()
                                     || vm.find_native_method(obj_data.class, method_sym).is_some()
                             } else {
@@ -291,11 +289,10 @@ pub fn php_debug_backtrace(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
         let mut frame_map = IndexMap::new();
 
         if let Some(file_path) = &frame.chunk.file_path {
-            let file_handle = vm.arena.alloc(Val::String(file_path.clone().into_bytes().into()));
-            frame_map.insert(
-                ArrayKey::Str(Rc::new(b"file".to_vec())),
-                file_handle,
-            );
+            let file_handle = vm
+                .arena
+                .alloc(Val::String(file_path.clone().into_bytes().into()));
+            frame_map.insert(ArrayKey::Str(Rc::new(b"file".to_vec())), file_handle);
         }
 
         let line = if frame.ip > 0 && frame.ip <= frame.chunk.lines.len() {
@@ -304,10 +301,7 @@ pub fn php_debug_backtrace(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
             0
         };
         let line_handle = vm.arena.alloc(Val::Int(line));
-        frame_map.insert(
-            ArrayKey::Str(Rc::new(b"line".to_vec())),
-            line_handle,
-        );
+        frame_map.insert(ArrayKey::Str(Rc::new(b"line".to_vec())), line_handle);
 
         let class_sym = frame.called_scope.or(frame.class_scope);
 
@@ -323,34 +317,22 @@ pub fn php_debug_backtrace(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
                 func_bytes.to_vec()
             };
             let func_handle = vm.arena.alloc(Val::String(func_name.into()));
-            frame_map.insert(
-                ArrayKey::Str(Rc::new(b"function".to_vec())),
-                func_handle,
-            );
+            frame_map.insert(ArrayKey::Str(Rc::new(b"function".to_vec())), func_handle);
         }
         if let Some(class_sym) = class_sym {
             if let Some(class_bytes) = vm.context.interner.lookup(class_sym) {
                 let class_handle = vm.arena.alloc(Val::String(class_bytes.to_vec().into()));
-                frame_map.insert(
-                    ArrayKey::Str(Rc::new(b"class".to_vec())),
-                    class_handle,
-                );
+                frame_map.insert(ArrayKey::Str(Rc::new(b"class".to_vec())), class_handle);
             }
 
             let call_type = if frame.this.is_some() { b"->" } else { b"::" };
             let type_handle = vm.arena.alloc(Val::String(call_type.to_vec().into()));
-            frame_map.insert(
-                ArrayKey::Str(Rc::new(b"type".to_vec())),
-                type_handle,
-            );
+            frame_map.insert(ArrayKey::Str(Rc::new(b"type".to_vec())), type_handle);
         }
 
         if provide_object {
             if let Some(this_handle) = frame.this {
-                frame_map.insert(
-                    ArrayKey::Str(Rc::new(b"object".to_vec())),
-                    this_handle,
-                );
+                frame_map.insert(ArrayKey::Str(Rc::new(b"object".to_vec())), this_handle);
             }
         }
 
@@ -360,13 +342,12 @@ pub fn php_debug_backtrace(vm: &mut VM, args: &[Handle]) -> Result<Handle, Strin
                 args_map.insert(ArrayKey::Int(arg_idx as i64), *arg_handle);
             }
             let args_handle = vm.arena.alloc(Val::Array(ArrayData::from(args_map).into()));
-            frame_map.insert(
-                ArrayKey::Str(Rc::new(b"args".to_vec())),
-                args_handle,
-            );
+            frame_map.insert(ArrayKey::Str(Rc::new(b"args".to_vec())), args_handle);
         }
 
-        let frame_handle = vm.arena.alloc(Val::Array(ArrayData::from(frame_map).into()));
+        let frame_handle = vm
+            .arena
+            .alloc(Val::Array(ArrayData::from(frame_map).into()));
         frames_array.insert(ArrayKey::Int(idx), frame_handle);
         idx += 1;
     }
@@ -484,8 +465,10 @@ pub fn php_set_error_handler(vm: &mut VM, args: &[Handle]) -> Result<Handle, Str
         Val::Null => None,
         _ => {
             if !vm.is_callable(new_handler_handle) {
-                return Err("set_error_handler(): Argument #1 ($callback) must be a valid callback"
-                    .to_string());
+                return Err(
+                    "set_error_handler(): Argument #1 ($callback) must be a valid callback"
+                        .to_string(),
+                );
             }
             Some(new_handler_handle)
         }
@@ -579,7 +562,7 @@ pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle,
     let mut internal_idx = 0i64;
     for (name, _entry) in vm.context.engine.registry.functions() {
         let func_name = String::from_utf8_lossy(name).to_lowercase();
-        
+
         // Check if function is disabled via disable_functions INI setting
         if exclude_disabled {
             if let Some(disabled) = vm.context.config.ini_settings.get("disable_functions") {
@@ -589,7 +572,7 @@ pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle,
                 }
             }
         }
-        
+
         let name_handle = vm.arena.alloc(Val::String(Rc::new(name.clone())));
         internal_functions.insert(ArrayKey::Int(internal_idx), name_handle);
         internal_idx += 1;
@@ -601,11 +584,15 @@ pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle,
 
     // Build result array
     let mut result = IndexMap::new();
-    
-    let internal_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(internal_functions))));
+
+    let internal_array = vm
+        .arena
+        .alloc(Val::Array(Rc::new(ArrayData::from(internal_functions))));
     result.insert(ArrayKey::Str(Rc::new(b"internal".to_vec())), internal_array);
-    
-    let user_array = vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(user_functions))));
+
+    let user_array = vm
+        .arena
+        .alloc(Val::Array(Rc::new(ArrayData::from(user_functions))));
     result.insert(ArrayKey::Str(Rc::new(b"user".to_vec())), user_array);
 
     Ok(vm.arena.alloc(Val::Array(Rc::new(ArrayData::from(result)))))
@@ -623,7 +610,7 @@ pub fn php_get_defined_functions(vm: &mut VM, args: &[Handle]) -> Result<Handle,
 pub fn php_error_log(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    
+
     if args.is_empty() {
         return Err("error_log() expects at least 1 parameter".into());
     }
@@ -659,7 +646,11 @@ pub fn php_error_log(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             // Append to file
             if let Some(dest) = destination {
                 let path = String::from_utf8_lossy(&dest);
-                match OpenOptions::new().create(true).append(true).open(path.as_ref()) {
+                match OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path.as_ref())
+                {
                     Ok(mut file) => {
                         if let Err(e) = file.write_all(&message) {
                             return Err(format!("error_log(): Failed to write to file: {}", e));

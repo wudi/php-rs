@@ -240,7 +240,10 @@ impl Extension for CoreExtension {
         registry.register_function(b"header", http::php_header);
         registry.register_function(b"headers_sent", http::php_headers_sent);
         registry.register_function(b"header_remove", http::php_header_remove);
-        registry.register_function(b"header_register_callback", http::php_header_register_callback);
+        registry.register_function(
+            b"header_register_callback",
+            http::php_header_register_callback,
+        );
 
         // URL functions
         registry.register_function(b"urlencode", url::php_urlencode);
@@ -335,11 +338,17 @@ impl Extension for CoreExtension {
             function::php_register_shutdown_function,
         );
         registry.register_function(b"set_error_handler", function::php_set_error_handler);
-        registry.register_function(b"restore_error_handler", function::php_restore_error_handler);
+        registry.register_function(
+            b"restore_error_handler",
+            function::php_restore_error_handler,
+        );
         registry.register_function(b"trigger_error", function::php_trigger_error);
         registry.register_function(b"error_log", function::php_error_log);
         registry.register_function(b"extension_loaded", function::php_extension_loaded);
-        registry.register_function(b"get_defined_functions", function::php_get_defined_functions);
+        registry.register_function(
+            b"get_defined_functions",
+            function::php_get_defined_functions,
+        );
         registry.register_function(b"spl_autoload_register", spl::php_spl_autoload_register);
         registry.register_function(b"spl_object_hash", spl::php_spl_object_hash);
         registry.register_function(b"assert", function::php_assert);
@@ -424,7 +433,11 @@ impl Extension for CoreExtension {
         registry.register_function(b"move_uploaded_file", filesystem::php_move_uploaded_file);
 
         // Stream functions
-        registry.register_function_with_by_ref(b"stream_select", filesystem::php_stream_select, vec![0, 1, 2]);
+        registry.register_function_with_by_ref(
+            b"stream_select",
+            filesystem::php_stream_select,
+            vec![0, 1, 2],
+        );
         registry.register_function(b"stream_get_contents", filesystem::php_stream_get_contents);
         registry.register_function(b"stream_set_blocking", filesystem::php_stream_set_blocking);
 

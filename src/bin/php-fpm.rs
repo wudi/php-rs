@@ -113,65 +113,66 @@ fn run_workers(
         let handle = thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-
-            let local = LocalSet::new();
-
-            local.block_on(&rt, async move {
-                let context = php_rs::runtime::context::EngineBuilder::new()
-                    .with_core_extensions()
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
                     .build()
-                    .expect("Failed to build engine");
-                eprintln!("[php-fpm] Worker {} started", id);
+                    .unwrap();
 
-                match source_clone {
-                    ListenerSource::Tcp(l) => {
-                        let listener = TcpListener::from_std(l).unwrap();
-                        loop {
-                            if SHUTDOWN.load(Ordering::Relaxed) {
-                                break;
+                let local = LocalSet::new();
+
+                local.block_on(&rt, async move {
+                    let context = php_rs::runtime::context::EngineBuilder::new()
+                        .with_core_extensions()
+                        .build()
+                        .expect("Failed to build engine");
+                    eprintln!("[php-fpm] Worker {} started", id);
+
+                    match source_clone {
+                        ListenerSource::Tcp(l) => {
+                            let listener = TcpListener::from_std(l).unwrap();
+                            loop {
+                                if SHUTDOWN.load(Ordering::Relaxed) {
+                                    break;
+                                }
+
+                                if let Ok((stream, _)) = listener.accept().await {
+                                    let engine = context.clone();
+                                    let metrics = metrics.clone();
+                                    tokio::task::spawn_local(async move {
+                                        if let Err(e) =
+                                            handle_fastcgi_connection(stream, engine, metrics).await
+                                        {
+                                            eprintln!("[php-fpm] Connection error: {}", e);
+                                        }
+                                    });
+                                }
                             }
-
-                            if let Ok((stream, _)) = listener.accept().await {
-                                let engine = context.clone();
-                                let metrics = metrics.clone();
-                                tokio::task::spawn_local(async move {
-                                    if let Err(e) =
-                                        handle_fastcgi_connection(stream, engine, metrics).await
-                                    {
-                                        eprintln!("[php-fpm] Connection error: {}", e);
-                                    }
-                                });
+                        }
+                        ListenerSource::Unix(l) => {
+                            let listener = UnixListener::from_std(l).unwrap();
+                            loop {
+                                if SHUTDOWN.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                if let Ok((stream, _)) = listener.accept().await {
+                                    let engine = context.clone();
+                                    let metrics = metrics.clone();
+                                    tokio::task::spawn_local(async move {
+                                        if let Err(e) =
+                                            handle_fastcgi_unix_connection(stream, engine, metrics)
+                                                .await
+                                        {
+                                            eprintln!("[php-fpm] Connection error: {}", e);
+                                        }
+                                    });
+                                }
                             }
                         }
                     }
-                    ListenerSource::Unix(l) => {
-                        let listener = UnixListener::from_std(l).unwrap();
-                        loop {
-                            if SHUTDOWN.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            if let Ok((stream, _)) = listener.accept().await {
-                                let engine = context.clone();
-                                let metrics = metrics.clone();
-                                tokio::task::spawn_local(async move {
-                                    if let Err(e) =
-                                        handle_fastcgi_unix_connection(stream, engine, metrics).await
-                                    {
-                                        eprintln!("[php-fpm] Connection error: {}", e);
-                                    }
-                                });
-                            }
-                        }
-                    }
-                }
-                eprintln!("[php-fpm] Worker {} stopping", id);
-            });
-        })
-        .expect("Failed to spawn php-fpm worker thread");
+                    eprintln!("[php-fpm] Worker {} stopping", id);
+                });
+            })
+            .expect("Failed to spawn php-fpm worker thread");
         handles.push(handle);
     }
 
@@ -298,7 +299,14 @@ where
         };
 
         // Execute PHP script (handles sending response)
-        execute_php(&engine, &fpm_req, stream.clone(), request_id, metrics.clone()).await;
+        execute_php(
+            &engine,
+            &fpm_req,
+            stream.clone(),
+            request_id,
+            metrics.clone(),
+        )
+        .await;
 
         // Handle keep-alive
         if !keep_conn {
@@ -359,7 +367,8 @@ fn handle_status_page<W: Write>(stream: Rc<RefCell<W>>, request_id: u16, metrics
         request_id,
         &response,
     );
-    let _ = fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
+    let _ =
+        fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
 
     let end_body = fcgi::protocol::EndRequestBody {
         app_status: 0,
@@ -394,7 +403,8 @@ fn handle_ping_page<W: Write>(stream: Rc<RefCell<W>>, request_id: u16) {
         request_id,
         response,
     );
-    let _ = fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
+    let _ =
+        fcgi::protocol::write_record(&mut *stream_ref, fcgi::RecordType::Stdout, request_id, &[]);
 
     let end_body = fcgi::protocol::EndRequestBody {
         app_status: 0,

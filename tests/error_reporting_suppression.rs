@@ -1,4 +1,4 @@
-use php_rs::vm::executor::{execute_code_with_config, ExecutionConfig};
+use php_rs::vm::executor::{ExecutionConfig, execute_code_with_config};
 
 #[test]
 fn test_error_reporting_zero_suppresses_warnings() {

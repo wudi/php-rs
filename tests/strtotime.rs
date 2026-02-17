@@ -942,31 +942,31 @@ fn test_strtotime_relative_offset_boundaries() {
     ";
     let (_, output) = run_code_capture_output(code).unwrap();
     let lines: Vec<&str> = output.trim().lines().collect();
-    
+
     // Around day boundary
     assert_eq!(lines[0], "2008-02-29T11:59:59+0000");
     assert_eq!(lines[1], "2008-02-27T12:00:01+0000");
     assert_eq!(lines[2], "2008-02-29T12:00:01+0000");
     assert_eq!(lines[3], "2008-02-27T11:59:59+0000");
-    
+
     // Around week boundary
     assert_eq!(lines[4], "2008-03-06T11:00:00+0000");
     assert_eq!(lines[5], "2008-02-21T13:00:00+0000");
     assert_eq!(lines[6], "2008-03-06T13:00:00+0000");
     assert_eq!(lines[7], "2008-02-21T11:00:00+0000");
-    
+
     // Around 6-month boundary
     assert_eq!(lines[8], "2008-08-25T12:00:00+0000");
     assert_eq!(lines[9], "2007-09-02T12:00:00+0000");
     assert_eq!(lines[10], "2008-08-29T12:00:00+0000");
     assert_eq!(lines[11], "2007-08-29T12:00:00+0000");
-    
+
     // Around 10-year boundary
     assert_eq!(lines[12], "2018-01-28T12:00:00+0000");
     assert_eq!(lines[13], "1998-03-28T12:00:00+0000");
     assert_eq!(lines[14], "2018-03-28T12:00:00+0000");
     assert_eq!(lines[15], "1998-01-28T12:00:00+0000");
-    
+
     // Around 25-year boundary
     assert_eq!(lines[16], "2032-02-28T12:00:00+0000");
     assert_eq!(lines[17], "1984-02-28T12:00:00+0000");
@@ -1114,7 +1114,7 @@ fn test_strtotime_comprehensive_edge_cases() {
     "#;
     let (_, output) = run_code_capture_output(code).unwrap();
     let lines: Vec<&str> = output.trim().lines().collect();
-    
+
     assert_eq!(lines[0], "false"); // Empty string
     assert_eq!(lines[1], "false"); // Whitespace with zeros
     assert_eq!(lines[2], "Thu, 15 Jun 2006 00:00:00 +0100"); // yesterday

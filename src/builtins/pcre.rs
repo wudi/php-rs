@@ -1,6 +1,6 @@
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
-use pcre2::bytes::{Regex, Captures};
+use pcre2::bytes::{Captures, Regex};
 use smallvec::smallvec;
 use std::rc::Rc;
 
@@ -34,7 +34,8 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     // If matches array is provided, populate it
     if args.len() >= 3 {
         let matches_handle = args[2];
-        let captures = regex.captures(&subject_str)
+        let captures = regex
+            .captures(&subject_str)
             .map_err(|e| format!("Regex execution error: {}", e))?;
 
         if let Some(captures) = captures {
@@ -55,10 +56,8 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             for (idx, name) in regex.capture_names().iter().enumerate() {
                 if let Some(name) = name.as_deref() {
                     if let Some(&handle) = indexed_handles.get(idx) {
-                        match_array.insert(
-                            ArrayKey::Str(Rc::new(name.as_bytes().to_vec())),
-                            handle,
-                        );
+                        match_array
+                            .insert(ArrayKey::Str(Rc::new(name.as_bytes().to_vec())), handle);
                     }
                 }
             }
@@ -76,8 +75,9 @@ pub fn preg_match(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             Ok(vm.arena.alloc(Val::Int(0)))
         }
     } else {
-        let is_match = regex.is_match(&subject_str)
-             .map_err(|e| format!("Regex execution error: {}", e))?;
+        let is_match = regex
+            .is_match(&subject_str)
+            .map_err(|e| format!("Regex execution error: {}", e))?;
         Ok(vm.arena.alloc(Val::Int(if is_match { 1 } else { 0 })))
     }
 }
@@ -91,7 +91,7 @@ pub fn preg_replace(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
     let pattern_handle = args[0];
     let replacement_handle = args[1];
     let subject_handle = args[2];
-    
+
     let limit = if args.len() >= 4 {
         match vm.arena.get(args[3]).value {
             Val::Int(l) => l,
@@ -127,7 +127,7 @@ pub fn preg_replace(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
 
     for captures in regex.captures_iter(&subject_str) {
         let captures = captures.map_err(|e| format!("Regex error: {}", e))?;
-        
+
         // captures.get(0) is the whole match
         if let Some(m) = captures.get(0) {
             if limit != -1 && count >= limit {
@@ -135,15 +135,15 @@ pub fn preg_replace(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             }
 
             result.extend_from_slice(&subject_str[last_end..m.start()]);
-            
+
             let replaced = interpolate_replacement(&replacement_str, &captures);
             result.extend_from_slice(&replaced);
-            
+
             last_end = m.end();
             count += 1;
         }
     }
-    
+
     result.extend_from_slice(&subject_str[last_end..]);
 
     // Update count variable if provided
@@ -368,21 +368,22 @@ fn interpolate_replacement(replacement: &[u8], captures: &Captures) -> Vec<u8> {
         if replacement[i] == b'$' || replacement[i] == b'\\' {
             // Check for digit
             if i + 1 < replacement.len() {
-                let next_char = replacement[i+1];
-                 if next_char.is_ascii_digit() {
+                let next_char = replacement[i + 1];
+                if next_char.is_ascii_digit() {
                     let mut digit_end = i + 2;
                     // Support $0 to $99
                     if digit_end < replacement.len() && replacement[digit_end].is_ascii_digit() {
                         digit_end += 1;
                     }
-                    
-                    let group_idx_str = std::str::from_utf8(&replacement[i+1..digit_end]).unwrap_or("0");
+
+                    let group_idx_str =
+                        std::str::from_utf8(&replacement[i + 1..digit_end]).unwrap_or("0");
                     let group_idx: usize = group_idx_str.parse().unwrap_or(0);
-                    
+
                     if let Some(m) = captures.get(group_idx) {
                         result.extend_from_slice(m.as_bytes());
                     }
-                    
+
                     i = digit_end;
                     continue;
                 }

@@ -1,5 +1,6 @@
 use crate::core::value::{ArrayData, ArrayKey, Handle, Val};
 use crate::vm::engine::VM;
+use chrono::Utc;
 use crc32fast::Hasher;
 use digest::Digest;
 use libc;
@@ -13,7 +14,6 @@ use std::ffi::{CStr, CString};
 use std::rc::Rc;
 use std::str;
 use std::str::FromStr;
-use chrono::Utc;
 
 #[cfg(unix)]
 unsafe extern "C" {
@@ -211,7 +211,7 @@ pub fn php_explode(vm: &mut VM, args: &[Handle]) -> Result<Handle, String> {
             current_slice = &s[offset..];
         }
         temp_parts.push(current_slice.to_vec());
-        
+
         // Remove last -limit elements
         let remove_count = (-limit) as usize;
         if temp_parts.len() > remove_count {

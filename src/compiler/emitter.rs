@@ -559,12 +559,12 @@ impl<'src> Emitter<'src> {
                         if p_name.starts_with(b"$") {
                             let sym = method_emitter.interner.intern(&p_name[1..]);
                             let param_type = info.ty.and_then(|ty| method_emitter.convert_type(ty));
-                        let default_value = if info.variadic {
-                            None
-                        } else {
-                            info.default
-                                .map(|expr| method_emitter.eval_constant_expr(expr))
-                        };
+                            let default_value = if info.variadic {
+                                None
+                            } else {
+                                info.default
+                                    .map(|expr| method_emitter.eval_constant_expr(expr))
+                            };
 
                             param_syms.push(FuncParam {
                                 name: sym,
@@ -574,21 +574,21 @@ impl<'src> Emitter<'src> {
                                 default_value,
                             });
 
-                        if info.variadic {
-                            method_emitter
-                                .chunk
-                                .code
-                                .push(OpCode::RecvVariadic(i as u32));
-                        } else if let Some(default_expr) = info.default {
-                            let val = method_emitter.eval_constant_expr(default_expr);
-                            let idx = method_emitter.add_constant(val);
-                            method_emitter
-                                .chunk
-                                .code
-                                .push(OpCode::RecvInit(i as u32, idx as u16));
-                        } else {
-                            method_emitter.push_op(OpCode::Recv(i as u32));
-                        }
+                            if info.variadic {
+                                method_emitter
+                                    .chunk
+                                    .code
+                                    .push(OpCode::RecvVariadic(i as u32));
+                            } else if let Some(default_expr) = info.default {
+                                let val = method_emitter.eval_constant_expr(default_expr);
+                                let idx = method_emitter.add_constant(val);
+                                method_emitter
+                                    .chunk
+                                    .code
+                                    .push(OpCode::RecvInit(i as u32, idx as u16));
+                            } else {
+                                method_emitter.push_op(OpCode::Recv(i as u32));
+                            }
                         }
                     }
 
@@ -1277,10 +1277,7 @@ impl<'src> Emitter<'src> {
                         });
 
                         if info.variadic {
-                            func_emitter
-                                .chunk
-                                .code
-                                .push(OpCode::RecvVariadic(i as u32));
+                            func_emitter.chunk.code.push(OpCode::RecvVariadic(i as u32));
                         } else if let Some(default_expr) = info.default {
                             let val = func_emitter.eval_constant_expr(default_expr);
                             let idx = func_emitter.add_constant(val);
@@ -2045,7 +2042,9 @@ impl<'src> Emitter<'src> {
 
                 Some(Val::ConstArray(Rc::new(const_array)))
             }
-            Expr::ClassConstFetch { class, constant, .. } => {
+            Expr::ClassConstFetch {
+                class, constant, ..
+            } => {
                 if let Expr::Variable {
                     span: const_span, ..
                 } = constant
@@ -2896,10 +2895,7 @@ impl<'src> Emitter<'src> {
                         });
 
                         if info.variadic {
-                            func_emitter
-                                .chunk
-                                .code
-                                .push(OpCode::RecvVariadic(i as u32));
+                            func_emitter.chunk.code.push(OpCode::RecvVariadic(i as u32));
                         } else if let Some(default_expr) = info.default {
                             let val = func_emitter.eval_constant_expr(default_expr);
                             let idx = func_emitter.add_constant(val);
@@ -3279,8 +3275,7 @@ impl<'src> Emitter<'src> {
                                 && self.current_class.is_some()
                             {
                                 let class_sym = self.current_class.unwrap();
-                                let name_bytes =
-                                    self.interner.lookup(class_sym).unwrap_or(b"");
+                                let name_bytes = self.interner.lookup(class_sym).unwrap_or(b"");
                                 let idx =
                                     self.add_constant(Val::String(name_bytes.to_vec().into()));
                                 self.push_op(OpCode::Const(idx as u16));
@@ -3445,9 +3440,7 @@ impl<'src> Emitter<'src> {
 
                                         self.emit_expr(expr);
 
-                                        self.push_op(OpCode::StoreNestedDim(
-                                            keys.len() as u8,
-                                        ));
+                                        self.push_op(OpCode::StoreNestedDim(keys.len() as u8));
 
                                         self.chunk
                                             .code
@@ -3822,9 +3815,7 @@ impl<'src> Emitter<'src> {
                                     AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
                                     AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
                                     AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
-                                    AssignOp::ShiftRight => {
-                                        self.push_op(OpCode::ShiftRight)
-                                    }
+                                    AssignOp::ShiftRight => self.push_op(OpCode::ShiftRight),
                                     _ => {}
                                 }
 
@@ -3851,8 +3842,8 @@ impl<'src> Emitter<'src> {
                                         let prop_sym = self.interner.intern(prop_name);
 
                                         if let AssignOp::Coalesce = op {
-                                            let idx =
-                                                self.add_constant(Val::String(resolved_name.into()));
+                                            let idx = self
+                                                .add_constant(Val::String(resolved_name.into()));
                                             self.push_op(OpCode::Const(idx as u16));
                                             self.push_op(OpCode::IssetStaticProp(prop_sym));
 
@@ -3891,22 +3882,12 @@ impl<'src> Emitter<'src> {
                                             AssignOp::Mul => self.push_op(OpCode::Mul),
                                             AssignOp::Div => self.push_op(OpCode::Div),
                                             AssignOp::Mod => self.push_op(OpCode::Mod),
-                                            AssignOp::Concat => {
-                                                self.push_op(OpCode::Concat)
-                                            }
+                                            AssignOp::Concat => self.push_op(OpCode::Concat),
                                             AssignOp::Pow => self.push_op(OpCode::Pow),
-                                            AssignOp::BitAnd => {
-                                                self.push_op(OpCode::BitwiseAnd)
-                                            }
-                                            AssignOp::BitOr => {
-                                                self.push_op(OpCode::BitwiseOr)
-                                            }
-                                            AssignOp::BitXor => {
-                                                self.push_op(OpCode::BitwiseXor)
-                                            }
-                                            AssignOp::ShiftLeft => {
-                                                self.push_op(OpCode::ShiftLeft)
-                                            }
+                                            AssignOp::BitAnd => self.push_op(OpCode::BitwiseAnd),
+                                            AssignOp::BitOr => self.push_op(OpCode::BitwiseOr),
+                                            AssignOp::BitXor => self.push_op(OpCode::BitwiseXor),
+                                            AssignOp::ShiftLeft => self.push_op(OpCode::ShiftLeft),
                                             AssignOp::ShiftRight => {
                                                 self.push_op(OpCode::ShiftRight)
                                             }
