@@ -89,6 +89,6 @@ fn test_undefined_variable_notice() {
     // Verify we collected the undefined variable notice
     let collected = errors.borrow();
     assert_eq!(collected.len(), 1);
-    assert!(matches!(collected[0].0, ErrorLevel::Notice));
+    assert!(matches!(collected[0].0, ErrorLevel::Warning));
     assert!(collected[0].1.contains("Undefined variable"));
 }

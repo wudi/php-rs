@@ -468,14 +468,16 @@ fn test_realpath() {
 fn test_file_get_contents_missing_file() {
     let mut vm = create_test_vm();
 
+    // PHP emits a warning and returns false for missing files
     let code = r#"<?php
         $result = file_get_contents("/nonexistent/file.txt");
+        if ($result === false) {
+            echo "OK";
+        }
         "#;
 
     let result = compile_and_run(&mut vm, code);
-
-    // Should fail with error
-    assert!(result.is_err());
+    assert!(result.is_ok());
 }
 
 #[test]

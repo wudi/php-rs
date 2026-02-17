@@ -29,6 +29,7 @@ fn connect_test_db(vm: &mut VM) -> Result<php_rs::core::value::Handle, String> {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_query_select() {
     let mut vm = create_test_vm();
 
@@ -59,6 +60,7 @@ fn test_mysqli_query_select() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_fetch_assoc() {
     let mut vm = create_test_vm();
 
@@ -114,6 +116,7 @@ fn test_mysqli_fetch_assoc() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_fetch_row() {
     let mut vm = create_test_vm();
 
@@ -155,6 +158,7 @@ fn test_mysqli_fetch_row() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_num_rows() {
     let mut vm = create_test_vm();
 
@@ -187,6 +191,7 @@ fn test_mysqli_num_rows() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_query_syntax_error() {
     let mut vm = create_test_vm();
 

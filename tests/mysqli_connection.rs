@@ -28,6 +28,7 @@ fn connect_test_db(vm: &mut VM) -> Result<php_rs::core::value::Handle, String> {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_connect_success() {
     let mut vm = create_test_vm();
 
@@ -106,6 +107,7 @@ fn test_mysqli_connect_invalid_credentials() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_close_valid_connection() {
     let mut vm = create_test_vm();
 
@@ -136,6 +138,7 @@ fn test_mysqli_close_invalid_resource() {
 }
 
 #[test]
+#[ignore] // Requires running MySQL server
 fn test_mysqli_error_functions() {
     let mut vm = create_test_vm();
 
