@@ -4,34 +4,47 @@ use php_rs::sapi::SapiMode;
 use php_rs::vm::engine::VM;
 
 #[test]
-fn cli_epoch_reclamation_does_not_leak() {
+fn gc_collects_unreachable_allocations() {
     let engine = EngineBuilder::new().with_core_extensions().build().unwrap();
     let mut vm = VM::new_with_sapi(engine, SapiMode::Cli);
 
+    // Allocate many values that are NOT stored in any root
     for _ in 0..1000 {
-        let handle = vm.arena.alloc(Val::Int(1));
-        vm.arena.free(handle);
-        vm.arena.maybe_reclaim();
+        vm.arena.alloc(Val::Int(1));
     }
 
-    assert!(vm.arena.len() < 1000);
+    // After allocation, heap has 1000+ values (plus superglobals from init)
+    let before = vm.arena.len();
+    assert!(before >= 1000);
+
+    // GC should collect unreachable allocations
+    // We need to provide roots - collect from the VM state
+    vm.collect_garbage();
+
+    // Most of the 1000 allocations should be collected since they're
+    // not referenced from any VM root
+    let after = vm.arena.len();
+    assert!(
+        after < before,
+        "Expected GC to collect unreachable objects: before={}, after={}",
+        before,
+        after
+    );
 }
 
 #[test]
-fn cli_alloc_bytes_reclaims_after_drop() {
+fn gc_preserves_global_variables() {
     let engine = EngineBuilder::new().with_core_extensions().build().unwrap();
     let mut vm = VM::new_with_sapi(engine, SapiMode::Cli);
-    let baseline = vm.arena.len();
 
-    let blocks: Vec<_> = (0..1000).map(|_| vm.context.alloc_bytes(32)).collect();
-    let allocated = vm.arena.len();
-    assert!(allocated > baseline);
+    // Allocate a value and store it in globals (making it a root)
+    let sym = vm.context.interner.intern(b"test_var");
+    let handle = vm.arena.alloc(Val::Int(42));
+    vm.context.globals.insert(sym, handle);
 
-    drop(blocks);
+    // GC should preserve the global variable
+    vm.collect_garbage();
 
-    for _ in 0..3 {
-        vm.arena.maybe_reclaim();
-    }
-
-    assert_eq!(vm.arena.len(), baseline);
+    // The global should still be accessible
+    assert_eq!(vm.arena.get(handle).value, Val::Int(42));
 }

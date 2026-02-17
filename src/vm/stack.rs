@@ -43,4 +43,9 @@ impl Stack {
     pub fn clear(&mut self) {
         self.values.clear();
     }
+
+    /// Iterate over all handles in the stack (for GC root enumeration).
+    pub fn handles(&self) -> &[Handle] {
+        &self.values
+    }
 }

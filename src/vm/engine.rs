@@ -49,6 +49,7 @@
 //! - Zend Compile: `$PHP_SRC_PATH/Zend/zend_compile.c` - Visibility rules
 
 use crate::compiler::chunk::{ClosureData, CodeChunk, ReturnType, UserFunc};
+use crate::core::gc::Traceable;
 use crate::core::value::{ArrayData, ArrayKey, Handle, ObjectData, Symbol, Val, Visibility};
 use crate::runtime::context::{
     ClassDef, EngineContext, HeaderEntry, MethodEntry, MethodSignature, ParameterInfo,
@@ -387,6 +388,114 @@ impl VM {
         self.last_error_location = None;
         self.suppress_undefined_notice = false;
         self.builtin_call_strict = false;
+    }
+
+    /// Collect all root handles from VM state for garbage collection.
+    ///
+    /// Root handles are all handles reachable from the VM's runtime state
+    /// (operand stack, call frames, globals, pending calls, etc.).
+    /// The GC traces transitively from these roots to find all live objects.
+    fn collect_gc_roots(&self) -> Vec<Handle> {
+        let mut roots = Vec::with_capacity(
+            self.operand_stack.len() + self.frames.len() * 16 + self.context.globals.len() + 32,
+        );
+
+        // Operand stack
+        roots.extend_from_slice(self.operand_stack.handles());
+
+        // Call frame locals, this, generator, args
+        for frame in &self.frames {
+            roots.extend(frame.locals.values());
+            if let Some(h) = frame.this {
+                roots.push(h);
+            }
+            if let Some(h) = frame.generator {
+                roots.push(h);
+            }
+            roots.extend(frame.args.iter());
+        }
+
+        // Context globals
+        roots.extend(self.context.globals.values());
+
+        // Last return value
+        if let Some(h) = self.last_return_value {
+            roots.push(h);
+        }
+
+        // Finally return value
+        if let Some(h) = self.finally_return_value {
+            roots.push(h);
+        }
+
+        // Pending calls
+        for pc in &self.pending_calls {
+            if let Some(h) = pc.func_handle {
+                roots.push(h);
+            }
+            if let Some(h) = pc.this_handle {
+                roots.push(h);
+            }
+            roots.extend(pc.args.iter());
+        }
+
+        // Variable handle map (the keys are handles)
+        roots.extend(self.var_handle_map.keys());
+
+        // Pending undefined (keys are handles)
+        roots.extend(self.pending_undefined.keys());
+
+        // Static property handles
+        roots.extend(self.static_prop_handles.values());
+
+        // Context: autoloaders, callbacks, shutdown functions, error handler
+        roots.extend(&self.context.autoloaders);
+        if let Some(h) = self.context.header_callback {
+            roots.push(h);
+        }
+        for sf in &self.context.shutdown_functions {
+            roots.push(sf.callable);
+            roots.extend(&sf.args);
+        }
+        if let Some(h) = self.context.user_error_handler {
+            roots.push(h);
+        }
+        for (h, _) in &self.context.user_error_handler_stack {
+            if let Some(h) = h {
+                roots.push(*h);
+            }
+        }
+
+        // Output buffer handlers (ob_start callbacks)
+        for buf in &self.output_buffers {
+            if let Some(h) = buf.handler {
+                roots.push(h);
+            }
+        }
+
+        // Constants that may contain object handles
+        for val in self.context.constants.values() {
+            val.trace_handles(&mut |h| roots.push(h));
+        }
+
+        // Class constants that may contain object handles
+        for class_def in self.context.classes.values() {
+            for (val, _) in class_def.constants.values() {
+                val.trace_handles(&mut |h| roots.push(h));
+            }
+        }
+
+        roots
+    }
+
+    /// Run garbage collection if allocation debt warrants it.
+    ///
+    /// Called periodically from the execution loop to collect unreachable objects.
+    pub fn collect_garbage(&mut self) {
+        if self.arena.should_collect() {
+            let roots = self.collect_gc_roots();
+            self.arena.collect(&roots);
+        }
     }
 
     /// Instantiate a class and call its constructor.
@@ -1014,7 +1123,7 @@ impl VM {
             .current_location()
             .unwrap_or_else(|| ("Unknown".to_string(), 0));
         let error_line = error_line as i64;
-        
+
         // Check if message already ends with location info (e.g., "... in Unknown")
         // If so, just append the line number. Otherwise, add full location.
         let formatted_message = if message.ends_with(" in Unknown") {
@@ -1038,8 +1147,14 @@ impl VM {
                 self.handling_user_error = true;
                 let mut args = ArgList::new();
                 args.push(self.arena.alloc(Val::Int(level_bitmask as i64)));
-                args.push(self.arena.alloc(Val::String(Rc::new(message.as_bytes().to_vec()))));
-                args.push(self.arena.alloc(Val::String(Rc::new(error_file.as_bytes().to_vec()))));
+                args.push(
+                    self.arena
+                        .alloc(Val::String(Rc::new(message.as_bytes().to_vec()))),
+                );
+                args.push(
+                    self.arena
+                        .alloc(Val::String(Rc::new(error_file.as_bytes().to_vec()))),
+                );
                 args.push(self.arena.alloc(Val::Int(error_line)));
 
                 match self.call_callable(handler, args) {
@@ -2303,7 +2418,8 @@ impl VM {
         // Not in cache, fetch from ClassDef and allocate in arena
         let (val, _, _) = self.find_static_prop(defining_class, prop_name)?;
         let handle = self.arena.alloc(val);
-        self.static_prop_handles.insert((defining_class, prop_name), handle);
+        self.static_prop_handles
+            .insert((defining_class, prop_name), handle);
         Ok((handle, visibility, defining_class))
     }
 
@@ -3000,7 +3116,7 @@ impl VM {
         if self.context.headers_sent {
             return;
         }
-        
+
         if let Some(callback) = self.context.header_callback.take() {
             let args = ArgList::new();
             if let Err(err) = self.call_callable(callback, args) {
@@ -3234,10 +3350,10 @@ impl VM {
                 instructions_until_memory_check = MEMORY_CHECK_INTERVAL;
             }
 
-            // Periodically allow heap reclamation in long-running CLI sessions
+            // Periodically run garbage collection to free unreachable objects
             instructions_until_gc_check -= 1;
             if instructions_until_gc_check == 0 {
-                self.arena.maybe_reclaim();
+                self.collect_garbage();
                 instructions_until_gc_check = GC_CHECK_INTERVAL;
             }
 
@@ -6100,9 +6216,7 @@ impl VM {
                             &format!("Foreach expects array or object, got {}", type_str),
                         );
                         let frame = self.frames.last_mut().unwrap();
-                        frame
-                            .locals
-                            .insert(sym, self.arena.alloc(Val::Null));
+                        frame.locals.insert(sym, self.arena.alloc(Val::Null));
                     }
                 }
             }
@@ -7707,7 +7821,9 @@ impl VM {
                 let in_magic_set = self.current_frame_is_magic_method(magic_set);
 
                 if use_magic && !in_magic_set {
-                    if let Some((method, _, _, defined_class)) = self.find_method(class_name, magic_set) {
+                    if let Some((method, _, _, defined_class)) =
+                        self.find_method(class_name, magic_set)
+                    {
                         let prop_name_bytes = self
                             .context
                             .interner
@@ -7799,9 +7915,7 @@ impl VM {
                     if let Some((method, _, _, defined_class)) =
                         self.find_method(class_name, magic_set)
                     {
-                        let name_handle =
-                            self.arena
-                                .alloc(Val::String(Rc::new(prop_name_bytes)));
+                        let name_handle = self.arena.alloc(Val::String(Rc::new(prop_name_bytes)));
 
                         let mut frame = CallFrame::new(method.chunk.clone());
                         frame.func = Some(method.clone());
@@ -10737,8 +10851,9 @@ impl VM {
                     )));
                 }
 
-                let resolved_sym =
-                    self.lookup_class_symbol(resolved_sym).unwrap_or(resolved_sym);
+                let resolved_sym = self
+                    .lookup_class_symbol(resolved_sym)
+                    .unwrap_or(resolved_sym);
                 let resolved_name_bytes =
                     self.context.interner.lookup(resolved_sym).unwrap().to_vec();
                 let res_handle = self.arena.alloc(Val::String(resolved_name_bytes.into()));
@@ -11234,7 +11349,10 @@ impl VM {
                     self.sync_globals_key(&key, val_handle);
                 }
             } else {
-                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
+                return Err(VmError::RuntimeError(format!(
+                    "Cannot use scalar as array (type: {})",
+                    self.arena.get(array_handle).value.type_name()
+                )));
             }
             self.operand_stack.push(array_handle);
         } else {
@@ -11253,7 +11371,10 @@ impl VM {
                     self.sync_globals_key(&key, val_handle);
                 }
             } else {
-                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
+                return Err(VmError::RuntimeError(format!(
+                    "Cannot use scalar as array (type: {})",
+                    self.arena.get(array_handle).value.type_name()
+                )));
             }
 
             let new_handle = self.arena.alloc(new_val);
@@ -11286,7 +11407,10 @@ impl VM {
                 // Use O(1) push method instead of O(n) index computation
                 Rc::make_mut(map).push(val_handle);
             } else {
-                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
+                return Err(VmError::RuntimeError(format!(
+                    "Cannot use scalar as array (type: {})",
+                    self.arena.get(array_handle).value.type_name()
+                )));
             }
             self.operand_stack.push(array_handle);
         } else {
@@ -11301,7 +11425,10 @@ impl VM {
                 // Use O(1) push method instead of O(n) index computation
                 Rc::make_mut(map).push(val_handle);
             } else {
-                return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(array_handle).value.type_name())));
+                return Err(VmError::RuntimeError(format!(
+                    "Cannot use scalar as array (type: {})",
+                    self.arena.get(array_handle).value.type_name()
+                )));
             }
 
             let new_handle = self.arena.alloc(new_val);
@@ -11530,7 +11657,10 @@ impl VM {
                 if let Val::Array(map) = &current_zval.value {
                     ArrayKey::Int(map.next_index())
                 } else {
-                    return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
+                    return Err(VmError::RuntimeError(format!(
+                        "Cannot use scalar as array (type: {})",
+                        self.arena.get(current_handle).value.type_name()
+                    )));
                 }
             };
 
@@ -11568,7 +11698,10 @@ impl VM {
                             }
                         })
                     } else {
-                        return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
+                        return Err(VmError::RuntimeError(format!(
+                            "Cannot use scalar as array (type: {})",
+                            self.arena.get(current_handle).value.type_name()
+                        )));
                     }
                 };
 
@@ -11595,7 +11728,10 @@ impl VM {
                     if let Val::Array(map) = &current_zval.value {
                         map.map.get(&key).copied()
                     } else {
-                        return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
+                        return Err(VmError::RuntimeError(format!(
+                            "Cannot use scalar as array (type: {})",
+                            self.arena.get(current_handle).value.type_name()
+                        )));
                     }
                 };
 
@@ -11674,7 +11810,10 @@ impl VM {
                 map_mut.insert(key, new_next_handle);
             }
         } else {
-            return Err(VmError::RuntimeError(format!("Cannot use scalar as array (type: {})", self.arena.get(current_handle).value.type_name())));
+            return Err(VmError::RuntimeError(format!(
+                "Cannot use scalar as array (type: {})",
+                self.arena.get(current_handle).value.type_name()
+            )));
         }
 
         let new_handle = self.arena.alloc(new_val);
